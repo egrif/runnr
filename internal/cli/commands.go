@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -73,7 +74,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), runCmd(s), resumeCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), runCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -395,8 +396,15 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, base m
 		ui = engine.Unattended{OnEvent: onEvent, AssumeYes: f.yes}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop, paused := interruptible()
 	defer stop()
+	term.interrupts = paused
+	if !f.noHistory {
+		term.addNote = func(step int, text string) error {
+			_, err := st.AddNote(term.runID, step, author(), text)
+			return err
+		}
+	}
 	opts := engine.Options{Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt, Resumes: resumes, RunbookVersion: ver}
 	if !f.noHistory {
 		opts.Save = func(r *engine.Run) {
@@ -418,6 +426,31 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, base m
 		return ExitError{130}
 	}
 	return ExitError{1}
+}
+
+// interruptible returns a context cancelled by SIGINT/SIGTERM. While paused
+// is set (an interactive shell is open), Ctrl-C belongs to the shell.
+func interruptible() (context.Context, func(), *atomic.Bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	paused := &atomic.Bool{}
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		for sig := range ch {
+			if sig == os.Interrupt && paused.Load() {
+				continue
+			}
+			cancel()
+		}
+	}()
+	return ctx, func() { signal.Stop(ch); cancel() }, paused
+}
+
+func author() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	return "cli"
 }
 
 func runCmd(s func() *store.Store) *cobra.Command {
@@ -488,6 +521,104 @@ for again (or pass them with -v). Steps marked 'always' run again.`,
 		},
 	}
 	f.register(cmd)
+	return cmd
+}
+
+func noteCmd(s func() *store.Store) *cobra.Command {
+	var step string
+	cmd := &cobra.Command{
+		Use:   "note <run-id> <text>",
+		Short: "Add a note to a run, or to one of its steps with --step",
+		Long:  "Notes can be added while the run is in progress (from another terminal) or afterwards.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			r, err := s().LoadRun(args[0])
+			if err != nil {
+				return err
+			}
+			idx := -1
+			if step != "" {
+				if idx, err = runStepIndex(r, step); err != nil {
+					return err
+				}
+			}
+			if _, err := s().AddNote(r.ID, idx, author(), args[1]); err != nil {
+				return err
+			}
+			where := "run"
+			if idx >= 0 {
+				where = fmt.Sprintf("step %d (%s)", idx+1, r.Steps[idx].Name)
+			}
+			fmt.Printf("noted on %s\n", where)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&step, "step", "s", "", "step number or exact name")
+	return cmd
+}
+
+func runStepIndex(r *engine.Run, ref string) (int, error) {
+	if n, err := strconv.Atoi(ref); err == nil {
+		if n < 1 || n > len(r.Steps) {
+			return 0, fmt.Errorf("step %d out of range 1-%d", n, len(r.Steps))
+		}
+		return n - 1, nil
+	}
+	for i, st := range r.Steps {
+		if st.Name == ref {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("run %s has no step %q", r.ID, ref)
+}
+
+func shellCmd(s func() *store.Store) *cobra.Command {
+	var vars []string
+	cmd := &cobra.Command{
+		Use:   "shell <runbook|file|run-id>",
+		Short: "Run a runbook's setup steps, then open a shell with that environment",
+		Long: `Runs only the steps marked 'always' (the setup) and opens your $SHELL with
+everything they published, plus inputs and the runbook's env, in the
+environment. Nothing is recorded in history.
+
+Given a run ID, the shell uses that run's runbook and inputs (secret inputs
+are asked for again).`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !isTTY(os.Stdin) {
+				return errors.New("runnr shell needs a terminal")
+			}
+			base := map[string]string{}
+			rb, _, err := s().Resolve(args[0])
+			if err != nil {
+				prev, rerr := s().LoadRun(args[0])
+				if rerr != nil {
+					return err
+				}
+				if rb, _, err = s().Get(prev.Runbook); err != nil {
+					return err
+				}
+				base = engine.ResumeInputs(prev)
+			}
+			for _, kv := range vars {
+				k, v, ok := strings.Cut(kv, "=")
+				if !ok {
+					return fmt.Errorf("--var %q must be key=value", kv)
+				}
+				base[k] = v
+			}
+			ctx, stop, paused := interruptible()
+			defer stop()
+			term := NewTerminal(len(rb.Steps))
+			term.interrupts = paused
+			run := engine.Execute(ctx, rb, term, "", engine.Options{Vars: base, Interactive: true, ShellOnly: true})
+			if run.Status != engine.StatusSucceeded {
+				return ExitError{1}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "set an input (key=value), repeatable")
 	return cmd
 }
 
@@ -628,6 +759,7 @@ func printRun(r *engine.Run) {
 	for k, v := range r.Inputs {
 		fmt.Printf("Input:   %s=%s\n", k, v)
 	}
+	printNotes(r.Notes, "")
 	for _, st := range r.Steps {
 		fmt.Printf("\n[%d] %s — %s", st.Index+1, st.Name, st.Status)
 		if st.Note != "" {
@@ -643,6 +775,7 @@ func printRun(r *engine.Run) {
 		if st.Error != "" {
 			fmt.Println(indent("error: " + st.Error))
 		}
+		printNotes(st.Notes, "    ")
 	}
 }
 
@@ -720,6 +853,12 @@ func printJSON(v any) error {
 func firstLine(s string) string {
 	l, _, _ := strings.Cut(s, "\n")
 	return l
+}
+
+func printNotes(notes []engine.Note, prefix string) {
+	for _, n := range notes {
+		fmt.Printf("%s✎ %s %s: %s\n", prefix, n.Time.Local().Format("2006-01-02 15:04"), n.Author, n.Text)
+	}
 }
 
 func indent(s string) string {

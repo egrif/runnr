@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/egrif/runnr/internal/engine"
@@ -30,8 +31,9 @@ type Answer struct {
 type WireEvent struct {
 	Seq int `json:"seq"`
 	engine.Event
-	Question *Question `json:"question,omitempty"`
-	Answered string    `json:"answered,omitempty"`
+	Question *Question    `json:"question,omitempty"`
+	Answered string       `json:"answered,omitempty"`
+	Note     *engine.Note `json:"note,omitempty"`
 }
 
 // liveRun is an in-progress (or recently finished) run driven by the GUI.
@@ -156,18 +158,30 @@ func (l *liveRun) Manual(ctx context.Context, idx int, step runbook.Step, text s
 	return engine.ManualFail, a.Note, nil
 }
 
-func (l *liveRun) OnFailure(ctx context.Context, idx int, step runbook.Step, res engine.StepResult) (engine.FailureAction, error) {
-	a, err := l.ask(ctx, Question{Type: "failure", Step: idx, Title: "“" + step.Name + "” failed", Text: res.Error, Options: []string{"retry", "skip", "abort"}})
-	if err != nil {
-		return "", err
+func (l *liveRun) OnFailure(ctx context.Context, idx int, step runbook.Step, res engine.StepResult) (engine.FailureAction, string, error) {
+	for {
+		a, err := l.ask(ctx, Question{Type: "failure", Step: idx, Title: "“" + step.Name + "” failed", Text: res.Error, Options: []string{"retry", "skip", "force", "abort"}})
+		if err != nil {
+			return "", "", err
+		}
+		switch a.Value {
+		case "retry":
+			return engine.FailRetry, "", nil
+		case "skip":
+			return engine.FailSkip, "", nil
+		case "force":
+			if strings.TrimSpace(a.Note) == "" {
+				continue // a reason is required; ask again
+			}
+			return engine.FailForce, a.Note, nil
+		}
+		return engine.FailAbort, "", nil
 	}
-	switch a.Value {
-	case "retry":
-		return engine.FailRetry, nil
-	case "skip":
-		return engine.FailSkip, nil
-	}
-	return engine.FailAbort, nil
+}
+
+// note pushes an operator note to anyone watching the run.
+func (l *liveRun) note(step int, n engine.Note) {
+	l.publish(WireEvent{Event: engine.Event{Kind: "note", Step: step}, Note: &n})
 }
 
 func nonEmpty(s, def string) string {

@@ -47,6 +47,8 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
 | `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |
 | `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped |
+| `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open `$SHELL` with that environment |
+| `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
 | `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail |
 | `runnr history prune --older-than 90d` | Delete old finished runs |
 | `runnr db info` / `runnr db import <dir>` | Show storage details / import a file-based runnr home |
@@ -84,10 +86,22 @@ runnr run <name|file> [-v key=value]... [-u] [-y] [--dry-run] [--json] [-q] [--n
 
 | Mode | Behaviour |
 |---|---|
-| **Interactive** (default on a TTY) | Prompts for missing inputs, manual steps and confirmations. On failure: retry / skip / abort. |
+| **Interactive** (default on a TTY) | Prompts for missing inputs, manual steps and confirmations. On failure: retry / skip / force / abort. |
 | **Unattended** (`-u`, or stdin isn't a TTY) | Never prompts. Inputs from `-v` or defaults. Confirm-gated steps fail unless `-y`. Manual steps follow their `unattended` policy. Any failure aborts. |
 
 `--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted.
+
+At any step prompt you can also:
+
+- **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
+- **`!`**: open your `$SHELL` with the run's environment (inputs, values
+  published so far, `env:`), in the step's `dir`. Investigate, fix things,
+  `exit` to come back to the same prompt. `echo name=value >> "$RUNNR_OUTPUT"`
+  in that shell publishes a value to later steps. Ctrl-C in the shell doesn't
+  touch the run.
+- **`f`** (failed steps): force the step to count as success. A reason is
+  required; the step is recorded as `forced` with it, and whatever it
+  published is kept.
 
 A failed or aborted run can be continued with `runnr resume <run-id>`: same
 inputs (secret inputs are asked again), starting at the step that didn't

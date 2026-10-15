@@ -3,10 +3,12 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/term"
@@ -23,6 +25,14 @@ type Terminal struct {
 	total   int
 	quiet   bool
 	section string
+	runID   string
+
+	// addNote saves an operator note for a step (nil: notes unavailable).
+	addNote func(step int, text string) error
+	// openShell is the engine's shell opener (nil: no shell).
+	openShell func(ctx context.Context, step int) error
+	// interrupts, when set, makes runnr ignore Ctrl-C while a shell runs.
+	interrupts *atomic.Bool
 }
 
 // AttachedIO lets tty steps take over the terminal.
@@ -68,12 +78,14 @@ var statusStyle = map[engine.Status]struct{ code, icon string }{
 	engine.StatusFailed:    {"31", "✘"},
 	engine.StatusSkipped:   {"33", "↷"},
 	engine.StatusAborted:   {"31", "■"},
+	engine.StatusForced:    {"33", "⚑"},
 	engine.StatusRunning:   {"36", "▶"},
 }
 
 func (t *Terminal) Notify(e engine.Event) {
 	switch e.Kind {
 	case engine.EventRunStarted:
+		t.runID = e.Run.ID
 		fmt.Fprintf(t.out, "%s %s  %s\n", t.c("1", "runnr"), e.Run.Runbook, t.c("2", e.Run.ID))
 	case engine.EventStepStarted:
 		fmt.Fprintln(t.out, t.header(e.Step, e.Result, false))
@@ -209,13 +221,83 @@ func (t *Terminal) choose(ctx context.Context, prompt string, opts map[string]st
 	}
 }
 
-func (t *Terminal) Confirm(ctx context.Context, _ int, _ runbook.Step, command string) (bool, error) {
+// stepPrompt is choose plus two extras available at every step prompt:
+// [n]ote adds an operator note to the step, [!] opens a shell with the
+// run's environment. Both return to the same question afterwards.
+func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts map[string]string, def string) (string, error) {
+	extra := ""
+	if t.addNote != nil {
+		extra += " / [n]ote"
+	}
+	if t.openShell != nil {
+		extra += " / [!] shell"
+	}
+	all := map[string]string{"n": "\x00note", "note": "\x00note", "!": "\x00shell", "shell": "\x00shell"}
+	for k, v := range opts {
+		all[k] = v
+	}
+	for {
+		a, err := t.choose(ctx, prompt+extra+":", all, def)
+		if err != nil {
+			return "", err
+		}
+		switch {
+		case a == "\x00note" && t.addNote != nil:
+			fmt.Fprint(t.out, "  note: ")
+			text, err := t.readLine(ctx)
+			if err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(text) == "" {
+				continue
+			}
+			if err := t.addNote(idx, text); err != nil {
+				fmt.Fprintln(t.out, t.c("31", "  couldn't save note: "+err.Error()))
+			} else {
+				fmt.Fprintln(t.out, t.c("2", "  note saved"))
+			}
+		case a == "\x00shell" && t.openShell != nil:
+			if err := t.OpenShell(ctx, idx); err != nil {
+				fmt.Fprintln(t.out, t.c("31", "  shell: "+err.Error()))
+			}
+		case !strings.HasPrefix(a, "\x00"):
+			return a, nil
+		}
+	}
+}
+
+// SetShell receives the engine's shell opener (engine.ShellHost).
+func (t *Terminal) SetShell(open func(ctx context.Context, step int) error) {
+	if isTTY(os.Stdin) {
+		t.openShell = open
+	}
+}
+
+// OpenShell opens an interactive shell with the run's environment. Ctrl-C
+// belongs to the shell meanwhile, not to runnr.
+func (t *Terminal) OpenShell(ctx context.Context, idx int) error {
+	if t.openShell == nil {
+		return errors.New("no terminal to open a shell in")
+	}
+	fmt.Fprintln(t.out, t.c("2", "  ── runnr shell: run variables are in the environment (try `env`).\n"+
+		"     Publish values back with: echo name=value >> \"$RUNNR_OUTPUT\" (or $RUNNR_SECRET).\n"+
+		"     Type `exit` to return."))
+	if t.interrupts != nil {
+		t.interrupts.Store(true)
+		defer t.interrupts.Store(false)
+	}
+	err := t.openShell(ctx, idx)
+	fmt.Fprintln(t.out, t.c("2", "  ── back in runnr"))
+	return err
+}
+
+func (t *Terminal) Confirm(ctx context.Context, idx int, _ runbook.Step, command string) (bool, error) {
 	fmt.Fprintln(t.out, t.c("2", "  will run:"))
 	for _, l := range strings.Split(strings.TrimRight(command, "\n"), "\n") {
 		fmt.Fprintln(t.out, t.c("2", "    "+l))
 	}
-	a, err := t.choose(ctx, "Run this step? [y]es / [s]kip / [a]bort:",
-		map[string]string{"y": "y", "yes": "y", "s": "s", "skip": "s", "n": "s", "a": "a", "abort": "a"}, "")
+	a, err := t.stepPrompt(ctx, idx, "Run this step? [y]es / [s]kip / [a]bort",
+		map[string]string{"y": "y", "yes": "y", "s": "s", "skip": "s", "a": "a", "abort": "a"}, "")
 	if err != nil {
 		return false, err
 	}
@@ -225,11 +307,11 @@ func (t *Terminal) Confirm(ctx context.Context, _ int, _ runbook.Step, command s
 	return a == "y", nil
 }
 
-func (t *Terminal) Manual(ctx context.Context, _ int, _ runbook.Step, text string) (engine.ManualOutcome, string, error) {
+func (t *Terminal) Manual(ctx context.Context, idx int, _ runbook.Step, text string) (engine.ManualOutcome, string, error) {
 	for _, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		fmt.Fprintln(t.out, "  "+t.c("35", "☞ ")+l)
 	}
-	a, err := t.choose(ctx, "[d]one / [s]kip / [f]ail / [a]bort:",
+	a, err := t.stepPrompt(ctx, idx, "[d]one / [s]kip / [f]ail / [a]bort",
 		map[string]string{"d": "d", "done": "d", "s": "s", "skip": "s", "f": "f", "fail": "f", "a": "a", "abort": "a"}, "")
 	if err != nil {
 		return "", "", err
@@ -247,11 +329,23 @@ func (t *Terminal) Manual(ctx context.Context, _ int, _ runbook.Step, text strin
 	return "", "", engine.ErrAborted
 }
 
-func (t *Terminal) OnFailure(ctx context.Context, _ int, _ runbook.Step, _ engine.StepResult) (engine.FailureAction, error) {
-	a, err := t.choose(ctx, "Step failed. [r]etry / [s]kip / [a]bort:",
-		map[string]string{"r": "r", "retry": "r", "s": "s", "skip": "s", "a": "a", "abort": "a"}, "a")
+func (t *Terminal) OnFailure(ctx context.Context, idx int, _ runbook.Step, _ engine.StepResult) (engine.FailureAction, string, error) {
+	a, err := t.stepPrompt(ctx, idx, "Step failed. [r]etry / [s]kip / [f]orce success / [a]bort",
+		map[string]string{"r": "r", "retry": "r", "s": "s", "skip": "s", "f": "f", "force": "f", "a": "a", "abort": "a"}, "a")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return map[string]engine.FailureAction{"r": engine.FailRetry, "s": engine.FailSkip, "a": engine.FailAbort}[a], nil
+	if a == "f" {
+		for {
+			fmt.Fprint(t.out, "  reason for accepting this failure (required): ")
+			reason, err := t.readLine(ctx)
+			if err != nil {
+				return "", "", err
+			}
+			if strings.TrimSpace(reason) != "" {
+				return engine.FailForce, reason, nil
+			}
+		}
+	}
+	return map[string]engine.FailureAction{"r": engine.FailRetry, "s": engine.FailSkip, "a": engine.FailAbort}[a], "", nil
 }

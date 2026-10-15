@@ -121,6 +121,16 @@ var schema = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS runs_by_runbook ON runs (runbook, id)`,
 	`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+	// Notes live outside the run record so they can be added while another
+	// process is still writing the run.
+	`CREATE TABLE IF NOT EXISTS run_notes (
+		run_id     TEXT NOT NULL,
+		step       INTEGER NOT NULL,
+		created_at TEXT NOT NULL,
+		author     TEXT NOT NULL,
+		text       TEXT NOT NULL
+	)`,
+	`CREATE INDEX IF NOT EXISTS run_notes_by_run ON run_notes (run_id, created_at)`,
 }
 
 func (s *Store) migrate(ctx context.Context) error {
@@ -416,7 +426,53 @@ func (s *Store) LoadRun(id string) (*engine.Run, error) {
 		return nil, err
 	}
 	var r engine.Run
-	return &r, json.Unmarshal([]byte(rec), &r)
+	if err := json.Unmarshal([]byte(rec), &r); err != nil {
+		return nil, err
+	}
+	return &r, s.attachNotes(&r)
+}
+
+// AddNote records an operator note on a step (0-based), or on the run
+// itself when step is -1.
+func (s *Store) AddNote(runID string, step int, author, text string) (engine.Note, error) {
+	n := engine.Note{Time: time.Now().UTC().Truncate(time.Microsecond), Author: author, Text: strings.TrimSpace(text)}
+	if n.Text == "" {
+		return n, errors.New("note is empty")
+	}
+	r, err := s.LoadRun(runID)
+	if err != nil {
+		return n, err
+	}
+	if step < -1 || step >= len(r.Steps) {
+		return n, fmt.Errorf("run %s has no step %d", runID, step+1)
+	}
+	_, err = s.db.Exec(s.q(`INSERT INTO run_notes (run_id, step, created_at, author, text) VALUES (?, ?, ?, ?, ?)`),
+		runID, step, ts(n.Time), author, n.Text)
+	return n, err
+}
+
+func (s *Store) attachNotes(r *engine.Run) error {
+	rows, err := s.db.Query(s.q(`SELECT step, created_at, author, text FROM run_notes WHERE run_id = ? ORDER BY created_at`), r.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var step int
+		var created string
+		var n engine.Note
+		if err := rows.Scan(&step, &created, &n.Author, &n.Text); err != nil {
+			return err
+		}
+		n.Time = parseTS(created)
+		switch {
+		case step == -1:
+			r.Notes = append(r.Notes, n)
+		case step >= 0 && step < len(r.Steps):
+			r.Steps[step].Notes = append(r.Steps[step].Notes, n)
+		}
+	}
+	return rows.Err()
 }
 
 // ListRuns returns runs newest first, without step detail.
@@ -454,7 +510,12 @@ func (s *Store) PruneRuns(cutoff time.Time) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	_, err = s.db.Exec(`DELETE FROM run_notes WHERE run_id NOT IN (SELECT id FROM runs)`)
+	return n, err
 }
 
 // ---------- stats & import ----------

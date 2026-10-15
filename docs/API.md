@@ -46,6 +46,7 @@ overwriting a newer save.
 | POST | `/api/runs/{id}/answer` | `{question_id, value, note?}` | `204` |
 | POST | `/api/runs/{id}/cancel` | | `204` |
 | POST | `/api/runs/{id}/resume` | start request (no `runbook`/`from`) | like `POST /api/runs` |
+| POST | `/api/runs/{id}/notes` | `{step, text, author?}` (`step` 1-based; `0` = the run) | `201 {time, author, text}` |
 
 Start request:
 
@@ -61,15 +62,16 @@ Start request:
 }
 ```
 
-A run record has `status` (`running`, `succeeded`, `failed`, `aborted`) and a
-`steps` array with each step's `status`, `command`, `output` (last 64 KiB),
-`exit_code`, `error`, `note` and timings, plus `runbook_version`. Secrets are masked.
+A run record has `status` (`running`, `succeeded`, `failed`, `aborted`), `notes`,
+and a `steps` array with each step's `status` (also `pending`, `skipped`, or
+`forced`), `command`, `output` (last 64 KiB), `exit_code`, `error`, `note`
+(system note, e.g. the force reason), `notes` (operator notes) and timings, plus `runbook_version`. Secrets are masked.
 
 ### Interactive runs over the API
 
 Start without `unattended`, then read `/events`. Each event is
 `{seq, kind, step, ...}`; kinds are `run_started`, `step_started`, `output`,
-`step_finished`, `run_finished`, plus `question` and `answered`. Answer a
+`step_finished`, `run_finished`, plus `question`, `answered` and `note`. Answer a
 `question` with `POST /answer`:
 
 | `question.type` | values |
@@ -77,7 +79,7 @@ Start without `unattended`, then read `/events`. Each event is
 | `input` | the input's value |
 | `confirm` | `run`, `skip`, `abort` |
 | `manual` | `done`, `skip`, `fail`, `abort` (optional `note`) |
-| `failure` | `retry`, `skip`, `abort` |
+| `failure` | `retry`, `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
 
 On reconnect the stream replays from `seq` 0.
 

@@ -162,3 +162,53 @@ func TestRunbookConflict(t *testing.T) {
 		t.Fatalf("versions %+v", vs)
 	}
 }
+
+func TestForceAndNotesOverHTTP(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+
+	do(t, "POST", ts.URL+"/api/runbooks", "name: f\nsteps:\n  - {name: bad, run: 'exit 1'}\n  - {name: next, run: 'true'}\n", nil)
+	res := do(t, "POST", ts.URL+"/api/runs", `{"runbook":"f"}`, nil)
+	var started struct{ ID string }
+	json.NewDecoder(res.Body).Decode(&started)
+
+	evs, err := http.Get(ts.URL + "/api/runs/" + started.ID + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evs.Body.Close()
+	sc := bufio.NewScanner(evs.Body)
+	deadline := time.AfterFunc(10*time.Second, func() { evs.Body.Close() })
+	defer deadline.Stop()
+	asked := 0
+	for sc.Scan() {
+		line, ok := strings.CutPrefix(sc.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var e WireEvent
+		json.Unmarshal([]byte(line), &e)
+		if e.Kind == "question" {
+			asked++
+			// First a force without a reason (re-asked), then with one.
+			note := ""
+			if asked == 2 {
+				note = "accepted: expected on staging"
+				do(t, "POST", ts.URL+"/api/runs/"+started.ID+"/notes", `{"step":1,"author":"t","text":"investigating"}`, nil)
+			}
+			body, _ := json.Marshal(Answer{QuestionID: e.Question.ID, Value: "force", Note: note})
+			do(t, "POST", ts.URL+"/api/runs/"+started.ID+"/answer", string(body), nil)
+		}
+		if e.Kind == engine.EventRunFinished {
+			break
+		}
+	}
+	run, err := st.LoadRun(started.ID)
+	if err != nil || run.Status != engine.StatusSucceeded || run.Steps[0].Status != engine.StatusForced || asked != 2 {
+		t.Fatalf("%v %+v asked=%d", err, run, asked)
+	}
+	if len(run.Steps[0].Notes) != 1 || run.Steps[0].Notes[0].Text != "investigating" {
+		t.Fatalf("notes %+v", run.Steps[0].Notes)
+	}
+}

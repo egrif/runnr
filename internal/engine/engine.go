@@ -11,6 +11,8 @@ import (
 	"io"
 	"maps"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -29,7 +31,17 @@ const (
 	StatusFailed    Status = "failed"
 	StatusSkipped   Status = "skipped"
 	StatusAborted   Status = "aborted"
+	// StatusForced: the step failed but an operator accepted it, with a reason.
+	StatusForced Status = "forced"
 )
+
+// Note is an operator comment on a step or a run. Notes are stored apart
+// from the run record, so they can be added while a run is live or later.
+type Note struct {
+	Time   time.Time `json:"time"`
+	Author string    `json:"author,omitempty"`
+	Text   string    `json:"text"`
+}
 
 type StepResult struct {
 	Index    int       `json:"index"`
@@ -44,6 +56,7 @@ type StepResult struct {
 	Error    string    `json:"error,omitempty"`
 	Note     string    `json:"note,omitempty"`
 	Attempts int       `json:"attempts,omitempty"`
+	Notes    []Note    `json:"notes,omitempty"`
 	Started  time.Time `json:"started,omitzero"`
 	Ended    time.Time `json:"ended,omitzero"`
 }
@@ -62,6 +75,7 @@ type Run struct {
 	Started        time.Time         `json:"started"`
 	Ended          time.Time         `json:"ended,omitzero"`
 	Steps          []StepResult      `json:"steps"`
+	Notes          []Note            `json:"notes,omitempty"`
 }
 
 type EventKind string
@@ -97,6 +111,8 @@ const (
 	FailRetry FailureAction = "retry"
 	FailSkip  FailureAction = "skip"
 	FailAbort FailureAction = "abort"
+	// FailForce accepts the failure as success; the reason is required.
+	FailForce FailureAction = "force"
 )
 
 // Interactor supplies human decisions and receives progress events.
@@ -106,7 +122,8 @@ type Interactor interface {
 	AskInput(ctx context.Context, in runbook.Input) (string, error)
 	Confirm(ctx context.Context, idx int, step runbook.Step, command string) (bool, error)
 	Manual(ctx context.Context, idx int, step runbook.Step, instructions string) (ManualOutcome, string, error)
-	OnFailure(ctx context.Context, idx int, step runbook.Step, res StepResult) (FailureAction, error)
+	// OnFailure returns what to do; for FailForce, reason must be non-empty.
+	OnFailure(ctx context.Context, idx int, step runbook.Step, res StepResult) (action FailureAction, reason string, err error)
 }
 
 type Options struct {
@@ -122,12 +139,28 @@ type Options struct {
 	RunbookVersion int
 	// Save is called with a snapshot after every state change worth keeping.
 	Save func(*Run)
+	// ShellOnly runs only the steps marked always (the setup), then opens an
+	// interactive shell with the resulting environment. Needs a ShellHost.
+	ShellOnly bool
 }
 
 // Attacher is implemented by interactors that own a real terminal. Steps
 // marked tty run attached to it; without one they become manual steps.
 type Attacher interface {
 	AttachedIO() (stdin io.Reader, stdout, stderr io.Writer)
+}
+
+// ShellHost is an Attacher that can open an interactive shell mid-run. The
+// engine gives it a function that opens one with the run's environment
+// (inputs, published values, env) for the given step (-1 for none).
+// Values written to $RUNNR_OUTPUT/$RUNNR_SECRET in that shell flow back
+// into the run.
+type ShellHost interface {
+	Attacher
+	SetShell(open func(ctx context.Context, step int) error)
+	// OpenShell opens the shell (via the function given to SetShell),
+	// wrapping it in whatever the host needs, e.g. signal handling.
+	OpenShell(ctx context.Context, step int) error
 }
 
 const maxOutput = 64 << 10
@@ -170,12 +203,25 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: kind, Status: StatusPending})
 	}
 
+	if h, ok := ui.(ShellHost); ok {
+		h.SetShell(x.openShell)
+	}
+	if opts.ShellOnly {
+		x.opts.StartAt = len(rb.Steps)
+	}
 	x.save()
 	err := x.resolveInputs(ctx)
 	if err == nil {
 		x.notify(Event{Kind: EventRunStarted, Run: x.snapshot()})
 		x.save()
 		err = x.steps(ctx)
+		if err == nil && opts.ShellOnly {
+			if h, ok := ui.(ShellHost); ok {
+				err = h.OpenShell(ctx, -1)
+			} else {
+				err = errors.New("no terminal to open a shell in")
+			}
+		}
 	}
 	x.finish(ctx, err)
 	return x.run
@@ -328,16 +374,8 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 		res.Output = x.mask(out.combined)
 		res.ExitCode = out.exitCode
 		if out.err == nil {
-			if step.Capture != "" {
-				x.vars[step.Capture] = strings.TrimSpace(out.stdout)
-			}
-			for k, v := range out.outputs {
-				x.vars[k] = v
-			}
-			for k, v := range out.secrets {
-				x.vars[k] = v
-				x.addSecret(v)
-			}
+			x.apply(step, out)
+			res.Command = x.mask(res.Command) // in case it contained a just-published secret
 			res.Status, res.Error = StatusSucceeded, ""
 			x.stepDone(i)
 			return nil
@@ -351,11 +389,20 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 			x.stepDone(i)
 			return nil
 		}
-		action, err := x.ui.OnFailure(ctx, i, step, *x.result(i))
+		action, reason, err := x.ui.OnFailure(ctx, i, step, *x.result(i))
 		if err != nil {
 			return x.fail(i, err)
 		}
 		switch action {
+		case FailForce:
+			if strings.TrimSpace(reason) == "" {
+				return x.fail(i, errors.New("forcing a failed step requires a reason"))
+			}
+			// Accepted as success, so whatever it published is used.
+			x.apply(step, out)
+			res.Status, res.Note = StatusForced, "forced: "+strings.TrimSpace(reason)
+			x.stepDone(i)
+			return nil
 		case FailRetry:
 			x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "retrying…"})
 			continue
@@ -366,6 +413,20 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 		default:
 			return x.fail(i, fmt.Errorf("step %d (%s) failed: %s", i+1, step.Name, res.Error))
 		}
+	}
+}
+
+// apply records what a successful (or forced) step produced.
+func (x *executor) apply(step runbook.Step, out cmdResult) {
+	if step.Capture != "" {
+		x.vars[step.Capture] = strings.TrimSpace(out.stdout)
+	}
+	for k, v := range out.outputs {
+		x.vars[k] = v
+	}
+	for k, v := range out.secrets {
+		x.vars[k] = v
+		x.addSecret(v)
 	}
 }
 
@@ -492,7 +553,7 @@ var ErrAborted = errAborted
 // succeeded nor was skipped, or -1 if there's nothing left to do.
 func ResumePoint(r *Run) int {
 	for i, s := range r.Steps {
-		if s.Status != StatusSucceeded && s.Status != StatusSkipped {
+		if s.Status != StatusSucceeded && s.Status != StatusSkipped && s.Status != StatusForced {
 			return i
 		}
 	}
@@ -526,4 +587,68 @@ func (x *executor) render(text string) (string, error) {
 		}
 	}
 	return runbook.Render(text, vars)
+}
+
+// openShell runs an interactive shell attached to the terminal, with the
+// environment step idx would get (idx -1: no step-specific env or dir).
+func (x *executor) openShell(ctx context.Context, idx int) error {
+	a, ok := x.ui.(Attacher)
+	if !ok {
+		return errors.New("no terminal to open a shell in")
+	}
+	var step runbook.Step
+	if idx >= 0 && idx < len(x.rb.Steps) {
+		step = x.rb.Steps[idx]
+	}
+	env, err := x.env(step)
+	if err != nil {
+		return err
+	}
+	dir, err := x.render(step.Dir)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp("", "runnr-shell-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
+	env = append(env, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile, "RUNNR_SHELL=1")
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = nonEmpty(x.rb.Shell, "sh")
+	}
+	cmd := exec.CommandContext(ctx, shell)
+	cmd.Env, cmd.Dir = env, dir
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = a.AttachedIO()
+	err = cmd.Run()
+	var ee *exec.ExitError
+	if err != nil && !errors.As(err, &ee) { // a shell's exit status is just its last command's
+		return err
+	}
+
+	var res cmdResult
+	x.readOutputs(idx, &res, outFile, secFile)
+	x.apply(runbook.Step{}, res)
+	var names []string
+	for k := range res.outputs {
+		names = append(names, k)
+	}
+	for k := range res.secrets {
+		names = append(names, k+" (secret)")
+	}
+	if len(names) > 0 && idx >= 0 {
+		slices.Sort(names)
+		x.notify(Event{Kind: EventOutput, Step: idx, Stream: "info", Text: "shell published: " + strings.Join(names, ", ")})
+	}
+	return nil
+}
+
+func nonEmpty(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }

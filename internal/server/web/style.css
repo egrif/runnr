@@ -114,7 +114,7 @@ button:disabled { opacity: .5; cursor: default; }
 .icon { width: 18px; text-align: center; font-weight: 700; }
 .s-succeeded { color: var(--ok); }
 .s-failed, .s-aborted { color: var(--fail); }
-.s-skipped { color: var(--warn); }
+.s-skipped, .s-forced { color: var(--warn); }
 .s-running { color: var(--run); }
 .s-pending { color: var(--muted); }
 .badge { display: inline-block; padding: 1px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; }
@@ -159,3 +159,8 @@ tbody tr:hover { background: var(--bg); cursor: pointer; }
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .hint { grid-column: 1; }
 }
+
+.note { font-size: 13px; margin: 4px 0; }
+.notes { margin: 8px 0 12px; }
+button.link { background: none; border: none; padding: 2px 0; color: var(--accent); font-size: 13px; }
+button.link:hover { text-decoration: underline; }

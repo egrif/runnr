@@ -149,3 +149,29 @@ func TestRedact(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestNotes(t *testing.T) {
+	for name, s := range stores(t) {
+		t.Run(name, func(t *testing.T) {
+			s.db.Exec("DELETE FROM run_notes")
+			r := &engine.Run{ID: "n1", Runbook: "x", Status: engine.StatusRunning, Started: time.Now(), Steps: []engine.StepResult{{Name: "a"}, {Name: "b"}}}
+			s.SaveRun(r)
+			if _, err := s.AddNote("n1", 1, "eric", "checked the dashboard"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.AddNote("n1", -1, "eric", "window started late"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.AddNote("n1", 2, "eric", "x"); err == nil {
+				t.Fatal("out-of-range step should fail")
+			}
+			// The engine keeps rewriting the record; notes must survive that.
+			r.Status = engine.StatusSucceeded
+			s.SaveRun(r)
+			got, err := s.LoadRun("n1")
+			if err != nil || len(got.Steps[1].Notes) != 1 || got.Steps[1].Notes[0].Text != "checked the dashboard" || len(got.Notes) != 1 {
+				t.Fatalf("%+v %v", got, err)
+			}
+		})
+	}
+}

@@ -39,6 +39,6 @@ func (u Unattended) Manual(_ context.Context, _ int, step runbook.Step, _ string
 	return ManualFail, "manual step cannot run unattended", nil
 }
 
-func (u Unattended) OnFailure(context.Context, int, runbook.Step, StepResult) (FailureAction, error) {
-	return FailAbort, nil
+func (u Unattended) OnFailure(context.Context, int, runbook.Step, StepResult) (FailureAction, string, error) {
+	return FailAbort, "", nil
 }

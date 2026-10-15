@@ -3,7 +3,7 @@
 const $ = (sel, el = document) => el.querySelector(sel);
 const main = $("#main");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■", running: "▶", pending: "○" };
+const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■", running: "▶", pending: "○", forced: "⚑" };
 
 let runbooks = [];
 let stream = null; // active EventSource
@@ -32,6 +32,37 @@ async function login() {
     const res = await fetch("/api/login", { method: "POST", headers: { "X-Runnr": "1", "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
     if (res.ok) return;
   }
+}
+
+function author() {
+  let name = "";
+  try { name = localStorage.getItem("runnr.author") || ""; } catch {}
+  if (!name) {
+    name = (prompt("Your name, for notes:") || "").trim();
+    if (name) try { localStorage.setItem("runnr.author", name); } catch {}
+  }
+  return name;
+}
+
+async function addNote(runId, step, state) {
+  const text = (prompt(step ? `Note on step ${step}:` : "Note on this run:") || "").trim();
+  if (!text) return;
+  try {
+    const n = await api("POST", `/api/runs/${runId}/notes`, { step, text, author: author() });
+    pushNote(state, step - 1, n);
+    renderRun(state);
+  } catch (e) { toast(e.message); }
+}
+
+// pushNote adds a note unless it's already shown (live runs get notes both
+// from the initial load or our own POST, and from the event stream).
+function pushNote(state, idx, n) {
+  const list = idx < 0 ? (state.run.notes ||= []) : (state.steps[idx].notes ||= []);
+  if (!list.some((m) => m.time === n.time && m.text === n.text)) list.push(n);
+}
+
+function renderNotes(notes) {
+  return (notes || []).map((n) => `<div class="note">✎ <span class="muted">${new Date(n.time).toLocaleString()} · ${esc(n.author || "")}</span> ${esc(n.text)}</div>`).join("");
 }
 
 // sectionHeading returns a heading when step i starts a new section.
@@ -264,11 +295,12 @@ function applyEvent(state, e) {
     case "run_finished":
       state.run = e.run;
       if (e.kind === "run_started") state.steps.forEach((s) => (s.log = []));
-      e.run.steps.forEach((r, i) => Object.assign(state.steps[i], r));
+      e.run.steps.forEach((r, i) => Object.assign(state.steps[i], { ...r, notes: state.steps[i].notes }));
+      e.run.notes = state.run.notes;
       if (e.kind === "run_finished") { state.question = null; stream?.close(); }
       break;
     case "step_started":
-      Object.assign(state.steps[e.step], e.result);
+      Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes });
       state.steps[e.step].log = [];
       state.current = e.step;
       state.open.add(e.step);
@@ -277,7 +309,7 @@ function applyEvent(state, e) {
       state.steps[e.step].log.push({ stream: e.stream, text: e.text });
       break;
     case "step_finished":
-      Object.assign(state.steps[e.step], e.result);
+      Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes });
       if (e.result.status === "succeeded" && !e.result.output) state.open.delete(e.step);
       break;
     case "question":
@@ -287,12 +319,15 @@ function applyEvent(state, e) {
     case "answered":
       if (state.question?.id === e.answered) state.question = null;
       break;
+    case "note":
+      pushNote(state, e.step, e.note);
+      break;
   }
 }
 
 function renderRun(state) {
   const { run } = state;
-  const stopAt = state.steps.findIndex((s) => s.status !== "succeeded" && s.status !== "skipped");
+  const stopAt = state.steps.findIndex((s) => !["succeeded", "skipped", "forced"].includes(s.status));
   state.resumable = ["failed", "aborted"].includes(run.status) && stopAt >= 0 ? stopAt + 1 : 0;
   const scroll = {};
   main.querySelectorAll("pre.log").forEach((p) => (scroll[p.dataset.i] = p.scrollHeight - p.scrollTop - p.clientHeight < 8));
@@ -311,6 +346,7 @@ function renderRun(state) {
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
+    <div class="notes">${renderNotes(run.notes)}<button class="link" data-note="0">✎ Add run note</button></div>
     ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
     ${state.question?.step === -1 ? renderQuestion(state.question, run.id) : ""}
     <ol class="steps">${state.steps.map((s, i) => `${sectionHeading(state.steps, i)}
@@ -322,15 +358,21 @@ function renderRun(state) {
           <span class="meta">${[s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}</span>
         </div>
         ${state.question?.step === i ? `<div class="step-body">${renderQuestion(state.question, run.id)}</div>` : ""}
+        ${s.notes?.length ? `<div class="step-body">${renderNotes(s.notes)}</div>` : ""}
         ${state.open.has(i) ? `<div class="step-body">
           ${s.command ? `<pre class="cmd">${esc(s.command)}</pre>` : ""}
           ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : ""}
           ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}
+          <button class="link" data-note="${i + 1}">✎ Add note</button>
         </div>` : ""}
       </li>`).join("")}
     </ol>`;
 
   main.querySelectorAll("pre.log").forEach((p) => { if (scroll[p.dataset.i] !== false) p.scrollTop = p.scrollHeight; });
+  main.querySelectorAll("[data-note]").forEach((b) => (b.onclick = (ev) => {
+    ev.stopPropagation();
+    addNote(run.id, +b.dataset.note, state);
+  }));
   main.querySelectorAll("[data-toggle]").forEach((h) => (h.onclick = () => {
     const i = +h.dataset.toggle;
     state.open.has(i) ? state.open.delete(i) : state.open.add(i);
@@ -348,7 +390,7 @@ function renderRun(state) {
   if (q) bindQuestion(q, state.question, run.id);
 }
 
-const QLABELS = { run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry" };
+const QLABELS = { run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…" };
 
 function renderQuestion(q, runId) {
   let body = "";
@@ -371,6 +413,11 @@ function bindQuestion(el, q, runId) {
     let value = b.dataset.v;
     if (value === "submit") value = el.querySelector("[name=value]").value;
     const note = el.querySelector("[name=note]")?.value || "";
+    if (value === "force") {
+      const reason = (prompt("Why accept this failure as success? (required)") || "").trim();
+      if (!reason) return toast("Forcing a step needs a reason");
+      return send(value, reason);
+    }
     if (value === "fail" && !note && q.type === "manual") {
       const reason = prompt("Why did this step fail?") ?? "";
       return send(value, reason);

@@ -24,6 +24,7 @@ type scripted struct {
 	confirms []bool
 	manuals  []ManualOutcome
 	failures []FailureAction
+	reason   string
 	output   []string
 }
 
@@ -45,10 +46,10 @@ func (s *scripted) Manual(context.Context, int, runbook.Step, string) (ManualOut
 	s.manuals = s.manuals[1:]
 	return m, "", nil
 }
-func (s *scripted) OnFailure(context.Context, int, runbook.Step, StepResult) (FailureAction, error) {
+func (s *scripted) OnFailure(context.Context, int, runbook.Step, StepResult) (FailureAction, string, error) {
 	f := s.failures[0]
 	s.failures = s.failures[1:]
-	return f, nil
+	return f, s.reason, nil
 }
 
 func statuses(r *Run) string {
@@ -270,5 +271,30 @@ func TestTTYWithoutTerminalBecomesManual(t *testing.T) {
 	run := Execute(context.Background(), rb, Unattended{}, "", Options{})
 	if run.Status != StatusSucceeded || run.Steps[0].Status != StatusSkipped || run.Steps[0].Kind != "tty" {
 		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+}
+
+func TestForceFailedStep(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - {name: flaky, run: 'echo "v=1" >> "$RUNNR_OUTPUT"; exit 2'}
+  - {name: uses, run: 'echo got $v'}
+`)
+	ui := &scripted{failures: []FailureAction{FailForce}, reason: "known flake, verified by hand"}
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded || statuses(run) != "forced,succeeded" {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+	if run.Steps[0].Note != "forced: known flake, verified by hand" || ui.output[0] != "got 1" {
+		t.Fatalf("note %q output %q", run.Steps[0].Note, ui.output)
+	}
+	if ResumePoint(run) != -1 {
+		t.Fatal("forced steps count as done for resume")
+	}
+
+	ui = &scripted{failures: []FailureAction{FailForce}}
+	if run := Execute(context.Background(), rb, ui, "", Options{Interactive: true}); run.Status != StatusFailed {
+		t.Fatalf("force without reason must fail, got %s", run.Status)
 	}
 }

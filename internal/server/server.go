@@ -72,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
+	mux.HandleFunc("POST /api/runs/{id}/notes", s.addNote)
 	return s.guard(mux)
 }
 
@@ -491,6 +492,30 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// addNote attaches an operator note to a step (1-based "step"), or to the
+// run when step is 0. Works for live and finished runs.
+func (s *Server) addNote(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Step   int    `json:"step"`
+		Author string `json:"author"`
+		Text   string `json:"text"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	id := r.PathValue("id")
+	n, err := s.st.AddNote(id, body.Step-1, nonEmpty(strings.TrimSpace(body.Author), "anonymous"), body.Text)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if l := s.getLive(id); l != nil {
+		l.note(body.Step-1, n)
+	}
+	writeJSON(w, http.StatusCreated, n)
 }
 
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
