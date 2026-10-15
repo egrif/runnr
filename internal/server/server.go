@@ -76,6 +76,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
 	mux.HandleFunc("POST /api/runs/{id}/notes", s.addNote)
+	mux.HandleFunc("GET /api/runs/{id}/preview", s.runPreview)
+	mux.HandleFunc("GET /api/runs/{id}/controls", s.getControls)
+	mux.HandleFunc("PUT /api/runs/{id}/controls", s.setControls)
+	mux.HandleFunc("POST /api/preview", s.preview)
+	mux.HandleFunc("POST /api/parse", s.parse)
+	mux.HandleFunc("POST /api/format", s.format)
 	return s.guard(mux)
 }
 
@@ -290,10 +296,53 @@ type startReq struct {
 	From string `json:"from"`
 	// Wait blocks until the run finishes and returns its record.
 	Wait bool `json:"wait"`
-	// Skip lists 1-based step numbers to leave out.
+	// Skip lists 1-based step numbers to leave out. On resume, sending it
+	// (even empty) replaces the automatic "start where it stopped".
 	Skip []int `json:"skip"`
+	// PauseBefore / PauseAfter list 1-based steps to stop at (interactive).
+	PauseBefore []int `json:"pause_before"`
+	PauseAfter  []int `json:"pause_after"`
 	// StepMode pauses before every step (interactive runs).
 	StepMode bool `json:"step_mode"`
+	// Previous is a run ID to compare against ("last time"); defaults to the
+	// resumed run, else the runbook's latest run.
+	Previous string `json:"previous"`
+}
+
+// toControls converts 1-based API step lists.
+func toControls(req startReq, n int) (engine.ControlsView, error) {
+	cv := engine.ControlsView{StepAll: req.StepMode}
+	for _, f := range []struct {
+		src []int
+		dst *[]int
+	}{{req.Skip, &cv.Skip}, {req.PauseBefore, &cv.PauseBefore}, {req.PauseAfter, &cv.PauseAfter}} {
+		for _, i := range f.src {
+			if i < 1 || i > n {
+				return cv, fmt.Errorf("no step %d (steps are 1-%d)", i, n)
+			}
+			*f.dst = append(*f.dst, i-1)
+		}
+	}
+	return cv, nil
+}
+
+// controlsJSON is ControlsView with 1-based step numbers, as the API uses.
+type controlsJSON struct {
+	StepAll     bool  `json:"step_mode"`
+	Skip        []int `json:"skip"`
+	PauseBefore []int `json:"pause_before"`
+	PauseAfter  []int `json:"pause_after"`
+}
+
+func toJSON(cv engine.ControlsView) controlsJSON {
+	plus := func(xs []int) []int {
+		out := make([]int, len(xs))
+		for i, x := range xs {
+			out[i] = x + 1
+		}
+		return out
+	}
+	return controlsJSON{cv.StepAll, plus(cv.Skip), plus(cv.PauseBefore), plus(cv.PauseAfter)}
 }
 
 func decode(r *http.Request, v any) error {
@@ -354,17 +403,25 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 		vars[k] = v
 	}
 	req.Vars = vars
+	if req.Skip != nil {
+		start = 0 // the operator chose the steps explicitly
+	}
+	if req.Previous == "" {
+		req.Previous = prev.ID
+	}
 	s.launch(w, r, rb, ver, req, start, prev.ID, engine.ResumeState(prev))
 }
 
 func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, ver int, req startReq, start int, resumes string, state map[string]string) {
-	skip := map[int]bool{}
-	for _, n := range req.Skip {
-		if n < 1 || n > len(rb.Steps) {
-			writeErr(w, fmt.Errorf("skip: no step %d", n))
-			return
-		}
-		skip[n-1] = true
+	cv, err := toControls(req, len(rb.Steps))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	previous, err := s.previousRun(rb.Name, req.Previous)
+	if err != nil {
+		writeErr(w, err)
+		return
 	}
 	if req.Wait && !req.Unattended {
 		writeErr(w, errors.New("wait requires unattended (nobody could answer prompts)"))
@@ -374,6 +431,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	ctx, cancel := context.WithCancel(context.Background())
 	l := newLiveRun(id, cancel)
 	l.windows = s.cfg.Local
+	l.ctl = engine.NewControls(cv)
 	var ui engine.Interactor = l
 	if req.Unattended {
 		ui = engine.Unattended{OnEvent: l.Notify, AssumeYes: req.Yes}
@@ -392,8 +450,8 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 			DryRun:         req.DryRun,
 			Interactive:    !req.Unattended,
 			StartAt:        start,
-			Skip:           skip,
-			StepMode:       req.StepMode && !req.Unattended,
+			Controls:       l.ctl,
+			Previous:       previous,
 			State:          state,
 			Resumes:        resumes,
 			RunbookVersion: ver,
@@ -422,6 +480,141 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	}
 }
 
+// previousRun loads the run to compare against: id if given, else the
+// runbook's latest run (nil if none).
+func (s *Server) previousRun(runbookName, id string) (*engine.Run, error) {
+	if id == "" {
+		runs, err := s.st.ListRuns(runbookName, 1)
+		if err != nil || len(runs) == 0 {
+			return nil, err
+		}
+		id = runs[0].ID
+	}
+	return s.st.LoadRun(id)
+}
+
+type previewReq struct {
+	Runbook string            `json:"runbook"`
+	Raw     string            `json:"raw"` // preview unsaved YAML instead of a stored runbook
+	Vars    map[string]string `json:"vars"`
+	// FromRun fills in values from that run's state (as a resume would).
+	FromRun string `json:"from_run"`
+}
+
+// preview shows what each step would do with the given inputs.
+func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
+	var req previewReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	var rb *runbook.Runbook
+	var err error
+	if req.Raw != "" {
+		rb, err = runbook.Parse([]byte(req.Raw))
+	} else {
+		rb, _, err = s.st.Get(req.Runbook)
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	var state map[string]string
+	if req.FromRun != "" {
+		prev, err := s.st.LoadRun(req.FromRun)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		state = prev.State
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"steps": engine.Preview(rb, req.Vars, state)})
+}
+
+// runPreview shows what a run's steps would do with its inputs and the
+// state it had reached (for steps it hasn't run yet).
+func (s *Server) runPreview(w http.ResponseWriter, r *http.Request) {
+	run, err := s.st.LoadRun(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	rb, _, err := s.st.Get(run.Runbook)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"steps": engine.Preview(rb, run.Inputs, run.State)})
+}
+
+// controls reads or changes a live run's skip/pause settings; changes
+// apply to steps it hasn't reached.
+func (s *Server) getControls(w http.ResponseWriter, r *http.Request) {
+	l := s.getLive(r.PathValue("id"))
+	if l == nil || l.ctl == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	writeJSON(w, http.StatusOK, toJSON(l.ctl.View()))
+}
+
+func (s *Server) setControls(w http.ResponseWriter, r *http.Request) {
+	l := s.getLive(r.PathValue("id"))
+	if l == nil || l.ctl == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	var req startReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	n := 1 << 30
+	if run, err := s.st.LoadRun(l.id); err == nil {
+		n = len(run.Steps)
+	}
+	cv, err := toControls(req, n)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	l.ctl.Set(cv)
+	l.publish(WireEvent{Event: engine.Event{Kind: "controls", Step: -1}, Controls: ptr(toJSON(cv))})
+	writeJSON(w, http.StatusOK, toJSON(cv))
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// parse turns YAML into the structured form the editor uses.
+func (s *Server) parse(w http.ResponseWriter, r *http.Request) {
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	rb, err := runbook.Parse(raw)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "runbook": rb})
+}
+
+// format turns the structured form back into YAML.
+func (s *Server) format(w http.ResponseWriter, r *http.Request) {
+	var rb runbook.Runbook
+	if err := decode(r, &rb); err != nil {
+		writeErr(w, err)
+		return
+	}
+	raw, err := runbook.Format(&rb)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "raw": string(raw)})
+}
+
 func (s *Server) getLive(id string) *liveRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -447,7 +640,14 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"run": run, "live": s.getLive(run.ID) != nil})
+	resp := map[string]any{"run": run, "live": false}
+	if l := s.getLive(run.ID); l != nil {
+		resp["live"] = true
+		if l.ctl != nil {
+			resp["controls"] = toJSON(l.ctl.View())
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) runEvents(w http.ResponseWriter, r *http.Request) {

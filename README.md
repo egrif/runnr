@@ -47,6 +47,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr delete <name>` | Delete (`-f` to skip the prompt) |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
 | `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |
+| `runnr rerun <run-id>` | Run again with an earlier run's inputs, comparing each step with what it did then |
 | `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped |
 | `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open `$SHELL` with that environment |
 | `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
@@ -82,21 +83,35 @@ SQLite database imports them once, on first use, and leaves the files alone.
 ### Running
 
 ```
-runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--no-review] [-u] [-y] [--dry-run] [--json] [-q] [--no-history]
+runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--pause-before 4] [--pause-after 4,9]
+                      [--no-review] [-u] [-y] [--dry-run] [--json] [-q] [--no-history]
 ```
 
 | Mode | Behaviour |
 |---|---|
-| **Interactive** (default on a TTY) | Asks for missing inputs, shows the plan for review (deselect steps, view any step), then runs. It stops on its own for confirm-gated steps, manual steps and failures (retry / run it myself / skip / force / abort). |
+| **Interactive** (default on a TTY) | Asks for missing inputs, shows the plan for review, then runs. It stops on its own for confirm-gated steps, manual steps and failures (retry / run it myself / skip / force / abort). |
 | **Step by step** (`--step`) | Interactive, but pauses before *every* step: run / run it myself / skip / continue without pausing / abort. |
 | **Unattended** (`-u`, or stdin isn't a TTY) | Never prompts. Inputs from `-v` or defaults. Confirm-gated steps fail unless `-y`. Manual steps follow their `unattended` policy. Any failure aborts. |
 
 `--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted.
 
+**Review.** Before an interactive run, rerun or resume starts, you get the
+plan: every step with its kind, whether it confirms on its own, and how it
+went last time (the run being rerun/resumed, otherwise this runbook's latest
+run). From there: type step numbers to skip/include them, `b 4` / `a 4` to
+pause before/after a step, `v 4` to see what it will do, `l 4` to see what it
+did last time, `step` to step through everything, Enter to start.
+
+**Pausing.** *Before* a step: run / run it myself / skip / continue without
+pausing / abort. *After* a step: look at the result (and its `expect`), then
+continue / run it again / mark it failed (then the usual failure choices) /
+abort. Steps with `confirm: true` always ask before running.
+
 At any step prompt you can also:
 
 - **`v`**: view the step as it will run: commands with current values filled
   in, expected outcome, directory, what it publishes.
+- **`l`**: what this step did last time (status, command, output, notes).
 - **`e`**: show the run's state: every variable so far, secrets as `****`.
 - **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
 - **`!`**: open your `$SHELL` with the run's environment (inputs, values
@@ -119,11 +134,24 @@ multi-day procedures, abort at a "wait" step and resume later.
 
 ## GUI
 
-`runnr serve` serves a local web app: browse/filter runbooks, edit YAML with live
-validation, review and deselect steps before starting (each step expands to its code and
-expected outcome), run interactively, step by step, or unattended, watch
-output stream in, answer prompts in the browser, see the run's state, add
-notes, resume failed runs, and browse history.
+`runnr serve` serves a local web app:
+
+- **Run, Run again, Resume** all open the same launch screen: inputs (carried
+  over for rerun/resume), interactive / unattended / step through everything,
+  and per step: include or skip, ⏸ pause before, ⏸ pause after, a badge if it
+  confirms on its own, and last time's result. Click a step to see **what it
+  will do** (rendered with your inputs, and the earlier run's state on
+  resume) next to **what it did last time**.
+- **While a run is live**, upcoming steps can still be skipped or paused, and
+  step-through switched on or off. Open any step for its output, what it will
+  do, or last time's result. Prompts (confirm, manual, failure, pause before
+  and after) are answered in the browser; notes and the run's state are there
+  too.
+- **Editing**: YAML with live validation, or a **structured view** (switch
+  any time) to edit inputs and steps as forms, reorder, duplicate and delete
+  steps. The structured view saves by regenerating the YAML, so YAML comments
+  are dropped (it asks first).
+- History, versions, notes.
 
 When the server runs on your own machine, steps that need a terminal (`tty`),
 "run it myself", and "open shell" open a **Terminal window** with the run's

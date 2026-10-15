@@ -122,7 +122,7 @@ async function route() {
   renderSidebar();
   let m;
   try {
-    if ((m = h.match(/^#\/runbooks\/([^/]+)(?:\/(edit))?$/))) return await viewRunbook(decodeURIComponent(m[1]), m[2] || "run");
+    if ((m = h.match(/^#\/runbooks\/([^/?]+)(?:\/(edit))?(?:\?(.*))?$/))) return await viewRunbook(decodeURIComponent(m[1]), m[2] || "run", new URLSearchParams(m[3] || ""));
     if ((m = h.match(/^#\/runs\/([^/]+)$/))) return await viewRun(decodeURIComponent(m[1]));
     if (h === "#/new") return await viewNew();
     if (h.startsWith("#/history")) return await viewHistory();
@@ -141,7 +141,7 @@ function viewHome() {
 
 // ---------- runbook: run + edit ----------
 
-async function viewRunbook(name, tab) {
+async function viewRunbook(name, tab, query) {
   const data = await api("GET", `/api/runbooks/${encodeURIComponent(name)}`);
   const rb = data.runbook;
   const href = `#/runbooks/${encodeURIComponent(name)}`;
@@ -158,12 +158,8 @@ async function viewRunbook(name, tab) {
     </nav>
     <section id="tab"></section>`;
   if (tab === "edit" || !rb) return renderEditor($("#tab"), data.raw, name, data.error, data.version, data.updated_at);
-  renderRunForm($("#tab"), rb);
-}
-
-function stepFlags(s) {
-  return [s.manual ? "manual" : s.tty ? "terminal" : "run", s.always && "always", s.confirm && "confirm", s.when && "conditional",
-    s.continue_on_error && "continue on error", s.retries && `retries ${s.retries}`, s.timeout && `timeout ${s.timeout}`].filter(Boolean).join(" · ");
+  const mode = query.get("resume") ? "resume" : query.get("rerun") ? "rerun" : "run";
+  await viewLaunch($("#tab"), name, mode, query.get("resume") || query.get("rerun") || "");
 }
 
 // stepDetails shows what a step does: code, expected outcome, outputs.
@@ -177,136 +173,6 @@ function stepDetails(s) {
     ${outs.length ? `<div class="muted">publishes: ${outs.map((o) => `<code>${esc(o)}</code>`).join(" ")}</div>` : ""}`;
 }
 
-function renderRunForm(el, rb) {
-  const inputs = rb.inputs || [];
-  const field = (i) => {
-    const id = `in-${i.name}`;
-    let ctl;
-    if (i.choices?.length) {
-      ctl = `<select id="${id}" name="${esc(i.name)}">${i.required && !i.default ? `<option value=""></option>` : ""}${i.choices.map((c) => `<option ${c === i.default ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
-    } else {
-      ctl = `<input id="${id}" name="${esc(i.name)}" type="${i.secret ? "password" : "text"}" placeholder="${esc(i.default || "")}" ${i.required && !i.default ? "required" : ""}>`;
-    }
-    return `<label for="${id}">${esc(i.name)}${i.required ? " *" : ""}</label>${ctl}${i.description ? `<div class="hint">${esc(i.description)}</div>` : ""}`;
-  };
-  el.innerHTML = `
-    <form id="run-form">
-      <div class="card">
-        ${inputs.length ? `<div class="form-grid">${inputs.map(field).join("")}</div>` : `<div class="muted">This runbook takes no inputs.</div>`}
-        <div class="options">
-          <label><input type="radio" name="mode" value="interactive" checked> Interactive</label>
-          <label><input type="radio" name="mode" value="unattended"> Unattended</label>
-          <label title="Ask before every step: run, run it myself, skip, or continue"><input type="checkbox" name="stepmode"> Pause before each step</label>
-          <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
-          <label><input type="checkbox" name="dry"> Dry run</label>
-        </div>
-      </div>
-      <div class="row" style="margin:20px 0 8px">
-        <h2 style="margin:0">Review steps</h2>
-        <span class="muted" id="count"></span>
-        <span class="spacer"></span>
-        <label class="muted">Start at <select name="from"><option value="1">step 1</option>${rb.steps.slice(1).map((s, i) => `<option value="${i + 2}">${i + 2}. ${esc(s.name)}</option>`).join("")}</select></label>
-        <button type="button" id="all">All</button><button type="button" id="none">None</button>
-      </div>
-      <ol class="steps">${rb.steps.map((s, i) => `${sectionHeading(rb.steps, i)}
-        <li class="step"><details><summary class="step-head">
-          <input type="checkbox" name="step" value="${i + 1}" checked>
-          <span class="n">${i + 1}</span><span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
-          <span class="meta">${stepFlags(s)}</span></summary>
-          <div class="step-body">${stepDetails(s)}</div></details></li>`).join("")}
-      </ol>
-      <div class="row start-bar"><button class="primary" type="submit" id="start">▶ Start run</button></div>
-    </form>`;
-  const form = $("#run-form");
-  const boxes = [...form.querySelectorAll("input[name=step]")];
-  const sync = () => {
-    form.yes.disabled = form.mode.value !== "unattended";
-    form.stepmode.disabled = form.mode.value === "unattended";
-    const n = boxes.filter((b) => b.checked).length;
-    $("#count").textContent = `${n} of ${boxes.length} selected`;
-    $("#start").textContent = `▶ Start run (${n} step${n === 1 ? "" : "s"})`;
-    boxes.forEach((b) => b.closest(".step").classList.toggle("dim", !b.checked));
-  };
-  form.addEventListener("change", sync);
-  boxes.forEach((b) => b.addEventListener("click", (e) => e.stopPropagation()));
-  form.from.addEventListener("change", () => {
-    const from = +form.from.value;
-    boxes.forEach((b, i) => (b.checked = i + 1 >= from || !!rb.steps[i].always));
-    sync();
-  });
-  $("#all").onclick = () => { boxes.forEach((b) => (b.checked = true)); sync(); };
-  $("#none").onclick = () => { boxes.forEach((b) => (b.checked = false)); sync(); };
-  sync();
-  form.addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const vars = {};
-    inputs.forEach((i) => (vars[i.name] = form.elements[i.name].value));
-    const skip = boxes.filter((b) => !b.checked).map((b) => +b.value);
-    try {
-      const { id } = await api("POST", "/api/runs", {
-        runbook: rb.name, vars, unattended: form.mode.value === "unattended", yes: form.yes.checked,
-        dry_run: form.dry.checked, step_mode: form.stepmode.checked, skip,
-      });
-      location.hash = `#/runs/${id}`;
-    } catch (e) { toast(e.message); }
-  });
-}
-
-function renderEditor(el, raw, name, initialError, version, updatedAt) {
-  el.innerHTML = `
-    <div class="row" style="margin-bottom:8px">
-      <button class="primary" id="save">Save</button>
-      <button id="validate">Validate</button>
-      ${version ? `<span class="muted">version ${version} · saved ${new Date(updatedAt).toLocaleString()}</span>` : ""}
-      <span class="spacer"></span>
-      ${name ? `<button class="danger" id="delete">Delete</button>` : ""}
-    </div>
-    <div id="validation" class="validation"></div>
-    <textarea class="editor" id="yaml" spellcheck="false">${esc(raw)}</textarea>
-    <details class="card" style="margin-top:12px"><summary>Format reference</summary><pre class="cmd">${esc(REFERENCE)}</pre></details>`;
-  const ta = $("#yaml");
-  const show = (res) => {
-    const v = $("#validation");
-    v.className = "validation " + (res.ok ? "ok" : "bad");
-    v.textContent = res.ok ? "✔ valid" : res.error;
-  };
-  if (initialError) show({ ok: false, error: initialError });
-  const validate = async () => show(await api("POST", "/api/validate", ta.value, true));
-  let t;
-  ta.addEventListener("input", () => { clearTimeout(t); t = setTimeout(validate, 400); });
-  ta.addEventListener("keydown", (e) => {
-    if (e.key === "Tab") {
-      e.preventDefault();
-      ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end");
-    } else if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-      e.preventDefault();
-      $("#save").click();
-    }
-  });
-  $("#validate").onclick = validate;
-  $("#save").onclick = async () => {
-    try {
-      const rb = name
-        ? await api("PUT", `/api/runbooks/${encodeURIComponent(name)}`, ta.value, true, { "If-Match": String(version) })
-        : await api("POST", "/api/runbooks", ta.value, true);
-      toast("Saved");
-      await loadRunbooks();
-      location.hash = `#/runbooks/${encodeURIComponent(rb.name)}`;
-    } catch (e) {
-      show({ ok: false, error: /changed since/.test(e.message)
-        ? `${e.message}\nSomeone saved a newer version. Copy your changes, reload, and re-apply them.`
-        : e.message });
-    }
-  };
-  if (name) $("#delete").onclick = async () => {
-    if (!confirm(`Delete runbook "${name}"?`)) return;
-    await api("DELETE", `/api/runbooks/${encodeURIComponent(name)}`);
-    toast("Deleted");
-    await loadRunbooks();
-    location.hash = "#/";
-  };
-}
-
 async function viewNew() {
   const { raw } = await api("GET", "/api/template?name=my-runbook");
   main.innerHTML = `<h1>New runbook</h1><p class="muted">Edit the starter below; the <code>name</code> field becomes the runbook's identifier.</p><section id="tab"></section>`;
@@ -316,8 +182,16 @@ async function viewNew() {
 // ---------- live / past run ----------
 
 async function viewRun(id) {
-  const { run, live } = await api("GET", `/api/runs/${encodeURIComponent(id)}`);
-  const state = { run, steps: run.steps.map((s) => ({ ...s, log: [] })), question: null, open: new Set() };
+  const { run, live, controls } = await api("GET", `/api/runs/${encodeURIComponent(id)}`);
+  const state = { run, live, controls, steps: run.steps.map((s) => ({ ...s, log: [] })), question: null, open: new Set() };
+  // What steps will do (with this run's inputs and state), and the run it's compared against.
+  const loadPreview = async () => {
+    try { state.preview = (await api("GET", `/api/runs/${enc(id)}/preview`)).steps; renderRun(state); } catch {}
+  };
+  loadPreview();
+  if (run.previous) api("GET", `/api/runs/${enc(run.previous)}`).then((r) => { state.prev = r.run; renderRun(state); }).catch(() => {});
+  let pt;
+  state.onState = () => { clearTimeout(pt); pt = setTimeout(loadPreview, 300); };
   // Past runs: show stored output; expand failures.
   state.steps.forEach((s, i) => {
     if (s.output) s.log = s.output.replace(/\n$/, "").split("\n").map((t) => ({ stream: "stdout", text: t }));
@@ -362,7 +236,7 @@ function applyEvent(state, e) {
       break;
     case "step_finished":
       Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes });
-      if (e.state) state.run.state = e.state;
+      if (e.state) { state.run.state = e.state; state.onState?.(); }
       if (e.result.status === "succeeded" && !e.result.output) state.open.delete(e.step);
       break;
     case "question":
@@ -375,6 +249,9 @@ function applyEvent(state, e) {
     case "note":
       pushNote(state, e.step, e.note);
       break;
+    case "controls":
+      state.controls = e.controls;
+      break;
   }
 }
 
@@ -385,6 +262,9 @@ function renderRun(state) {
   const scroll = {};
   main.querySelectorAll("pre.log").forEach((p) => (scroll[p.dataset.i] = p.scrollHeight - p.scrollTop - p.clientHeight < 8));
   const active = !["succeeded", "failed", "aborted"].includes(run.status);
+  const live = active && state.live;
+  const ctl = state.controls || { skip: [], pause_before: [], pause_after: [] };
+  const has = (list, i) => (list || []).includes(i + 1);
   const inputs = Object.entries(run.inputs || {});
   main.innerHTML = `
     <div class="row">
@@ -395,7 +275,7 @@ function renderRun(state) {
       </div>
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
-      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `${state.resumable ? `<button class="primary" id="resume">Resume from step ${state.resumable}</button>` : ""}<button id="rerun">Run again</button>`}
+      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
@@ -403,6 +283,9 @@ function renderRun(state) {
     <div class="notes">${renderNotes(run.notes)}<button class="link" data-note="0">✎ Add run note</button></div>
     ${renderState(run.state, state)}
     ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
+    ${state.prev ? `<p class="muted">Compared with <a href="#/runs/${esc(state.prev.id)}">${esc(state.prev.id)}</a> (${esc(state.prev.status)}): open a step to see what it did then.</p>` : ""}
+    ${live && state.controls && run.mode === "interactive" ? `<p><label><input type="checkbox" id="step-all" ${state.controls.step_mode ? "checked" : ""}> Step through the remaining steps</label>
+      <span class="muted small"> · upcoming steps can be skipped or paused below</span></p>` : ""}
     ${state.question?.step === -1 ? renderQuestion(state.question, run.id) : ""}
     <ol class="steps">${state.steps.map((s, i) => `${sectionHeading(state.steps, i)}
       <li class="step ${state.question?.step === i ? "focus" : ""} ${s.note === "before start step" ? "dim" : ""}">
@@ -411,14 +294,23 @@ function renderRun(state) {
           <span class="n">${i + 1}</span>
           <span class="name">${esc(s.name)} <span class="kind">${esc(s.kind)}</span>${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
           <span class="meta">${[s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}</span>
+          ${state.preview?.[i]?.confirm ? `<span class="badge-k warn" title="Asks before running">confirms on its own</span>` : ""}
+          ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<span class="last s-${esc(state.prev.steps[i].status)}" title="Last time: ${esc(state.prev.steps[i].status)}">${ICONS[state.prev.steps[i].status]}</span>` : ""}
+          ${live && s.status === "pending" && state.controls ? `
+            <button class="pill ${has(ctl.skip, i) ? "on" : ""}" data-ctl="skip" data-i="${i}" title="Leave this step out">skip</button>
+            <button class="pill ${has(ctl.pause_before, i) ? "on" : ""}" data-ctl="pause_before" data-i="${i}" title="Stop before this step">⏸ before</button>
+            <button class="pill ${has(ctl.pause_after, i) ? "on" : ""}" data-ctl="pause_after" data-i="${i}" title="Stop after this step to check it">⏸ after</button>` : ""}
         </div>
         ${state.question?.step === i ? `<div class="step-body">${renderQuestion(state.question, run.id)}</div>` : ""}
         ${s.notes?.length ? `<div class="step-body">${renderNotes(s.notes)}</div>` : ""}
-        ${state.open.has(i) ? `<div class="step-body">
-          ${s.command ? `<pre class="cmd">${esc(s.command)}</pre>` : ""}
-          ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : ""}
-          ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}
-          <button class="link" data-note="${i + 1}">✎ Add note</button>
+        ${state.open.has(i) ? `<div class="step-body ${state.prev ? "two-col" : ""}"><div>
+          ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i])}` : `
+            ${state.preview?.[i]?.expect ? `<div class="expect"><b>Expect:</b> ${esc(state.preview[i].expect)}</div>` : ""}
+            ${s.command || state.preview?.[i]?.command ? `<pre class="cmd">${esc(s.command || state.preview[i].command)}</pre>` : ""}
+            ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : ""}
+            ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}`}
+          <button class="link" data-note="${i + 1}">✎ Add note</button></div>
+          ${state.prev ? `<div><h4>Last time</h4>${lastTime(state.prev.steps[i], state.prev)}</div>` : ""}
         </div>` : ""}
       </li>`).join("")}
     </ol>`;
@@ -435,17 +327,34 @@ function renderRun(state) {
     state.open.has(i) ? state.open.delete(i) : state.open.add(i);
     renderRun(state);
   }));
+  main.querySelectorAll("[data-ctl]").forEach((b) => (b.onclick = (ev) => {
+    ev.stopPropagation();
+    const k = b.dataset.ctl, n = +b.dataset.i + 1;
+    const next = { ...ctl, step_mode: !!ctl.step_mode };
+    next[k] = has(ctl[k], n - 1) ? ctl[k].filter((x) => x !== n) : [...(ctl[k] || []), n];
+    setControls(run.id, next, state);
+  }));
+  $("#step-all") && ($("#step-all").onchange = (e) => setControls(run.id, { ...ctl, step_mode: e.target.checked }, state));
   $("#cancel") && ($("#cancel").onclick = () => api("POST", `/api/runs/${run.id}/cancel`).catch((e) => toast(e.message)));
-  $("#resume") && ($("#resume").onclick = async () => {
-    try {
-      const { id } = await api("POST", `/api/runs/${run.id}/resume`, {});
-      location.hash = `#/runs/${id}`;
-    } catch (e) { toast(e.message); }
-  });
-  $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${encodeURIComponent(run.runbook)}`));
+  $("#resume") && ($("#resume").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?resume=${enc(run.id)}`));
+  $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?rerun=${enc(run.id)}`));
   const q = $(".question");
   if (q) bindQuestion(q, state.question, run.id);
 }
+
+async function setControls(id, c, state) {
+  try {
+    state.controls = await api("PUT", `/api/runs/${enc(id)}/controls`, {
+      step_mode: c.step_mode, skip: c.skip || [], pause_before: c.pause_before || [], pause_after: c.pause_after || [],
+    });
+    renderRun(state);
+  } catch (e) { toast(e.message); }
+}
+
+// Some answers read differently depending on the question.
+const QLABELS_BY_TYPE = {
+  after: { continue: "✔ Looks right — continue", retry: "↻ Run it again", fail: "✘ Mark it failed…" },
+};
 
 const QLABELS = {
   run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…",
@@ -462,7 +371,7 @@ function renderQuestion(q, runId) {
     body += `<button class="primary" data-v="submit">Submit</button>`;
   } else {
     if (q.type === "manual") body += `<input type="text" name="note" placeholder="Note (optional)">`;
-    body += q.options.map((o, idx) => `<button data-v="${esc(o)}" class="${idx === 0 ? "primary" : o === "abort" ? "danger" : ""}">${QLABELS[o] || esc(o)}</button>`).join("");
+    body += q.options.map((o, idx) => `<button data-v="${esc(o)}" class="${idx === 0 ? "primary" : o === "abort" ? "danger" : ""}">${QLABELS_BY_TYPE[q.type]?.[o] || QLABELS[o] || esc(o)}</button>`).join("");
   }
   let text = ["confirm", "before"].includes(q.type) ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
   if (q.expect) text += `<div class="expect"><b>Expect:</b> ${esc(q.expect)}</div>`;
@@ -480,8 +389,9 @@ function bindQuestion(el, q, runId) {
       if (!reason) return toast("Forcing a step needs a reason");
       return send(value, reason);
     }
-    if (value === "fail" && !note && q.type === "manual") {
-      const reason = prompt("Why did this step fail?") ?? "";
+    if (value === "fail" && !note && (q.type === "manual" || q.type === "after")) {
+      const reason = prompt(q.type === "after" ? "What's wrong with the result?" : "Why did this step fail?");
+      if (reason === null) return;
       return send(value, reason);
     }
     send(value, note);

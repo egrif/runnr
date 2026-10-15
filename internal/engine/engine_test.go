@@ -343,7 +343,7 @@ steps:
 
 func TestDeselectedSteps(t *testing.T) {
 	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: 'exit 1'}\n  - {name: c, run: 'true'}\n")
-	run := Execute(context.Background(), rb, Unattended{}, "", Options{Skip: map[int]bool{1: true}})
+	run := Execute(context.Background(), rb, Unattended{}, "", Options{Controls: NewControls(ControlsView{Skip: []int{1}})})
 	if run.Status != StatusSucceeded || statuses(run) != "succeeded,skipped,succeeded" || run.Steps[1].Note != NoteDeselected {
 		t.Fatalf("%s %s", run.Status, statuses(run))
 	}
@@ -354,6 +354,8 @@ func TestDeselectedSteps(t *testing.T) {
 type stepper struct {
 	scripted
 	decisions []StepDecision
+	afters    []AfterDecision
+	afterSeen []StepResult
 	keys      string
 	reviewed  []StepView
 	session   Session
@@ -364,9 +366,16 @@ func (s *stepper) BeforeStep(_ context.Context, v StepView) (StepDecision, error
 	s.decisions = s.decisions[1:]
 	return d, nil
 }
-func (s *stepper) Review(_ context.Context, plan []StepView, skip map[int]bool) (map[int]bool, error) {
+func (s *stepper) AfterStep(_ context.Context, v StepView, res StepResult) (AfterDecision, string, error) {
+	s.afterSeen = append(s.afterSeen, res)
+	d := s.afters[0]
+	s.afters = s.afters[1:]
+	return d, "output looked wrong", nil
+}
+func (s *stepper) Review(_ context.Context, plan []StepView, c *Controls) error {
 	s.reviewed = plan
-	return map[int]bool{0: true}, nil
+	c.Toggle("skip", 0)
+	return nil
 }
 func (s *stepper) AttachedIO() (io.Reader, io.Writer, io.Writer) {
 	return strings.NewReader(s.keys), io.Discard, io.Discard
@@ -391,7 +400,7 @@ steps:
 		keys:      "echo fixed=by-hand >> \"$RUNNR_OUTPUT\"\nexit\n",
 	}
 	ui.manuals = []ManualOutcome{ManualDone}
-	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, StepMode: true, Review: true})
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Controls: NewControls(ControlsView{StepAll: true}), Review: true})
 	if run.Status != StatusSucceeded {
 		t.Fatalf("%s %s", run.Status, run.Error)
 	}
@@ -414,8 +423,64 @@ steps:
 
 func TestPreview(t *testing.T) {
 	rb := mustParse(t, "name: t\ninputs: [{name: env, default: staging}]\nsteps:\n  - {name: a, run: 'deploy {{.env}} {{.version}}', expect: ok}\n")
-	v := Preview(rb, nil)[0]
+	v := Preview(rb, nil, nil)[0]
 	if v.Command != "deploy staging <version>" || v.Kind != "run" {
 		t.Fatalf("%+v", v)
 	}
+}
+
+func TestPauseAfter(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - {name: counted, run: 'echo run >> "$RUNNR_OUTPUT.count"; echo hi'}
+  - {name: rejected, run: 'echo looks fine'}
+  - {name: last, run: 'true'}
+`)
+	// Step 1: look, run again, then continue. Step 2: reject → failure prompt → skip.
+	ui := &stepper{afters: []AfterDecision{AfterRetry, AfterContinue, AfterFail}}
+	ui.failures = []FailureAction{FailSkip}
+	ctl := NewControls(ControlsView{PauseAfter: []int{0, 1}})
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Controls: ctl})
+	if run.Status != StatusSucceeded || statuses(run) != "succeeded,skipped,succeeded" {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+	if run.Steps[0].Attempts != 2 || len(ui.afterSeen) != 3 || ui.afterSeen[0].Output != "hi\n" {
+		t.Fatalf("attempts %d seen %+v", run.Steps[0].Attempts, ui.afterSeen)
+	}
+
+	// Unattended runs never pause.
+	run = Execute(context.Background(), rb, ui, "", Options{Controls: ctl})
+	if run.Status != StatusSucceeded {
+		t.Fatal(run.Error)
+	}
+}
+
+func TestControlsChangeMidRun(t *testing.T) {
+	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: 'exit 1'}\n")
+	ctl := NewControls(ControlsView{})
+	ui := &stepper{decisions: []StepDecision{StepRun}}
+	ui.Notify(Event{})
+	// Skip b once a has started, as a GUI user would mid-run.
+	hook := &hookUI{stepper: ui, onStart: func(i int) {
+		if i == 0 {
+			ctl.Toggle("skip", 1)
+		}
+	}}
+	run := Execute(context.Background(), rb, hook, "", Options{Interactive: true, Controls: ctl})
+	if run.Status != StatusSucceeded || statuses(run) != "succeeded,skipped" {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+}
+
+type hookUI struct {
+	*stepper
+	onStart func(int)
+}
+
+func (h *hookUI) Notify(e Event) {
+	if e.Kind == EventStepStarted {
+		h.onStart(e.Step)
+	}
+	h.stepper.Notify(e)
 }

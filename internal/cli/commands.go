@@ -75,7 +75,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), inspectCmd(s), runCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -359,7 +359,7 @@ type runFlags struct {
 	unattended, yes, dry, js bool
 	quiet, noHistory         bool
 	stepMode, noReview       bool
-	skip                     string
+	skip, before, after      string
 }
 
 func (f *runFlags) register(cmd *cobra.Command) {
@@ -374,20 +374,39 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.BoolVar(&f.stepMode, "step", false, "pause before every step (run / run it myself / skip / view / …)")
 	fl.BoolVar(&f.noReview, "no-review", false, "start without reviewing the plan")
 	fl.StringVar(&f.skip, "skip", "", "steps to leave out, e.g. 3,5-7")
+	fl.StringVar(&f.before, "pause-before", "", "steps to stop before (run / run it myself / skip), e.g. 4,9")
+	fl.StringVar(&f.after, "pause-after", "", "steps to stop after, to check the result before going on")
 }
 
 // execute runs rb with these flags; base holds inputs that --var overrides.
-func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, base map[string]string, startAt int, resumes string, state map[string]string) error {
-	skip := map[int]bool{}
-	if f.skip != "" {
-		idxs, err := parseRanges(f.skip, len(rb.Steps))
-		if err != nil {
-			return fmt.Errorf("--skip: %w", err)
+// launch describes what to run beyond the runbook and flags.
+type launch struct {
+	base     map[string]string // inputs that --var overrides
+	startAt  int
+	resumes  string
+	state    map[string]string
+	previous *engine.Run // shown as "last time"
+}
+
+func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l launch) error {
+	cv := engine.ControlsView{StepAll: f.stepMode}
+	for flag, dst := range map[string]*[]int{f.skip: &cv.Skip, f.before: &cv.PauseBefore, f.after: &cv.PauseAfter} {
+		if flag == "" {
+			continue
 		}
-		for _, i := range idxs {
-			skip[i] = true
+		idxs, err := parseRanges(flag, len(rb.Steps))
+		if err != nil {
+			return fmt.Errorf("step list %q: %w", flag, err)
+		}
+		*dst = idxs
+	}
+	if l.previous == nil {
+		// Compare with the latest run of this runbook, if there is one.
+		if runs, err := st.ListRuns(rb.Name, 1); err == nil && len(runs) == 1 {
+			l.previous, _ = st.LoadRun(runs[0].ID)
 		}
 	}
+	base, startAt, resumes, state := l.base, l.startAt, l.resumes, l.state
 	values := map[string]string{}
 	for k, v := range base {
 		values[k] = v
@@ -422,8 +441,8 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, base m
 		}
 	}
 	opts := engine.Options{
-		Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt, Skip: skip,
-		Review: interactive && !f.noReview, StepMode: interactive && f.stepMode,
+		Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt,
+		Controls: engine.NewControls(cv), Review: interactive && !f.noReview, Previous: l.previous,
 		State: state, Resumes: resumes, RunbookVersion: ver,
 	}
 	if !f.noHistory {
@@ -503,11 +522,35 @@ and tty steps follow their 'unattended' policy, and any failure aborts.
 					return err
 				}
 			}
-			return f.execute(s(), rb, ver, nil, start, "", nil)
+			return f.execute(s(), rb, ver, launch{startAt: start})
 		},
 	}
 	f.register(cmd)
 	cmd.Flags().StringVar(&from, "from", "", "start at this step (id, number or name)")
+	return cmd
+}
+
+func rerunCmd(s func() *store.Store) *cobra.Command {
+	var f runFlags
+	cmd := &cobra.Command{
+		Use:   "rerun <run-id>",
+		Short: "Run a runbook again with an earlier run's inputs, comparing against it",
+		Long: `Starts a new run of the same runbook with the same inputs (secret inputs are
+asked again). The review shows what each step did in that earlier run.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			prev, err := s().LoadRun(args[0])
+			if err != nil {
+				return err
+			}
+			rb, ver, err := s().Get(prev.Runbook)
+			if err != nil {
+				return err
+			}
+			return f.execute(s(), rb, ver, launch{base: engine.ResumeInputs(prev), previous: prev})
+		},
+	}
+	f.register(cmd)
 	return cmd
 }
 
@@ -537,7 +580,7 @@ for again (or pass them with -v). Steps marked 'always' run again.`,
 				return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step>", rb.Name, prev.ID, rb.Name)
 			}
 			fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
-			return f.execute(s(), rb, ver, engine.ResumeInputs(prev), start, prev.ID, engine.ResumeState(prev))
+			return f.execute(s(), rb, ver, launch{base: engine.ResumeInputs(prev), startAt: start, resumes: prev.ID, state: engine.ResumeState(prev), previous: prev})
 		},
 	}
 	f.register(cmd)
@@ -570,7 +613,7 @@ would publish show as <name>.`,
 				}
 				values[k] = v
 			}
-			plan := engine.Preview(rb, values)
+			plan := engine.Preview(rb, values, nil)
 			if len(args) == 2 {
 				i, err := rb.StepIndex(args[1])
 				if err != nil {

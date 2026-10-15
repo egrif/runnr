@@ -31,6 +31,9 @@ proxy) off-host.
 | GET | `/api/runbooks/{name}/versions` | | `[{version, created_at, bytes}]`, newest first |
 | GET | `/api/runbooks/{name}/versions/{n}` | | `{version, raw}` |
 | POST | `/api/validate` | YAML | `{ok, error?}` |
+| POST | `/api/parse` | YAML | `{ok, runbook?, error?}`: the structured form |
+| POST | `/api/format` | runbook JSON | `{ok, raw?, error?}`: YAML (validated; comments aren't kept) |
+| POST | `/api/preview` | `{runbook \| raw, vars, from_run?}` | `{steps: [StepView]}`: what each step would do with these inputs (and that run's state) |
 
 Send `If-Match: <version>` with `PUT` to get `409 Conflict` instead of
 overwriting a newer save.
@@ -47,6 +50,8 @@ overwriting a newer save.
 | POST | `/api/runs/{id}/cancel` | | `204` |
 | POST | `/api/runs/{id}/resume` | start request (no `runbook`/`from`) | like `POST /api/runs` |
 | POST | `/api/runs/{id}/notes` | `{step, text, author?}` (`step` 1-based; `0` = the run) | `201 {time, author, text}` |
+| GET | `/api/runs/{id}/preview` | | `{steps: [StepView]}` with the run's inputs and current state |
+| GET / PUT | `/api/runs/{id}/controls` | `{step_mode, skip, pause_before, pause_after}` | the live run's controls; changes apply to steps not reached yet |
 
 Start request:
 
@@ -58,8 +63,11 @@ Start request:
   "yes": true,            // approve confirm-gated steps when unattended
   "dry_run": false,
   "from": "deploy",       // optional: start at a step id, 1-based number or name
-  "skip": [3, 5],         // optional: 1-based steps to leave out
+  "skip": [3, 5],         // optional: 1-based steps to leave out (on resume, replaces "start where it stopped")
+  "pause_before": [4],    // interactive: stop before these steps
+  "pause_after": [4, 9],  // interactive: stop after these to check the result
   "step_mode": false,     // interactive: pause before every step
+  "previous": "<run id>", // compare against this run (default: the resumed run, else the latest)
   "wait": true            // block until done and return the run (requires unattended)
 }
 ```
@@ -82,7 +90,8 @@ Start without `unattended`, then read `/events`. Each event is
 | `confirm` | `run`, `skip`, `abort` |
 | `manual` | `done`, `skip`, `fail`, `abort` (optional `note`) |
 | `failure` | `retry`, `manual` (run it myself), `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
-| `before` (step mode) | `run`, `manual`, `skip`, `continue` (stop pausing), `abort` |
+| `before` | `run`, `manual`, `skip`, `continue` (stop stepping through), `abort` |
+| `after` | `continue`, `retry` (run again), `fail` (`note` = what's wrong; then a `failure` question), `abort` |
 
 Questions carry `text` (the rendered command or instructions) and `expect`.
 When the server is local, `confirm`/`manual`/`failure`/`before` questions also
@@ -90,6 +99,11 @@ offer `shell`, which opens a Terminal window with the run's environment and
 then asks the same question again; `manual` (run it myself) opens one too.
 
 `step_finished` events carry `state`: the run's variables, secrets masked.
+`controls` events carry the live run's new `controls` after a PUT.
+
+A StepView is `{index, name, section, owner, kind, command, expect, dir, when,
+confirm, always, timeout, retries, outputs, secret_outputs}` with templates
+filled in (unknown values as `<name>`).
 The run record's `state` holds the same as of the last finished step.
 
 On reconnect the stream replays from `seq` 0.

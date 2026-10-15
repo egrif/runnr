@@ -32,9 +32,10 @@ type Answer struct {
 type WireEvent struct {
 	Seq int `json:"seq"`
 	engine.Event
-	Question *Question    `json:"question,omitempty"`
-	Answered string       `json:"answered,omitempty"`
-	Note     *engine.Note `json:"note,omitempty"`
+	Question *Question     `json:"question,omitempty"`
+	Answered string        `json:"answered,omitempty"`
+	Note     *engine.Note  `json:"note,omitempty"`
+	Controls *controlsJSON `json:"controls,omitempty"`
 }
 
 // liveRun is an in-progress (or recently finished) run driven by the GUI.
@@ -46,6 +47,7 @@ type liveRun struct {
 	// steps and shells can open Terminal windows.
 	windows bool
 	session engine.Session
+	ctl     *engine.Controls
 
 	mu      sync.Mutex
 	events  []WireEvent
@@ -158,6 +160,19 @@ func (l *liveRun) askStep(ctx context.Context, q Question) (Answer, error) {
 			l.Notify(engine.Event{Kind: engine.EventOutput, Step: q.Step, Stream: "info", Text: "shell: " + err.Error()})
 		}
 	}
+}
+
+// AfterStep implements engine.Stepper for steps set to pause afterwards.
+func (l *liveRun) AfterStep(ctx context.Context, v engine.StepView, res engine.StepResult) (engine.AfterDecision, string, error) {
+	text := "Finished: " + string(res.Status)
+	if res.ExitCode != nil {
+		text += fmt.Sprintf(" (exit %d)", *res.ExitCode)
+	}
+	a, err := l.askStep(ctx, Question{Type: "after", Step: v.Index, Title: "Check “" + v.Name + "”", Text: text, Expect: v.Expect, Options: []string{"continue", "retry", "fail", "abort"}})
+	if err != nil {
+		return "", "", err
+	}
+	return engine.AfterDecision(a.Value), a.Note, nil
 }
 
 // BeforeStep implements engine.Stepper for step mode.

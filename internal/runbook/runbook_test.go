@@ -1,6 +1,8 @@
 package runbook
 
 import (
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -39,5 +41,32 @@ func TestRender(t *testing.T) {
 	}
 	if _, err := Render("{{.missing}}", map[string]string{}); err == nil || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("expected missing key error, got %v", err)
+	}
+}
+
+func TestFormatRoundTrip(t *testing.T) {
+	for _, f := range []string{"../../examples/hello.yaml", "../../examples/deploy-service.yaml", os.Getenv("RUNNR_FORMAT_CHECK")} {
+		if f == "" {
+			continue
+		}
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := Format(a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := Parse(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(a, b) {
+			t.Fatalf("%s: round trip changed the runbook:\n%s", f, out)
+		}
 	}
 }

@@ -113,6 +113,36 @@ func Parse(data []byte) (*Runbook, error) {
 
 func (rb *Runbook) Marshal() ([]byte, error) { return yaml.Marshal(rb) }
 
+// Format validates rb and renders it as YAML, the way the structured
+// editor saves. A section is written only where it changes. Comments from
+// a previous YAML version aren't kept.
+func Format(rb *Runbook) ([]byte, error) {
+	if err := rb.Validate(); err != nil {
+		return nil, err
+	}
+	out := *rb
+	out.Steps = append([]Step(nil), rb.Steps...)
+	for i := len(out.Steps) - 1; i > 0; i-- {
+		if out.Steps[i].Section == out.Steps[i-1].Section {
+			out.Steps[i].Section = ""
+		}
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&out); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	// Round-trip check: what we write must read back as the same runbook.
+	if _, err := Parse(buf.Bytes()); err != nil {
+		return nil, fmt.Errorf("formatted YAML doesn't parse back: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
 // Validate returns all problems found, joined.
 func (rb *Runbook) Validate() error {
 	var errs []error

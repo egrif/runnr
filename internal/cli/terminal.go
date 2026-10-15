@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"sort"
 	"strconv"
@@ -241,6 +240,10 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 		extra += " · [v]iew"
 		all["v"], all["view"] = "\x00view", "\x00view"
 	}
+	if t.previousStep(idx) != nil {
+		extra += " · [l]ast time"
+		all["l"], all["last"] = "\x00last", "\x00last"
+	}
 	if t.session != nil {
 		extra += " · [e]nv"
 		all["e"], all["env"] = "\x00env", "\x00env"
@@ -266,6 +269,8 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 			t.printView(t.session.View(idx))
 		case "\x00env":
 			t.printState(t.session.State())
+		case "\x00last":
+			t.printLast(idx)
 		case "\x00note":
 			fmt.Fprint(t.out, "  note: ")
 			text, err := t.readLine(ctx)
@@ -301,7 +306,7 @@ func (t *Terminal) viewText(v engine.StepView, in string) string {
 	for _, f := range []struct {
 		on   bool
 		name string
-	}{{true, v.Kind}, {v.Always, "always"}, {v.Confirm, "confirm"}, {v.When != "", "when " + v.When},
+	}{{true, v.Kind}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.When != "", "when " + v.When},
 		{v.Timeout != "", "timeout " + v.Timeout}, {v.Retries > 0, fmt.Sprintf("retries %d", v.Retries)}} {
 		if f.on {
 			flags = append(flags, f.name)
@@ -376,6 +381,9 @@ func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.St
 		opts["m"] = "m"
 		prompt += " / [m] run it myself"
 	}
+	if r := t.previousStep(v.Index); r != nil && r.Status != engine.StatusPending {
+		fmt.Fprintln(t.out, t.c("2", fmt.Sprintf("  last time: %s %s %s (l to see)", statusIcon[r.Status], r.Status, r.Note)))
+	}
 	prompt += " / [s]kip / [c]ontinue without pausing / [a]bort"
 	a, err := t.stepPrompt(ctx, v.Index, prompt, opts, "r")
 	if err != nil {
@@ -384,11 +392,84 @@ func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.St
 	return map[string]engine.StepDecision{"r": engine.StepRun, "m": engine.StepByHand, "s": engine.StepSkip, "c": engine.StepContinue, "a": engine.StepAbort}[a], nil
 }
 
-// Review shows the plan and lets the operator deselect steps (engine.Reviewer).
-func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, skip map[int]bool) (map[int]bool, error) {
-	skip = maps.Clone(skip)
+var statusIcon = map[engine.Status]string{
+	engine.StatusSucceeded: "✔", engine.StatusFailed: "✘", engine.StatusSkipped: "↷",
+	engine.StatusAborted: "■", engine.StatusForced: "⚑", engine.StatusRunning: "▶", engine.StatusPending: "○",
+}
+
+// previousStep returns what step i did in the run being compared against.
+func (t *Terminal) previousStep(i int) *engine.StepResult {
+	if t.session == nil {
+		return nil
+	}
+	p := t.session.Previous()
+	if p == nil || i < 0 || i >= len(p.Steps) {
+		return nil
+	}
+	return &p.Steps[i]
+}
+
+// printLast shows what step i did in the previous run.
+func (t *Terminal) printLast(i int) {
+	r := t.previousStep(i)
+	if r == nil {
+		fmt.Fprintln(t.out, t.c("2", "  (no earlier run to compare with)"))
+		return
+	}
+	p := t.session.Previous()
+	st := statusStyle[r.Status]
+	line := fmt.Sprintf("  last time (run %s): %s %s", p.ID, statusIcon[r.Status], r.Status)
+	if r.Note != "" {
+		line += " — " + r.Note
+	}
+	fmt.Fprintln(t.out, t.c(st.code, line))
+	if r.Command != "" {
+		for _, l := range strings.Split(strings.TrimRight(r.Command, "\n"), "\n") {
+			fmt.Fprintln(t.out, t.c("2", "    $ "+l))
+		}
+	}
+	if out := strings.TrimRight(r.Output, "\n"); out != "" {
+		lines := strings.Split(out, "\n")
+		if len(lines) > 30 {
+			fmt.Fprintln(t.out, t.c("2", fmt.Sprintf("    … %d earlier lines", len(lines)-30)))
+			lines = lines[len(lines)-30:]
+		}
+		for _, l := range lines {
+			fmt.Fprintln(t.out, t.c("2", "    │ ")+l)
+		}
+	}
+	if r.Error != "" && r.Status != engine.StatusSucceeded {
+		fmt.Fprintln(t.out, t.c("31", "    error: "+r.Error))
+	}
+	for _, n := range r.Notes {
+		fmt.Fprintf(t.out, "    ✎ %s: %s\n", n.Author, n.Text)
+	}
+}
+
+// Review shows the plan and lets the operator choose steps to skip and
+// where to pause (engine.Reviewer).
+func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, c *engine.Controls) error {
+	help := true
 	for {
-		fmt.Fprintln(t.out, t.c("1", "\nPlan")+t.c("2", fmt.Sprintf(" (%d steps)", len(plan))))
+		cv := c.View()
+		skip, before, after := map[int]bool{}, map[int]bool{}, map[int]bool{}
+		for _, i := range cv.Skip {
+			skip[i] = true
+		}
+		for _, i := range cv.PauseBefore {
+			before[i] = true
+		}
+		for _, i := range cv.PauseAfter {
+			after[i] = true
+		}
+		title := fmt.Sprintf(" (%d steps)", len(plan))
+		if p := t.session.Previous(); p != nil {
+			title += fmt.Sprintf(" · last time = run %s (%s)", p.ID, p.Status)
+		}
+		if cv.StepAll {
+			title += " · stepping through every step"
+		}
+		fmt.Fprintln(t.out, t.c("1", "\nPlan")+t.c("2", title))
 		section := ""
 		for _, v := range plan {
 			if v.Section != "" && v.Section != section {
@@ -399,51 +480,122 @@ func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, skip map[
 			if skip[v.Index] {
 				mark, name = t.c("2", "·"), t.c("2", v.Name+" (skip)")
 			}
+			var tags []string
+			if before[v.Index] {
+				tags = append(tags, t.c("33", "⏸ before"))
+			}
+			if after[v.Index] {
+				tags = append(tags, t.c("33", "⏸ after"))
+			}
 			flags := v.Kind
+			if v.Confirm {
+				flags += " · confirms on its own"
+			}
 			if v.Always {
 				flags += " · always"
-			}
-			if v.Confirm {
-				flags += " · confirm"
 			}
 			if v.When != "" {
 				flags += " · conditional"
 			}
-			fmt.Fprintf(t.out, "  %s %3d  %s %s\n", mark, v.Index+1, name, t.c("2", flags))
+			last := " "
+			if r := t.previousStep(v.Index); r != nil && r.Status != engine.StatusPending {
+				last = t.c(statusStyle[r.Status].code, statusIcon[r.Status])
+			}
+			fmt.Fprintf(t.out, "  %s %s %3d  %s %s %s\n", mark, last, v.Index+1, name, t.c("2", flags), strings.Join(tags, " "))
 		}
-		fmt.Fprint(t.out, t.c("33;1", "  ? ")+"Enter to start · numbers/ranges toggle steps (e.g. 3,5-7) · v N view a step · a abort: ")
+		if help {
+			fmt.Fprintln(t.out, t.c("2", "  Commands (step lists like 3,5-7):\n"+
+				"    <steps>    skip / include             v <n>      view what step n will do\n"+
+				"    b <steps>  pause before (toggle)      l <n>      what step n did last time\n"+
+				"    a <steps>  pause after (toggle)       step       step through every step (toggle)\n"+
+				"    enter      start                      q          quit without running\n"+
+				"  The column after ✓ shows each step's result last time."))
+			help = false
+		}
+		fmt.Fprint(t.out, t.c("33;1", "  ? ")+"review (enter to start, ? for help): ")
 		line, err := t.readLine(ctx)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		line = strings.TrimSpace(line)
-		switch {
-		case line == "":
-			return skip, nil
-		case line == "a" || line == "abort":
-			return nil, engine.ErrAborted
-		case strings.HasPrefix(line, "v"):
-			n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "view"), "v")))
+		cmd, rest, _ := strings.Cut(line, " ")
+		rest = strings.TrimSpace(rest)
+		one := func() (int, bool) {
+			n, err := strconv.Atoi(rest)
 			if err != nil || n < 1 || n > len(plan) {
-				fmt.Fprintln(t.out, t.c("31", "  usage: v <step number>"))
-				continue
+				fmt.Fprintln(t.out, t.c("31", "  which step? e.g. "+cmd+" 4"))
+				return 0, false
 			}
-			t.printView(plan[n-1])
-			fmt.Fprint(t.out, t.c("2", "  (enter to go back) "))
-			if _, err := t.readLine(ctx); err != nil {
-				return nil, err
-			}
-		default:
-			idxs, err := parseRanges(line, len(plan))
+			return n - 1, true
+		}
+		toggle := func(what string) {
+			idxs, err := parseRanges(rest, len(plan))
 			if err != nil {
 				fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
-				continue
+				return
 			}
 			for _, i := range idxs {
-				skip[i] = !skip[i]
+				c.Toggle(what, i)
 			}
 		}
+		switch {
+		case line == "":
+			return nil
+		case line == "q" || line == "quit":
+			return engine.ErrAborted
+		case line == "?" || line == "help":
+			help = true
+		case line == "step":
+			c.SetStepAll(!cv.StepAll)
+		case cmd == "v" || cmd == "view":
+			if i, ok := one(); ok {
+				t.printView(plan[i])
+				t.pressEnter(ctx)
+			}
+		case cmd == "l" || cmd == "last":
+			if i, ok := one(); ok {
+				t.printLast(i)
+				t.pressEnter(ctx)
+			}
+		case cmd == "b" || cmd == "before":
+			toggle("before")
+		case cmd == "a" || cmd == "after":
+			toggle("after")
+		default:
+			rest = line
+			toggle("skip")
+		}
 	}
+}
+
+func (t *Terminal) pressEnter(ctx context.Context) {
+	fmt.Fprint(t.out, t.c("2", "  (enter to go back) "))
+	_, _ = t.readLine(ctx)
+}
+
+// AfterStep lets the operator check a finished step (engine.Stepper).
+func (t *Terminal) AfterStep(ctx context.Context, v engine.StepView, res engine.StepResult) (engine.AfterDecision, string, error) {
+	line := fmt.Sprintf("  %s finished: %s", v.Name, res.Status)
+	if res.ExitCode != nil {
+		line += fmt.Sprintf(" (exit %d)", *res.ExitCode)
+	}
+	fmt.Fprintln(t.out, t.c("36", line))
+	if v.Expect != "" {
+		fmt.Fprintln(t.out, t.c("32", "  expected: ")+v.Expect)
+	}
+	a, err := t.stepPrompt(ctx, v.Index, "Looks right? [c]ontinue / [r]un again / [f]ail it / [a]bort",
+		map[string]string{"c": "c", "continue": "c", "r": "r", "f": "f", "fail": "f", "a": "a", "abort": "a"}, "c")
+	if err != nil {
+		return "", "", err
+	}
+	note := ""
+	if a == "f" {
+		fmt.Fprint(t.out, "  what's wrong? ")
+		if note, err = t.readLine(ctx); err != nil {
+			return "", "", err
+		}
+	}
+	return map[string]engine.AfterDecision{"c": engine.AfterContinue, "r": engine.AfterRetry, "f": engine.AfterFail, "a": engine.AfterAbort}[a], note, nil
 }
 
 // parseRanges turns "3,5-7" into 0-based indexes, checked against n.

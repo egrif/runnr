@@ -60,20 +60,22 @@ type StepResult struct {
 }
 
 type Run struct {
-	ID             string            `json:"id"`
-	Runbook        string            `json:"runbook"`
-	Mode           string            `json:"mode"`
-	DryRun         bool              `json:"dry_run,omitempty"`
-	StartAt        int               `json:"start_at,omitempty"`
-	RunbookVersion int               `json:"runbook_version,omitempty"`
-	Resumes        string            `json:"resumes,omitempty"`
-	Status         Status            `json:"status"`
-	Error          string            `json:"error,omitempty"`
-	Inputs         map[string]string `json:"inputs"`
-	Started        time.Time         `json:"started"`
-	Ended          time.Time         `json:"ended,omitzero"`
-	Steps          []StepResult      `json:"steps"`
-	Notes          []Note            `json:"notes,omitempty"`
+	ID             string `json:"id"`
+	Runbook        string `json:"runbook"`
+	Mode           string `json:"mode"`
+	DryRun         bool   `json:"dry_run,omitempty"`
+	StartAt        int    `json:"start_at,omitempty"`
+	RunbookVersion int    `json:"runbook_version,omitempty"`
+	Resumes        string `json:"resumes,omitempty"`
+	// Previous is the run this one was compared against ("last time").
+	Previous string            `json:"previous,omitempty"`
+	Status   Status            `json:"status"`
+	Error    string            `json:"error,omitempty"`
+	Inputs   map[string]string `json:"inputs"`
+	Started  time.Time         `json:"started"`
+	Ended    time.Time         `json:"ended,omitzero"`
+	Steps    []StepResult      `json:"steps"`
+	Notes    []Note            `json:"notes,omitempty"`
 	// State is every variable the run has (inputs and published values)
 	// as of the last finished step; secrets are "****".
 	State map[string]string `json:"state,omitempty"`
@@ -131,6 +133,17 @@ const (
 	StepAbort    StepDecision = "abort"
 )
 
+// AfterDecision is the answer to "this step finished" for steps set to
+// pause afterwards.
+type AfterDecision string
+
+const (
+	AfterContinue AfterDecision = "continue"
+	AfterRetry    AfterDecision = "retry" // run it again
+	AfterFail     AfterDecision = "fail"  // treat it as failed (then the usual failure choices)
+	AfterAbort    AfterDecision = "abort"
+)
+
 // Interactor supplies human decisions and receives progress events.
 // Notify may be called from multiple goroutines, but never concurrently.
 type Interactor interface {
@@ -149,12 +162,13 @@ type Options struct {
 	Interactive bool
 	// StartAt skips steps before this index, except those marked always.
 	StartAt int
-	// Skip lists step indexes the operator deselected.
-	Skip map[int]bool
+	// Controls: steps to skip and where to pause (pausing needs an
+	// interactive run and a Stepper). Nil means none.
+	Controls *Controls
 	// Review shows the plan before running (if the Interactor is a Reviewer).
 	Review bool
-	// StepMode pauses before every step (if the Interactor is a Stepper).
-	StepMode bool
+	// Previous is an earlier run to compare against ("what it did last time").
+	Previous *Run
 	// State seeds variables from an earlier run (resume). Inputs win, and
 	// masked secrets are not restored.
 	State map[string]string
@@ -207,6 +221,11 @@ type StepView struct {
 type Session interface {
 	View(idx int) StepView
 	Plan() []StepView
+	// Controls are the run's skip/pause settings; changes apply to steps
+	// not reached yet.
+	Controls() *Controls
+	// Previous is the run being resumed or rerun, or the last run (may be nil).
+	Previous() *Run
 	// State returns the run's variables with secrets masked.
 	State() map[string]string
 	// CanShell reports whether Shell can work here.
@@ -225,14 +244,16 @@ type ShellOpener interface {
 	OpenShell(ctx context.Context, idx int) error
 }
 
-// Reviewer is shown the plan before steps run and may deselect steps.
+// Reviewer is shown the plan before steps run and may change the controls.
 type Reviewer interface {
-	Review(ctx context.Context, plan []StepView, skip map[int]bool) (map[int]bool, error)
+	Review(ctx context.Context, plan []StepView, c *Controls) error
 }
 
-// Stepper is asked before each step in step mode.
+// Stepper is asked before steps set to pause before (or all of them, in
+// step-through mode), and after steps set to pause after.
 type Stepper interface {
 	BeforeStep(ctx context.Context, v StepView) (StepDecision, error)
+	AfterStep(ctx context.Context, v StepView, res StepResult) (AfterDecision, string, error)
 }
 
 const maxOutput = 64 << 10
@@ -251,7 +272,7 @@ type executor struct {
 	vars       map[string]string
 	secrets    []string
 	secretVars map[string]bool
-	pausing    bool
+	ctl        *Controls
 	mu         sync.Mutex
 }
 
@@ -277,36 +298,33 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: kind, Status: StatusPending})
 	}
 
+	if opts.Previous != nil {
+		x.run.Previous = opts.Previous.ID
+	}
 	if b, ok := ui.(Binder); ok {
 		b.Bind(x)
 	}
 	if opts.ShellOnly {
 		x.opts.StartAt = len(rb.Steps)
 	}
+	x.ctl = opts.Controls
+	if x.ctl == nil {
+		x.ctl = NewControls(ControlsView{})
+	}
 	// Starting later is just skipping the earlier (non-always) steps, so
 	// the review can show it and the operator can change it.
-	skip := map[int]bool{}
-	for i, on := range opts.Skip {
-		skip[i] = on
-	}
 	for i := 0; i < x.opts.StartAt && i < len(rb.Steps); i++ {
-		if !rb.Steps[i].Always {
-			skip[i] = true
+		if skip, _, _ := x.ctl.Get(i); !rb.Steps[i].Always && !skip {
+			x.ctl.Toggle("skip", i)
 		}
 	}
-	x.opts.Skip = skip
-	_, x.pausing = ui.(Stepper)
-	x.pausing = x.pausing && opts.StepMode && !opts.DryRun
 	x.save()
 	err := x.resolveInputs(ctx)
 	if err == nil {
 		x.restoreState()
 		x.run.State = x.State()
 		if r, ok := ui.(Reviewer); ok && opts.Review && !opts.ShellOnly {
-			var skip map[int]bool
-			if skip, err = r.Review(ctx, x.Plan(), x.opts.Skip); err == nil && skip != nil {
-				x.opts.Skip = skip
-			}
+			err = r.Review(ctx, x.Plan(), x.ctl)
 		}
 	}
 	if err == nil {
@@ -397,7 +415,7 @@ func (x *executor) steps(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if x.opts.Skip[i] {
+		if skip, _, _ := x.ctl.Get(i); skip {
 			note := NoteDeselected
 			if i < x.opts.StartAt && !step.Always {
 				note = NoteBeforeStart
@@ -430,7 +448,7 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	x.notify(Event{Kind: EventStepStarted, Step: i, Result: x.result(i)})
 
 	byHand, confirmed := false, false
-	if x.pausing {
+	if _, before, _ := x.ctl.Get(i); before && x.canPause() {
 		d, err := x.ui.(Stepper).BeforeStep(ctx, x.View(i))
 		if err != nil {
 			return x.fail(i, err)
@@ -441,7 +459,7 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 			x.stepDone(i)
 			return nil
 		case StepContinue:
-			x.pausing = false
+			x.ctl.SetStepAll(false)
 		case StepByHand:
 			byHand = true
 		case StepAbort:
@@ -526,8 +544,10 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 			x.apply(step, out)
 			res.Command = x.mask(res.Command) // in case it contained a just-published secret
 			res.Status, res.Error = StatusSucceeded, ""
-			x.stepDone(i)
-			return nil
+			if err := x.afterStep(ctx, i, step, &byHand); err != errRetry {
+				return err
+			}
+			continue
 		}
 		if ctx.Err() != nil {
 			return x.fail(i, ctx.Err())
@@ -545,6 +565,39 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 }
 
 var errRetry = errors.New("retry")
+
+func (x *executor) canPause() bool {
+	_, ok := x.ui.(Stepper)
+	return ok && x.opts.Interactive && !x.opts.DryRun
+}
+
+// afterStep finishes a successful step i, first letting the operator look
+// at the result if it's set to pause afterwards. errRetry means run it
+// again.
+func (x *executor) afterStep(ctx context.Context, i int, step runbook.Step, byHand *bool) error {
+	res := &x.run.Steps[i]
+	if _, _, after := x.ctl.Get(i); !after || !x.canPause() {
+		x.stepDone(i)
+		return nil
+	}
+	d, note, err := x.ui.(Stepper).AfterStep(ctx, x.View(i), *x.result(i))
+	if err != nil {
+		return x.fail(i, err)
+	}
+	switch d {
+	case AfterRetry:
+		res.Status = StatusRunning
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "running again…"})
+		return errRetry
+	case AfterFail:
+		res.Status, res.Error = StatusFailed, strings.TrimSpace("rejected after review "+note)
+		return x.onFailure(ctx, i, step, cmdResult{}, byHand)
+	case AfterAbort:
+		return x.fail(i, errAborted)
+	}
+	x.stepDone(i)
+	return nil
+}
 
 // onFailure asks what to do about failed step i. It returns errRetry to
 // run it again (by hand if *byHand is set), nil if the step is settled,

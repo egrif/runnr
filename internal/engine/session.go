@@ -32,6 +32,9 @@ func (x *executor) View(i int) StepView {
 	return v
 }
 
+func (x *executor) Controls() *Controls { return x.ctl }
+func (x *executor) Previous() *Run      { return x.opts.Previous }
+
 func (x *executor) Plan() []StepView {
 	out := make([]StepView, len(x.rb.Steps))
 	for i := range out {
@@ -153,9 +156,15 @@ func (x *executor) lenient(text string) string {
 }
 
 // Preview returns a runbook's plan rendered with the given inputs (and
-// input defaults); values later steps would publish show as <name>.
-func Preview(rb *runbook.Runbook, vars map[string]string) []StepView {
+// input defaults) and, optionally, an earlier run's state (as for a
+// resume); values not known yet show as <name>.
+func Preview(rb *runbook.Runbook, vars, state map[string]string) []StepView {
 	x := &executor{rb: rb, ui: Unattended{}, vars: map[string]string{}, secretVars: map[string]bool{}, run: &Run{}}
+	for k, v := range state {
+		if v != "****" {
+			x.vars[k] = v
+		}
+	}
 	for _, in := range rb.Inputs {
 		v := vars[in.Name]
 		if v == "" {
