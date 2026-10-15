@@ -49,18 +49,19 @@ type StepResult struct {
 }
 
 type Run struct {
-	ID      string            `json:"id"`
-	Runbook string            `json:"runbook"`
-	Mode    string            `json:"mode"`
-	DryRun  bool              `json:"dry_run,omitempty"`
-	StartAt int               `json:"start_at,omitempty"`
-	Resumes string            `json:"resumes,omitempty"`
-	Status  Status            `json:"status"`
-	Error   string            `json:"error,omitempty"`
-	Inputs  map[string]string `json:"inputs"`
-	Started time.Time         `json:"started"`
-	Ended   time.Time         `json:"ended,omitzero"`
-	Steps   []StepResult      `json:"steps"`
+	ID             string            `json:"id"`
+	Runbook        string            `json:"runbook"`
+	Mode           string            `json:"mode"`
+	DryRun         bool              `json:"dry_run,omitempty"`
+	StartAt        int               `json:"start_at,omitempty"`
+	RunbookVersion int               `json:"runbook_version,omitempty"`
+	Resumes        string            `json:"resumes,omitempty"`
+	Status         Status            `json:"status"`
+	Error          string            `json:"error,omitempty"`
+	Inputs         map[string]string `json:"inputs"`
+	Started        time.Time         `json:"started"`
+	Ended          time.Time         `json:"ended,omitzero"`
+	Steps          []StepResult      `json:"steps"`
 }
 
 type EventKind string
@@ -117,6 +118,8 @@ type Options struct {
 	StartAt int
 	// Resumes records the run ID this run continues, if any.
 	Resumes string
+	// RunbookVersion records which saved version of the runbook ran.
+	RunbookVersion int
 	// Save is called with a snapshot after every state change worth keeping.
 	Save func(*Run)
 }
@@ -156,7 +159,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		mode = "interactive"
 	}
 	x := &executor{rb: rb, ui: ui, opts: opts, vars: map[string]string{}}
-	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
+	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
 	for i, s := range rb.Steps {
 		kind := "run"
 		if s.IsManual() {

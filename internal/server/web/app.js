@@ -8,8 +8,8 @@ const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■",
 let runbooks = [];
 let stream = null; // active EventSource
 
-async function api(method, path, body, raw = false) {
-  const opts = { method, headers: { "X-Runnr": "1" } };
+async function api(method, path, body, raw = false, headers = {}) {
+  const opts = { method, headers: { "X-Runnr": "1", ...headers } };
   if (body !== undefined) {
     opts.body = raw ? body : JSON.stringify(body);
     opts.headers["Content-Type"] = raw ? "application/yaml" : "application/json";
@@ -17,7 +17,7 @@ async function api(method, path, body, raw = false) {
   const res = await fetch(path, opts);
   if (res.status === 401 && path !== "/api/login") {
     await login();
-    return api(method, path, body, raw);
+    return api(method, path, body, raw, headers);
   }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
@@ -119,7 +119,7 @@ async function viewRunbook(name, tab) {
       <a href="#/history?runbook=${encodeURIComponent(name)}">History</a>
     </nav>
     <section id="tab"></section>`;
-  if (tab === "edit" || !rb) return renderEditor($("#tab"), data.raw, name, data.error);
+  if (tab === "edit" || !rb) return renderEditor($("#tab"), data.raw, name, data.error, data.version, data.updated_at);
   renderRunForm($("#tab"), rb);
 }
 
@@ -170,11 +170,12 @@ function renderRunForm(el, rb) {
   });
 }
 
-function renderEditor(el, raw, name, initialError) {
+function renderEditor(el, raw, name, initialError, version, updatedAt) {
   el.innerHTML = `
     <div class="row" style="margin-bottom:8px">
       <button class="primary" id="save">Save</button>
       <button id="validate">Validate</button>
+      ${version ? `<span class="muted">version ${version} · saved ${new Date(updatedAt).toLocaleString()}</span>` : ""}
       <span class="spacer"></span>
       ${name ? `<button class="danger" id="delete">Delete</button>` : ""}
     </div>
@@ -204,12 +205,16 @@ function renderEditor(el, raw, name, initialError) {
   $("#save").onclick = async () => {
     try {
       const rb = name
-        ? await api("PUT", `/api/runbooks/${encodeURIComponent(name)}`, ta.value, true)
+        ? await api("PUT", `/api/runbooks/${encodeURIComponent(name)}`, ta.value, true, { "If-Match": String(version) })
         : await api("POST", "/api/runbooks", ta.value, true);
       toast("Saved");
       await loadRunbooks();
       location.hash = `#/runbooks/${encodeURIComponent(rb.name)}`;
-    } catch (e) { show({ ok: false, error: e.message }); }
+    } catch (e) {
+      show({ ok: false, error: /changed since/.test(e.message)
+        ? `${e.message}\nSomeone saved a newer version. Copy your changes, reload, and re-apply them.`
+        : e.message });
+    }
   };
   if (name) $("#delete").onclick = async () => {
     if (!confirm(`Delete runbook "${name}"?`)) return;
@@ -297,7 +302,7 @@ function renderRun(state) {
     <div class="row">
       <div>
         <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a></h1>
-        <div class="muted">${esc(run.id)} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
+        <div class="muted">${esc(run.id)}${run.runbook_version ? ` · v${run.runbook_version}` : ""} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
           ${duration(run.started, run.ended) ? ` · took ${duration(run.started, run.ended)}` : ""}</div>
       </div>
       <span class="spacer"></span>

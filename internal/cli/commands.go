@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -45,7 +47,7 @@ func Execute() int {
 }
 
 func newRoot() *cobra.Command {
-	var home string
+	var home, dsn string
 	var st *store.Store
 	root := &cobra.Command{
 		Use:           "runnr",
@@ -55,16 +57,23 @@ func newRoot() *cobra.Command {
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
-			st, err = store.New(home)
+			st, err = store.Open(home, dsn)
 			return err
 		},
+		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
+			if st != nil {
+				return st.Close()
+			}
+			return nil
+		},
 	}
-	root.PersistentFlags().StringVar(&home, "home", store.DefaultHome(), "runnr data directory (env RUNNR_HOME)")
+	root.PersistentFlags().StringVar(&home, "home", store.DefaultHome(), "runnr home; holds runnr.db unless --db is set (env RUNNR_HOME)")
+	root.PersistentFlags().StringVar(&dsn, "db", os.Getenv("RUNNR_DATABASE_URL"), "postgres:// URL or SQLite file (env RUNNR_DATABASE_URL; default <home>/runnr.db)")
 	s := func() *store.Store { return st }
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), runCmd(s), resumeCmd(s), historyCmd(s), serveCmd(s),
+		validateCmd(s), versionsCmd(s), runCmd(s), resumeCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -89,13 +98,13 @@ func listCmd(s func() *store.Store) *cobra.Command {
 				return nil
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tSTEPS\tDESCRIPTION")
+			fmt.Fprintln(w, "NAME\tVER\tSTEPS\tDESCRIPTION")
 			for _, e := range entries {
 				desc := e.Description
 				if e.Err != "" {
 					desc = "INVALID: " + firstLine(e.Err)
 				}
-				fmt.Fprintf(w, "%s\t%d\t%s\n", e.Name, e.Steps, firstLine(desc))
+				fmt.Fprintf(w, "%s\t%d\t%d\t%s\n", e.Name, e.Version, e.Steps, firstLine(desc))
 			}
 			return w.Flush()
 		},
@@ -105,17 +114,47 @@ func listCmd(s func() *store.Store) *cobra.Command {
 }
 
 func showCmd(s func() *store.Store) *cobra.Command {
-	return &cobra.Command{
+	var ver int
+	cmd := &cobra.Command{
 		Use:   "show <name>",
-		Short: "Print a runbook's YAML",
+		Short: "Print a runbook's YAML (current, or --version N)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			b, err := s().Raw(args[0])
+			var b []byte
+			var err error
+			if ver > 0 {
+				b, err = s().RawVersion(args[0], ver)
+			} else {
+				b, err = s().Raw(args[0])
+			}
 			if err != nil {
 				return err
 			}
 			_, err = os.Stdout.Write(b)
 			return err
+		},
+	}
+	cmd.Flags().IntVar(&ver, "version", 0, "print this saved version")
+	return cmd
+}
+
+func versionsCmd(s func() *store.Store) *cobra.Command {
+	return &cobra.Command{
+		Use:   "versions <name>",
+		Short: "List a runbook's saved versions",
+		Long:  "Every save is kept. Print one with `runnr show <name> --version N`; restore it with\n`runnr show <name> --version N | runnr import -f -`.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			vs, err := s().Versions(args[0])
+			if err != nil {
+				return err
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "VERSION\tSAVED\tBYTES")
+			for _, v := range vs {
+				fmt.Fprintf(w, "%d\t%s\t%d\n", v.Version, v.CreatedAt.Local().Format("2006-01-02 15:04:05"), v.Bytes)
+			}
+			return w.Flush()
 		},
 	}
 }
@@ -132,10 +171,10 @@ func newCmd(s func() *store.Store) *cobra.Command {
 				return fmt.Errorf("runbook %q already exists", name)
 			}
 			raw := []byte(runbook.Scaffold(name))
-			if _, err := s().Save(raw, ""); err != nil {
+			if _, _, err := s().Save(raw, store.SaveOpts{}); err != nil {
 				return err
 			}
-			fmt.Println("created", s().Path(name))
+			fmt.Println("created", name)
 			if noEdit || !isTTY(os.Stdin) {
 				return nil
 			}
@@ -152,9 +191,6 @@ func editCmd(s func() *store.Store) *cobra.Command {
 		Short: "Edit a runbook in $EDITOR (validated on save)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, err := s().Raw(args[0]); err != nil {
-				return err
-			}
 			return editLoop(s(), args[0])
 		},
 	}
@@ -162,15 +198,21 @@ func editCmd(s func() *store.Store) *cobra.Command {
 
 // editLoop edits a temp copy and only replaces the stored runbook once valid.
 func editLoop(st *store.Store, name string) error {
-	raw, err := st.Raw(name)
+	doc, err := st.Load(name)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp("", "runnr-*.yaml")
+	raw := doc.Raw
+	tmp, err := os.CreateTemp("", "runnr-"+name+"-*.yaml")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	keep := false
+	defer func() {
+		if !keep {
+			os.Remove(tmp.Name())
+		}
+	}()
 	if _, err := tmp.Write(raw); err != nil {
 		return err
 	}
@@ -194,10 +236,14 @@ func editLoop(st *store.Store, name string) error {
 		if err != nil {
 			return err
 		}
-		rb, err := st.Save(edited, name)
+		rb, ver, err := st.Save(edited, store.SaveOpts{OldName: name, BaseVersion: doc.Version})
 		if err == nil {
-			fmt.Println("saved", st.Path(rb.Name))
+			fmt.Printf("saved %s (version %d)\n", rb.Name, ver)
 			return nil
+		}
+		if errors.Is(err, store.ErrConflict) {
+			keep = true
+			return fmt.Errorf("%w\nyour edits are in %s; merge them into `runnr edit %s` again", err, tmp.Name(), name)
 		}
 		fmt.Fprintln(os.Stderr, "invalid runbook:\n"+indent(err.Error()))
 		a, err := t.choose(context.Background(), "[e]dit again / [d]iscard changes:", map[string]string{"e": "e", "d": "d", "": "e"}, "e")
@@ -211,23 +257,23 @@ func importCmd(s func() *store.Store) *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "import <file>...",
-		Short: "Validate and copy runbook files into the library",
+		Short: "Validate and add runbook files to the library (- reads stdin)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var failed bool
 			for _, f := range args {
-				raw, err := os.ReadFile(f)
+				var raw []byte
+				var err error
+				if f == "-" {
+					raw, err = io.ReadAll(os.Stdin)
+				} else {
+					raw, err = os.ReadFile(f)
+				}
 				if err == nil {
 					var rb *runbook.Runbook
-					if rb, err = runbook.Parse(raw); err == nil {
-						if s().Exists(rb.Name) && !force {
-							err = fmt.Errorf("runbook %q exists (use --force)", rb.Name)
-						} else {
-							_, err = s().Save(raw, "")
-						}
-					}
-					if err == nil {
-						fmt.Printf("imported %s → %s\n", f, rb.Name)
+					var ver int
+					if rb, ver, err = s().Save(raw, store.SaveOpts{Overwrite: force}); err == nil {
+						fmt.Printf("imported %s → %s (version %d)\n", f, rb.Name, ver)
 						continue
 					}
 				}
@@ -291,7 +337,7 @@ func validateCmd(s func() *store.Store) *cobra.Command {
 			}
 			var failed bool
 			for _, ref := range args {
-				if _, err := s().Resolve(ref); err != nil {
+				if _, _, err := s().Resolve(ref); err != nil {
 					failed = true
 					fmt.Printf("✘ %s\n%s\n", ref, indent(err.Error()))
 				} else {
@@ -324,7 +370,7 @@ func (f *runFlags) register(cmd *cobra.Command) {
 }
 
 // execute runs rb with these flags; base holds inputs that --var overrides.
-func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, base map[string]string, startAt int, resumes string) error {
+func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, base map[string]string, startAt int, resumes string) error {
 	values := map[string]string{}
 	for k, v := range base {
 		values[k] = v
@@ -351,10 +397,10 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, base map[string
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	opts := engine.Options{Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt, Resumes: resumes}
+	opts := engine.Options{Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt, Resumes: resumes, RunbookVersion: ver}
 	if !f.noHistory {
 		opts.Save = func(r *engine.Run) {
-			if err := st.SaveRun(r.ID, r); err != nil {
+			if err := st.SaveRun(r); err != nil {
 				fmt.Fprintln(os.Stderr, "warning: saving run history:", err)
 			}
 		}
@@ -394,7 +440,7 @@ and tty steps follow their 'unattended' policy, and any failure aborts.
 'always' (e.g. environment setup) still run.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rb, err := s().Resolve(args[0])
+			rb, ver, err := s().Resolve(args[0])
 			if err != nil {
 				return err
 			}
@@ -404,7 +450,7 @@ and tty steps follow their 'unattended' policy, and any failure aborts.
 					return err
 				}
 			}
-			return f.execute(s(), rb, nil, start, "")
+			return f.execute(s(), rb, ver, nil, start, "")
 		},
 	}
 	f.register(cmd)
@@ -422,15 +468,15 @@ first step that didn't succeed. Secret inputs aren't stored, so they're asked
 for again (or pass them with -v). Steps marked 'always' run again.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var prev engine.Run
-			if err := s().LoadRun(args[0], &prev); err != nil {
+			prev, err := s().LoadRun(args[0])
+			if err != nil {
 				return err
 			}
-			start := engine.ResumePoint(&prev)
+			start := engine.ResumePoint(prev)
 			if start < 0 {
 				return fmt.Errorf("run %s has no unfinished steps", prev.ID)
 			}
-			rb, err := s().Get(prev.Runbook)
+			rb, ver, err := s().Get(prev.Runbook)
 			if err != nil {
 				return err
 			}
@@ -438,7 +484,7 @@ for again (or pass them with -v). Steps marked 'always' run again.`,
 				return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step>", rb.Name, prev.ID, rb.Name)
 			}
 			fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
-			return f.execute(s(), rb, engine.ResumeInputs(&prev), start, prev.ID)
+			return f.execute(s(), rb, ver, engine.ResumeInputs(prev), start, prev.ID)
 		},
 	}
 	f.register(cmd)
@@ -457,42 +503,35 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
-				var r engine.Run
-				if err := s().LoadRun(args[0], &r); err != nil {
+				r, err := s().LoadRun(args[0])
+				if err != nil {
 					return err
 				}
 				if asJSON {
 					return printJSON(r)
 				}
-				printRun(&r)
+				printRun(r)
 				return nil
 			}
-			ids, err := s().RunIDs()
+			runs, err := s().ListRuns(filter, limit)
 			if err != nil {
 				return err
-			}
-			var runs []engine.Run
-			for _, id := range ids {
-				if len(runs) >= limit {
-					break
-				}
-				var r engine.Run
-				if s().LoadRun(id, &r) != nil || (filter != "" && r.Runbook != filter) {
-					continue
-				}
-				runs = append(runs, r)
 			}
 			if asJSON {
 				return printJSON(runs)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "RUN ID\tRUNBOOK\tSTATUS\tMODE\tSTARTED\tDURATION")
+			fmt.Fprintln(w, "RUN ID\tRUNBOOK\tVER\tSTATUS\tMODE\tSTARTED\tDURATION")
 			for _, r := range runs {
 				dur := "-"
 				if !r.Ended.IsZero() {
 					dur = r.Ended.Sub(r.Started).Round(time.Millisecond).String()
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Runbook, r.Status, r.Mode, r.Started.Format("2006-01-02 15:04:05"), dur)
+				ver := "-"
+				if r.RunbookVersion > 0 {
+					ver = fmt.Sprint(r.RunbookVersion)
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Runbook, ver, r.Status, r.Mode, r.Started.Local().Format("2006-01-02 15:04:05"), dur)
 			}
 			return w.Flush()
 		},
@@ -500,11 +539,87 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 	cmd.Flags().StringVarP(&filter, "runbook", "r", "", "only runs of this runbook")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "max runs to list")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
+	cmd.AddCommand(pruneCmd(s))
+	return cmd
+}
+
+func pruneCmd(s func() *store.Store) *cobra.Command {
+	var olderThan string
+	cmd := &cobra.Command{
+		Use:   "prune --older-than <age>",
+		Short: "Delete finished runs older than an age like 90d or 720h",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			age, err := parseAge(olderThan)
+			if err != nil {
+				return err
+			}
+			n, err := s().PruneRuns(time.Now().Add(-age))
+			if err != nil {
+				return err
+			}
+			fmt.Printf("deleted %d run(s) older than %s\n", n, olderThan)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&olderThan, "older-than", "", "age, e.g. 90d, 2w or 720h (required)")
+	_ = cmd.MarkFlagRequired("older-than")
+	return cmd
+}
+
+// parseAge accepts Go durations plus d (days) and w (weeks).
+func parseAge(s string) (time.Duration, error) {
+	for suffix, unit := range map[string]time.Duration{"d": 24 * time.Hour, "w": 7 * 24 * time.Hour} {
+		if n, ok := strings.CutSuffix(s, suffix); ok {
+			v, err := strconv.Atoi(n)
+			if err != nil || v <= 0 {
+				return 0, fmt.Errorf("invalid age %q", s)
+			}
+			return time.Duration(v) * unit, nil
+		}
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("invalid age %q (try 90d, 2w or 720h)", s)
+	}
+	return d, nil
+}
+
+func dbCmd(s func() *store.Store) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "db",
+		Short: "Inspect the database, or import file-based data into it",
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "info",
+		Short: "Show where data lives and how much there is",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			st, err := s().Stats()
+			if err != nil {
+				return err
+			}
+			fmt.Printf("driver:    %s\nlocation:  %s\nrunbooks:  %d (%d saved versions)\nruns:      %d\n", st.Driver, st.Location, st.Runbooks, st.Versions, st.Runs)
+			return nil
+		},
+	}, &cobra.Command{
+		Use:   "import <dir>",
+		Short: "Import <dir>/runbooks/*.yaml and <dir>/runs/*.json (e.g. into a shared Postgres)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rbs, runs, err := s().ImportFiles(args[0])
+			fmt.Printf("imported %d runbook(s) and %d run(s) into %s\n", rbs, runs, s().Location)
+			return err
+		},
+	})
 	return cmd
 }
 
 func printRun(r *engine.Run) {
 	fmt.Printf("Run %s — %s (%s)\n", r.ID, r.Runbook, r.Mode)
+	if r.RunbookVersion > 0 {
+		fmt.Printf("Version: %d\n", r.RunbookVersion)
+	}
 	fmt.Printf("Status:  %s\n", r.Status)
 	if r.Error != "" {
 		fmt.Printf("Error:   %s\n", r.Error)

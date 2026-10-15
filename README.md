@@ -11,7 +11,8 @@ unattended for cron/CI.
 - **Shared variables**: a step can publish values (and secrets) for every later step.
 - **Terminal steps** hand the terminal to tools like `terraform apply` or `argocd login --sso`.
 - **Resume** long-running or multi-day procedures from where they stopped.
-- **Run history** for every run, viewable in both interfaces.
+- **Run history** for every run, and **version history** for every runbook save.
+- **SQLite or Postgres** storage: zero-setup locally, shared for a team.
 - **HTTP API** for CI, cron and chatops ([docs/API.md](docs/API.md)).
 
 ## Install
@@ -39,16 +40,41 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr list` | List runbooks (`--json`) |
 | `runnr new <name>` | Create from a starter template and open `$EDITOR` |
 | `runnr edit <name>` | Edit in `$EDITOR`; only saved once it validates |
-| `runnr show <name>` | Print YAML |
-| `runnr import <file>...` | Validate and copy files into the library (`-f` to overwrite) |
+| `runnr show <name>` | Print YAML (`--version N` for an older save) |
+| `runnr versions <name>` | List saved versions |
+| `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin) |
 | `runnr delete <name>` | Delete (`-f` to skip the prompt) |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
 | `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |
 | `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped |
 | `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail |
+| `runnr history prune --older-than 90d` | Delete old finished runs |
+| `runnr db info` / `runnr db import <dir>` | Show storage details / import a file-based runnr home |
 | `runnr serve` (alias `ui`) | Serve the GUI and API (`--addr`, `--open`, `--token`, `--no-ui`) |
 
-Data lives in `~/.runnr` (`runbooks/*.yaml`, `runs/*.json`); override with `--home` or `RUNNR_HOME`.
+## Storage
+
+By default everything is in a SQLite database at `~/.runnr/runnr.db`
+(`--home`/`RUNNR_HOME` moves it). For a team, point every runnr (CLI and
+server) at one Postgres database:
+
+```sh
+export RUNNR_DATABASE_URL=postgres://runnr:...@db.internal:5432/runnr   # or --db
+runnr db import ~/.runnr-old    # optional: bring in file-based runbooks and runs
+```
+
+runnr creates its tables on first connect. It stores:
+
+- **runbooks**: current YAML per name, with a version number.
+- **runbook_versions**: every saved version, kept even after delete or rename.
+  Edits from the CLI and GUI are checked against the version you started from,
+  so a concurrent save is refused (`409` in the API) rather than overwritten.
+- **runs**: one record per run (inputs, step statuses, last 64 KiB of output per
+  step, the runbook version that ran), updated after every step. Secrets are
+  masked; output of `tty` steps isn't captured. Prune with `runnr history prune`.
+
+Older versions of runnr kept YAML and JSON files under `~/.runnr`; the default
+SQLite database imports them once, on first use, and leaves the files alone.
 
 ### Running
 
@@ -153,7 +179,7 @@ internal/runbook/   format, validation, templating
 internal/engine/    executor + Interactor interface (unattended impl here)
 internal/cli/       cobra commands + terminal Interactor
 internal/server/    HTTP API, SSE, browser Interactor, embedded web/ UI
-internal/store/     filesystem storage for runbooks and run history
+internal/store/     SQLite/Postgres storage: runbooks, versions, runs
 examples/           sample runbooks
 ```
 

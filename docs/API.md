@@ -23,19 +23,24 @@ proxy) off-host.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/api/runbooks` | | `[{name, description, tags, steps, error?}]` |
-| GET | `/api/runbooks/{name}` | | `{raw, runbook?, error?}` |
-| POST | `/api/runbooks` | YAML | `201` runbook (`400` if invalid or exists) |
-| PUT | `/api/runbooks/{name}` | YAML | runbook (renames if `name` changed) |
-| DELETE | `/api/runbooks/{name}` | | `204` |
+| GET | `/api/runbooks` | | `[{name, version, updated_at, description, tags, steps, error?}]` |
+| GET | `/api/runbooks/{name}` | | `{raw, version, updated_at, runbook?, error?}` (+ `ETag: <version>`) |
+| POST | `/api/runbooks` | YAML | `201 {name, version, runbook}` (`400` if invalid or exists) |
+| PUT | `/api/runbooks/{name}` | YAML | `{name, version, runbook}`; renames if `name` changed |
+| DELETE | `/api/runbooks/{name}` | | `204` (version history is kept) |
+| GET | `/api/runbooks/{name}/versions` | | `[{version, created_at, bytes}]`, newest first |
+| GET | `/api/runbooks/{name}/versions/{n}` | | `{version, raw}` |
 | POST | `/api/validate` | YAML | `{ok, error?}` |
+
+Send `If-Match: <version>` with `PUT` to get `409 Conflict` instead of
+overwriting a newer save.
 
 ## Runs
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | POST | `/api/runs` | start request | `202 {id}`, or the run record with `wait` |
-| GET | `/api/runs?runbook=` | | recent runs (no step detail), newest first |
+| GET | `/api/runs?runbook=&limit=` | | recent runs (no step detail), newest first; limit ≤ 1000, default 100 |
 | GET | `/api/runs/{id}` | | `{run, live}` |
 | GET | `/api/runs/{id}/events` | | Server-Sent Events (live runs only) |
 | POST | `/api/runs/{id}/answer` | `{question_id, value, note?}` | `204` |
@@ -58,7 +63,7 @@ Start request:
 
 A run record has `status` (`running`, `succeeded`, `failed`, `aborted`) and a
 `steps` array with each step's `status`, `command`, `output` (last 64 KiB),
-`exit_code`, `error`, `note` and timings. Secrets are masked.
+`exit_code`, `error`, `note` and timings, plus `runbook_version`. Secrets are masked.
 
 ### Interactive runs over the API
 

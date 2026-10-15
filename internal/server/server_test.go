@@ -28,7 +28,7 @@ func do(t *testing.T, method, url, body string, hdr map[string]string) *http.Res
 }
 
 func TestInteractiveRunOverHTTP(t *testing.T) {
-	st, _ := store.New(t.TempDir())
+	st, _ := store.Open(t.TempDir(), "")
 	ts := httptest.NewServer(New(st, Config{}).Handler())
 	defer ts.Close()
 
@@ -83,14 +83,13 @@ func TestInteractiveRunOverHTTP(t *testing.T) {
 		t.Fatalf("output %q", output)
 	}
 
-	var rec engine.Run
-	if err := st.LoadRun(started.ID, &rec); err != nil || rec.Status != engine.StatusSucceeded {
-		t.Fatalf("history: %v %s", err, rec.Status)
+	if rec, err := st.LoadRun(started.ID); err != nil || rec.Status != engine.StatusSucceeded {
+		t.Fatalf("history: %v %+v", err, rec)
 	}
 }
 
 func TestGuardRejectsCrossOrigin(t *testing.T) {
-	st, _ := store.New(t.TempDir())
+	st, _ := store.Open(t.TempDir(), "")
 	ts := httptest.NewServer(New(st, Config{}).Handler())
 	defer ts.Close()
 
@@ -104,7 +103,7 @@ func TestGuardRejectsCrossOrigin(t *testing.T) {
 }
 
 func TestTokenAuthWaitAndResume(t *testing.T) {
-	st, _ := store.New(t.TempDir())
+	st, _ := store.Open(t.TempDir(), "")
 	ts := httptest.NewServer(New(st, Config{Token: "s3cret", NoUI: true}).Handler())
 	defer ts.Close()
 
@@ -139,5 +138,27 @@ func TestTokenAuthWaitAndResume(t *testing.T) {
 	}
 	if r := do(t, "GET", ts.URL+"/", "", auth); r.StatusCode != http.StatusNotFound {
 		t.Fatalf("no-ui should not serve GUI: %d", r.StatusCode)
+	}
+}
+
+func TestRunbookConflict(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+
+	v1 := "name: c\nsteps: [{name: a, run: 'true'}]\n"
+	do(t, "POST", ts.URL+"/api/runbooks", v1, nil)
+	if r := do(t, "PUT", ts.URL+"/api/runbooks/c", strings.Replace(v1, "true", "echo 2", 1), map[string]string{"If-Match": "1"}); r.StatusCode != http.StatusOK {
+		t.Fatalf("first edit: %d", r.StatusCode)
+	}
+	// A second editor still on version 1 must not clobber version 2.
+	if r := do(t, "PUT", ts.URL+"/api/runbooks/c", strings.Replace(v1, "true", "echo 3", 1), map[string]string{"If-Match": "1"}); r.StatusCode != http.StatusConflict {
+		t.Fatalf("stale edit: %d", r.StatusCode)
+	}
+	r := do(t, "GET", ts.URL+"/api/runbooks/c/versions", "", nil)
+	var vs []store.Version
+	json.NewDecoder(r.Body).Decode(&vs)
+	if len(vs) != 2 || vs[0].Version != 2 {
+		t.Fatalf("versions %+v", vs)
 	}
 }

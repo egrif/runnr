@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +58,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runbooks/{name}", s.getRunbook)
 	mux.HandleFunc("PUT /api/runbooks/{name}", s.updateRunbook)
 	mux.HandleFunc("DELETE /api/runbooks/{name}", s.deleteRunbook)
+	mux.HandleFunc("GET /api/runbooks/{name}/versions", s.listVersions)
+	mux.HandleFunc("GET /api/runbooks/{name}/versions/{version}", s.getVersion)
 	mux.HandleFunc("POST /api/validate", s.validate)
 	mux.HandleFunc("GET /api/template", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"raw": runbook.Scaffold(nonEmpty(r.URL.Query().Get("name"), "my-runbook"))})
@@ -153,8 +157,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, err error) {
 	code := http.StatusBadRequest
-	if errors.Is(err, store.ErrNotFound) {
+	switch {
+	case errors.Is(err, store.ErrNotFound):
 		code = http.StatusNotFound
+	case errors.Is(err, store.ErrConflict):
+		code = http.StatusConflict
 	}
 	writeJSON(w, code, map[string]string{"error": err.Error()})
 }
@@ -176,63 +183,76 @@ func (s *Server) listRunbooks(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) getRunbook(w http.ResponseWriter, r *http.Request) {
-	raw, err := s.st.Raw(r.PathValue("name"))
+	d, err := s.st.Load(r.PathValue("name"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	resp := map[string]any{"raw": string(raw)}
-	if rb, err := runbook.Parse(raw); err != nil {
-		resp["error"] = err.Error()
+	resp := map[string]any{"raw": string(d.Raw), "version": d.Version, "updated_at": d.UpdatedAt}
+	if d.ParseErr != nil {
+		resp["error"] = d.ParseErr.Error()
 	} else {
-		resp["runbook"] = rb
+		resp["runbook"] = d.Runbook
 	}
+	w.Header().Set("ETag", strconv.Itoa(d.Version))
 	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) createRunbook(w http.ResponseWriter, r *http.Request) {
-	raw, err := readBody(r)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	rb, err := runbook.Parse(raw)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	if s.st.Exists(rb.Name) {
-		writeErr(w, fmt.Errorf("runbook %q already exists", rb.Name))
-		return
-	}
-	if _, err := s.st.Save(raw, ""); err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, rb)
+	s.saveRunbook(w, r, store.SaveOpts{}, http.StatusCreated)
 }
 
+// updateRunbook saves a new version. Send "If-Match: <version>" to fail with
+// 409 instead of overwriting someone else's newer save.
 func (s *Server) updateRunbook(w http.ResponseWriter, r *http.Request) {
-	old := r.PathValue("name")
+	o := store.SaveOpts{OldName: r.PathValue("name")}
+	if m := strings.Trim(r.Header.Get("If-Match"), `" `); m != "" {
+		v, err := strconv.Atoi(m)
+		if err != nil {
+			writeErr(w, fmt.Errorf("If-Match must be a version number"))
+			return
+		}
+		o.BaseVersion = v
+	}
+	s.saveRunbook(w, r, o, http.StatusOK)
+}
+
+func (s *Server) saveRunbook(w http.ResponseWriter, r *http.Request, o store.SaveOpts, code int) {
 	raw, err := readBody(r)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	rb, err := runbook.Parse(raw)
+	rb, ver, err := s.st.Save(raw, o)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	if rb.Name != old && s.st.Exists(rb.Name) {
-		writeErr(w, fmt.Errorf("can't rename: runbook %q already exists", rb.Name))
-		return
-	}
-	if _, err := s.st.Save(raw, old); err != nil {
+	w.Header().Set("ETag", strconv.Itoa(ver))
+	writeJSON(w, code, map[string]any{"name": rb.Name, "version": ver, "runbook": rb})
+}
+
+func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
+	vs, err := s.st.Versions(r.PathValue("name"))
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, rb)
+	writeJSON(w, http.StatusOK, vs)
+}
+
+func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
+	v, err := strconv.Atoi(r.PathValue("version"))
+	if err != nil {
+		writeErr(w, fmt.Errorf("bad version"))
+		return
+	}
+	raw, err := s.st.RawVersion(r.PathValue("name"), v)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": v, "raw": string(raw)})
 }
 
 func (s *Server) deleteRunbook(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +301,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	rb, err := s.st.Get(req.Runbook)
+	rb, ver, err := s.st.Get(req.Runbook)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -293,7 +313,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.launch(w, r, rb, req, start, "")
+	s.launch(w, r, rb, ver, req, start, "")
 }
 
 func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
@@ -302,17 +322,17 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	var prev engine.Run
-	if err := s.st.LoadRun(r.PathValue("id"), &prev); err != nil {
+	prev, err := s.st.LoadRun(r.PathValue("id"))
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	start := engine.ResumePoint(&prev)
+	start := engine.ResumePoint(prev)
 	if start < 0 {
 		writeErr(w, fmt.Errorf("run %s has no unfinished steps", prev.ID))
 		return
 	}
-	rb, err := s.st.Get(prev.Runbook)
+	rb, ver, err := s.st.Get(prev.Runbook)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -321,15 +341,15 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("runbook %q changed since run %s; start a new run with \"from\"", rb.Name, prev.ID))
 		return
 	}
-	vars := engine.ResumeInputs(&prev)
+	vars := engine.ResumeInputs(prev)
 	for k, v := range req.Vars {
 		vars[k] = v
 	}
 	req.Vars = vars
-	s.launch(w, r, rb, req, start, prev.ID)
+	s.launch(w, r, rb, ver, req, start, prev.ID)
 }
 
-func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, req startReq, start int, resumes string) {
+func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, ver int, req startReq, start int, resumes string) {
 	if req.Wait && !req.Unattended {
 		writeErr(w, errors.New("wait requires unattended (nobody could answer prompts)"))
 		return
@@ -351,12 +371,17 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		defer s.wg.Done()
 		defer cancel()
 		done <- engine.Execute(ctx, rb, ui, id, engine.Options{
-			Vars:        req.Vars,
-			DryRun:      req.DryRun,
-			Interactive: !req.Unattended,
-			StartAt:     start,
-			Resumes:     resumes,
-			Save:        func(run *engine.Run) { _ = s.st.SaveRun(run.ID, run) },
+			Vars:           req.Vars,
+			DryRun:         req.DryRun,
+			Interactive:    !req.Unattended,
+			StartAt:        start,
+			Resumes:        resumes,
+			RunbookVersion: ver,
+			Save: func(run *engine.Run) {
+				if err := s.st.SaveRun(run); err != nil {
+					log.Printf("saving run %s: %v", run.ID, err)
+				}
+			},
 		})
 		// Keep the event log around briefly for late subscribers.
 		time.AfterFunc(10*time.Minute, func() {
@@ -384,30 +409,21 @@ func (s *Server) getLive(id string) *liveRun {
 }
 
 func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
-	ids, err := s.st.RunIDs()
+	limit := 100
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 1000 {
+		limit = n
+	}
+	runs, err := s.st.ListRuns(r.URL.Query().Get("runbook"), limit)
 	if err != nil {
 		writeErr(w, err)
 		return
-	}
-	filter := r.URL.Query().Get("runbook")
-	runs := []engine.Run{}
-	for _, id := range ids {
-		if len(runs) >= 100 {
-			break
-		}
-		var run engine.Run
-		if s.st.LoadRun(id, &run) != nil || (filter != "" && run.Runbook != filter) {
-			continue
-		}
-		run.Steps = nil
-		runs = append(runs, run)
 	}
 	writeJSON(w, http.StatusOK, runs)
 }
 
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
-	var run engine.Run
-	if err := s.st.LoadRun(r.PathValue("id"), &run); err != nil {
+	run, err := s.st.LoadRun(r.PathValue("id"))
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
