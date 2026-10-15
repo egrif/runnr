@@ -43,6 +43,8 @@ type Input struct {
 type Step struct {
 	ID              string            `yaml:"id,omitempty" json:"id,omitempty"`
 	Name            string            `yaml:"name" json:"name"`
+	Section         string            `yaml:"section,omitempty" json:"section,omitempty"`
+	Owner           string            `yaml:"owner,omitempty" json:"owner,omitempty"`
 	Run             string            `yaml:"run,omitempty" json:"run,omitempty"`
 	Manual          string            `yaml:"manual,omitempty" json:"manual,omitempty"`
 	Shell           string            `yaml:"shell,omitempty" json:"shell,omitempty"`
@@ -52,6 +54,9 @@ type Step struct {
 	Confirm         bool              `yaml:"confirm,omitempty" json:"confirm,omitempty"`
 	Timeout         string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Retries         int               `yaml:"retries,omitempty" json:"retries,omitempty"`
+	RetryDelay      string            `yaml:"retry_delay,omitempty" json:"retry_delay,omitempty"`
+	TTY             bool              `yaml:"tty,omitempty" json:"tty,omitempty"`
+	Always          bool              `yaml:"always,omitempty" json:"always,omitempty"`
 	Capture         string            `yaml:"capture,omitempty" json:"capture,omitempty"`
 	ContinueOnError bool              `yaml:"continue_on_error,omitempty" json:"continue_on_error,omitempty"`
 	Unattended      string            `yaml:"unattended,omitempty" json:"unattended,omitempty"`
@@ -61,6 +66,11 @@ func (s Step) IsManual() bool { return s.Manual != "" }
 
 func (s Step) TimeoutDuration() time.Duration {
 	d, _ := time.ParseDuration(s.Timeout)
+	return d
+}
+
+func (s Step) RetryDelayDuration() time.Duration {
+	d, _ := time.ParseDuration(s.RetryDelay)
 	return d
 }
 
@@ -140,6 +150,14 @@ func (rb *Runbook) Validate() error {
 				add("%s: invalid timeout %q", where, s.Timeout)
 			}
 		}
+		if s.RetryDelay != "" {
+			if _, err := time.ParseDuration(s.RetryDelay); err != nil {
+				add("%s: invalid retry_delay %q", where, s.RetryDelay)
+			}
+		}
+		if s.TTY && s.Capture != "" {
+			add("%s: capture can't be used with tty (write to $RUNNR_OUTPUT instead)", where)
+		}
 		if s.Retries < 0 {
 			add("%s: retries must be >= 0", where)
 		}
@@ -148,8 +166,8 @@ func (rb *Runbook) Validate() error {
 		default:
 			add("%s: unattended must be fail, skip or pass", where)
 		}
-		if s.IsManual() && (s.Capture != "" || s.Retries > 0 || s.Timeout != "") {
-			add("%s: capture, retries and timeout only apply to run steps", where)
+		if s.IsManual() && (s.Capture != "" || s.Retries > 0 || s.Timeout != "" || s.RetryDelay != "" || s.TTY) {
+			add("%s: capture, retries, retry_delay, timeout and tty only apply to run steps", where)
 		}
 		for field, text := range map[string]string{"run": s.Run, "manual": s.Manual, "when": s.When, "dir": s.Dir} {
 			if _, err := template.New("").Funcs(TemplateFuncs).Option("missingkey=error").Parse(text); err != nil {
@@ -228,4 +246,26 @@ steps:
     run: echo "doing work"
     confirm: true
 `, name)
+}
+
+// StepIndex resolves a step reference: an id, a 1-based number, or an exact name.
+func (rb *Runbook) StepIndex(ref string) (int, error) {
+	for i, s := range rb.Steps {
+		if s.ID != "" && s.ID == ref {
+			return i, nil
+		}
+	}
+	var n int
+	if _, err := fmt.Sscanf(ref, "%d", &n); err == nil && fmt.Sprint(n) == ref {
+		if n < 1 || n > len(rb.Steps) {
+			return 0, fmt.Errorf("step %d out of range 1-%d", n, len(rb.Steps))
+		}
+		return n - 1, nil
+	}
+	for i, s := range rb.Steps {
+		if s.Name == ref {
+			return i, nil
+		}
+	}
+	return 0, fmt.Errorf("no step %q (use an id, number or exact name)", ref)
 }

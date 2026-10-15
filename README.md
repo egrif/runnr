@@ -8,7 +8,11 @@ unattended for cron/CI.
 - **Manual steps** show instructions and wait for an operator to mark them done, skipped or failed.
 - **Confirmation gates** pause before risky commands.
 - **Inputs** with defaults, choices and secrets (secrets are masked in output and history).
+- **Shared variables**: a step can publish values (and secrets) for every later step.
+- **Terminal steps** hand the terminal to tools like `terraform apply` or `argocd login --sso`.
+- **Resume** long-running or multi-day procedures from where they stopped.
 - **Run history** for every run, viewable in both interfaces.
+- **HTTP API** for CI, cron and chatops ([docs/API.md](docs/API.md)).
 
 ## Install
 
@@ -25,7 +29,7 @@ runnr import examples/*.yaml
 runnr list
 runnr run hello                              # interactive
 runnr run deploy-service -u -y -v env=staging  # unattended
-runnr ui --open                              # GUI at http://127.0.0.1:7777
+runnr serve --open                           # GUI + API at http://127.0.0.1:7777
 ```
 
 ## CLI
@@ -39,9 +43,10 @@ runnr ui --open                              # GUI at http://127.0.0.1:7777
 | `runnr import <file>...` | Validate and copy files into the library (`-f` to overwrite) |
 | `runnr delete <name>` | Delete (`-f` to skip the prompt) |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
-| `runnr run <name\|file>` | Run a runbook (see below) |
+| `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |
+| `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped |
 | `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail |
-| `runnr ui` | Start the web GUI (`--addr`, `--open`) |
+| `runnr serve` (alias `ui`) | Serve the GUI and API (`--addr`, `--open`, `--token`, `--no-ui`) |
 
 Data lives in `~/.runnr` (`runbooks/*.yaml`, `runs/*.json`); override with `--home` or `RUNNR_HOME`.
 
@@ -58,14 +63,21 @@ runnr run <name|file> [-v key=value]... [-u] [-y] [--dry-run] [--json] [-q] [--n
 
 `--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted.
 
+A failed or aborted run can be continued with `runnr resume <run-id>`: same
+inputs (secret inputs are asked again), starting at the step that didn't
+finish. Steps marked `always` (typically environment setup) run again. For
+multi-day procedures, abort at a "wait" step and resume later.
+
 ## GUI
 
-`runnr ui` serves a local web app: browse/filter runbooks, edit YAML with live
-validation, start runs (interactive or unattended, dry run), watch output stream
-in, answer manual/confirm/failure prompts in the browser, and browse history.
+`runnr serve` serves a local web app: browse/filter runbooks, edit YAML with live
+validation, start runs (interactive or unattended, dry run, from any step),
+watch output stream in, answer manual/confirm/failure prompts in the browser,
+resume failed runs, and browse history.
 
-It binds to `127.0.0.1` by default. It can execute commands, so don't expose it
-on a shared network; mutating API calls require a same-origin `X-Runnr` header.
+It binds to `127.0.0.1` by default and refuses other addresses unless you set
+an API token (`--token` or `RUNNR_TOKEN`), since it can run commands. See
+[docs/API.md](docs/API.md).
 
 ## Runbook format
 
@@ -85,10 +97,20 @@ inputs:
     secret: true                # masked as **** in output and history
     required: true
 steps:
+  - name: Derive environment
+    section: Setup              # groups steps under a heading in CLI and GUI
+    always: true                # runs even with --from / resume
+    run: |
+      echo "region=us-east-1" >> "$RUNNR_OUTPUT"   # → {{.region}} and $region later
+      echo "db_pass=$(fetch-pass)" >> "$RUNNR_SECRET"  # same, but masked everywhere
   - name: Resolve version
     run: git describe --tags
     capture: version            # trimmed stdout → {{.version}} for later steps
+  - name: Terraform apply
+    tty: true                   # attach to the terminal (prompts, SSO, live displays)
+    run: terraform apply
   - name: Announce
+    owner: Datastores           # who does this step (shown, not enforced)
     manual: |
       Post "Deploying {{.version}} to {{.env}}" in #deploys.
     when: '{{eq .env "production"}}'
@@ -98,6 +120,7 @@ steps:
     confirm: true               # ask first; unattended needs --yes
     timeout: 10m
     retries: 2
+    retry_delay: 30s
     dir: ./infra
     env: { TOKEN: "{{.token}}" }
   - name: Smoke test
@@ -105,12 +128,22 @@ steps:
     continue_on_error: true
 ```
 
-Each step has exactly one of `run` or `manual`. `run`, `manual`, `when`, `dir`
-and `env` values are Go templates over inputs and captured values, with helpers
+Each step has exactly one of `run` or `manual`. Every input and published
+value is available to later steps both as a template variable and as an
+environment variable. `run`, `manual`, `when`, `dir` and `env` values are Go
+templates, with helpers
 `default`, `upper`, `lower`, `trim`, `contains`, `quote` (shell-quote). Unknown
 variables are an error. `when` is truthy unless it renders to empty, `false`,
 `0`, `no` or `off`. Steps also get `RUNNR_RUN_ID` and `RUNNR_RUNBOOK` in their
 environment.
+
+`tty` steps run attached to your terminal under `runnr run` and aren't
+recorded. In the GUI or unattended they become manual steps ("run this in a
+terminal"), following their `unattended` policy. Shell aliases aren't loaded in
+steps, so call real binaries (`terraform`, not `tf`).
+
+Secrets published via `$RUNNR_SECRET` are masked from the moment they're
+published; don't echo them in the step that creates them.
 
 ## Layout
 

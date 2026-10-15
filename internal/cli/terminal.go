@@ -17,11 +17,37 @@ import (
 
 // Terminal is an interactive engine.Interactor on stdin/stdout.
 type Terminal struct {
-	in    *bufio.Reader
-	out   io.Writer
-	color bool
-	total int
-	quiet bool
+	in      *bufio.Reader
+	out     io.Writer
+	color   bool
+	total   int
+	quiet   bool
+	section string
+}
+
+// AttachedIO lets tty steps take over the terminal.
+func (t *Terminal) AttachedIO() (io.Reader, io.Writer, io.Writer) {
+	return os.Stdin, os.Stdout, os.Stderr
+}
+
+// header prints the step title, preceded by its section when that changes.
+func (t *Terminal) header(i int, r *engine.StepResult, dim bool) string {
+	var b strings.Builder
+	if r.Section != "" && r.Section != t.section {
+		t.section = r.Section
+		fmt.Fprintf(&b, "\n%s\n", t.c("35;1", "══ "+r.Section))
+	}
+	n := fmt.Sprintf("[%d/%d]", i+1, t.total)
+	title := r.Name
+	if r.Owner != "" {
+		title += t.c("2", " ("+r.Owner+")")
+	}
+	if dim {
+		fmt.Fprintf(&b, "\n%s %s", t.c("2", n), t.c("2", title))
+	} else {
+		fmt.Fprintf(&b, "\n%s %s", t.c("36;1", n), t.c("1", title))
+	}
+	return b.String()
 }
 
 func NewTerminal(total int) *Terminal {
@@ -50,7 +76,10 @@ func (t *Terminal) Notify(e engine.Event) {
 	case engine.EventRunStarted:
 		fmt.Fprintf(t.out, "%s %s  %s\n", t.c("1", "runnr"), e.Run.Runbook, t.c("2", e.Run.ID))
 	case engine.EventStepStarted:
-		fmt.Fprintf(t.out, "\n%s %s\n", t.c("36;1", fmt.Sprintf("[%d/%d]", e.Step+1, t.total)), t.c("1", e.Result.Name))
+		fmt.Fprintln(t.out, t.header(e.Step, e.Result, false))
+		if e.Result.Kind == "tty" {
+			fmt.Fprintln(t.out, t.c("2", "  (attached to terminal)"))
+		}
 	case engine.EventOutput:
 		if t.quiet {
 			return
@@ -62,6 +91,9 @@ func (t *Terminal) Notify(e engine.Event) {
 		fmt.Fprintln(t.out, prefix+e.Text)
 	case engine.EventStepFinished:
 		r := e.Result
+		if r.Note == engine.NoteBeforeStart {
+			return
+		}
 		st := statusStyle[r.Status]
 		line := fmt.Sprintf("  %s %s", st.icon, r.Status)
 		if !r.Started.IsZero() && !r.Ended.IsZero() {
@@ -69,7 +101,7 @@ func (t *Terminal) Notify(e engine.Event) {
 		}
 		if r.Started.IsZero() {
 			// Skipped before starting: print the header we never printed.
-			line = fmt.Sprintf("\n%s %s\n%s", t.c("2", fmt.Sprintf("[%d/%d]", e.Step+1, t.total)), r.Name, line)
+			line = t.header(e.Step, r, true) + "\n" + line
 		}
 		if r.Note != "" {
 			line += " — " + r.Note

@@ -126,7 +126,7 @@ steps:
 
 	ui = &scripted{failures: []FailureAction{FailAbort}}
 	run = Execute(context.Background(), rb, ui, "", Options{Interactive: true})
-	if run.Status != StatusFailed || statuses(run) != "failed,failed,skipped" {
+	if run.Status != StatusFailed || statuses(run) != "failed,failed,pending" {
 		t.Fatalf("abort: %s %s", run.Status, statuses(run))
 	}
 }
@@ -191,7 +191,7 @@ func TestTimeoutAndCancel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	run = Execute(ctx, rb, Unattended{}, "", Options{})
-	if run.Status != StatusAborted || statuses(run) != "aborted,skipped" {
+	if run.Status != StatusAborted || statuses(run) != "aborted,pending" {
 		t.Fatalf("cancel: %s %s", run.Status, statuses(run))
 	}
 }
@@ -209,6 +209,66 @@ func TestManualInteractive(t *testing.T) {
 	ui := &scripted{manuals: []ManualOutcome{ManualDone, ManualFail}}
 	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
 	if run.Status != StatusFailed || statuses(run) != "succeeded,failed" {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+}
+
+func TestOutputsAndSecretOutputs(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - name: setup
+    run: |
+      echo "region=use1" >> "$RUNNR_OUTPUT"
+      echo "pass=sup3rsecret" >> "$RUNNR_SECRET"
+  - {name: env, run: 'echo "$region {{.region}} $pass"'}
+`)
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{})
+	if run.Status != StatusSucceeded {
+		t.Fatal(run.Error)
+	}
+	if got := strings.Join(ui.output, "|"); got != "use1 use1 ****" {
+		t.Fatalf("output %q", got)
+	}
+}
+
+func TestStartAtAndAlways(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - {name: setup, run: 'echo "x=1" >> "$RUNNR_OUTPUT"', always: true}
+  - {name: skipme, run: 'exit 1'}
+  - {name: last, run: 'echo $x'}
+`)
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{StartAt: 2})
+	if run.Status != StatusSucceeded || statuses(run) != "succeeded,skipped,succeeded" || ui.output[0] != "1" {
+		t.Fatalf("%s %s %q", run.Status, statuses(run), ui.output)
+	}
+}
+
+func TestResumePoint(t *testing.T) {
+	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: 'exit 1'}\n  - {name: c, run: 'true'}\n")
+	run := Execute(context.Background(), rb, Unattended{}, "", Options{Vars: map[string]string{}})
+	if got := ResumePoint(run); got != 1 {
+		t.Fatalf("resume point %d (%s)", got, statuses(run))
+	}
+}
+
+func TestRetryDelay(t *testing.T) {
+	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'exit 1', retries: 2, retry_delay: 150ms}\n")
+	start := time.Now()
+	run := Execute(context.Background(), rb, Unattended{}, "", Options{})
+	if run.Steps[0].Attempts != 3 || time.Since(start) < 300*time.Millisecond {
+		t.Fatalf("attempts %d in %s", run.Steps[0].Attempts, time.Since(start))
+	}
+}
+
+func TestTTYWithoutTerminalBecomesManual(t *testing.T) {
+	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'tf apply', tty: true, unattended: skip}\n")
+	run := Execute(context.Background(), rb, Unattended{}, "", Options{})
+	if run.Status != StatusSucceeded || run.Steps[0].Status != StatusSkipped || run.Steps[0].Kind != "tty" {
 		t.Fatalf("%s %s", run.Status, statuses(run))
 	}
 }

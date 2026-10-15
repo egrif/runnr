@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,19 +25,31 @@ var webFS embed.FS
 
 type Server struct {
 	st   *store.Store
+	cfg  Config
 	mu   sync.Mutex
 	live map[string]*liveRun
 	wg   sync.WaitGroup
 }
 
-func New(st *store.Store) *Server {
-	return &Server{st: st, live: map[string]*liveRun{}}
+type Config struct {
+	// Token, when set, is required on every API request, either as
+	// "Authorization: Bearer <token>" or via the GUI's login cookie.
+	Token string
+	// NoUI serves only the API.
+	NoUI bool
+}
+
+func New(st *store.Store, cfg Config) *Server {
+	return &Server{st: st, cfg: cfg, live: map[string]*liveRun{}}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	static, _ := fs.Sub(webFS, "web")
-	mux.Handle("GET /", http.FileServerFS(static))
+	if !s.cfg.NoUI {
+		static, _ := fs.Sub(webFS, "web")
+		mux.Handle("GET /", http.FileServerFS(static))
+	}
+	mux.HandleFunc("POST /api/login", s.login)
 
 	mux.HandleFunc("GET /api/runbooks", s.listRunbooks)
 	mux.HandleFunc("POST /api/runbooks", s.createRunbook)
@@ -53,13 +67,38 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
-	return guard(mux)
+	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
+	return s.guard(mux)
 }
 
-// guard rejects cross-origin state changes so a malicious page can't drive
-// a local runnr server (which can execute arbitrary commands).
-func guard(next http.Handler) http.Handler {
+const cookieName = "runnr_token"
+
+func (s *Server) tokenOK(t string) bool {
+	return t != "" && subtle.ConstantTimeCompare([]byte(t), []byte(s.cfg.Token)) == 1
+}
+
+// guard enforces auth and rejects cross-origin state changes, so neither
+// other hosts nor a malicious web page can drive runnr (which runs commands).
+// Bearer-token requests are exempt from the browser checks: browsers never
+// attach that header on their own.
+func (s *Server) guard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		isAPI := strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/login"
+		if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+			if s.cfg.Token != "" && !s.tokenOK(bearer) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if isAPI && s.cfg.Token != "" {
+			c, err := r.Cookie(cookieName)
+			if err != nil || !s.tokenOK(c.Value) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token required"})
+				return
+			}
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if origin := r.Header.Get("Origin"); origin != "" && origin != "http://"+r.Host && origin != "https://"+r.Host {
 				http.Error(w, "cross-origin request refused", http.StatusForbidden)
@@ -72,6 +111,18 @@ func guard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// login exchanges a token for an HttpOnly cookie for the GUI.
+func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	var body struct{ Token string }
+	_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
+	if s.cfg.Token != "" && !s.tokenOK(body.Token) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"})
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: body.Token, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
@@ -211,11 +262,22 @@ type startReq struct {
 	Unattended bool              `json:"unattended"`
 	Yes        bool              `json:"yes"`
 	DryRun     bool              `json:"dry_run"`
+	// From starts at a later step (id, 1-based number or name).
+	From string `json:"from"`
+	// Wait blocks until the run finishes and returns its record.
+	Wait bool `json:"wait"`
+}
+
+func decode(r *http.Request, v any) error {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 	var req startReq
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := decode(r, &req); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -224,7 +286,54 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	start := 0
+	if req.From != "" {
+		if start, err = rb.StepIndex(req.From); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	s.launch(w, r, rb, req, start, "")
+}
 
+func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
+	var req startReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	var prev engine.Run
+	if err := s.st.LoadRun(r.PathValue("id"), &prev); err != nil {
+		writeErr(w, err)
+		return
+	}
+	start := engine.ResumePoint(&prev)
+	if start < 0 {
+		writeErr(w, fmt.Errorf("run %s has no unfinished steps", prev.ID))
+		return
+	}
+	rb, err := s.st.Get(prev.Runbook)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if len(rb.Steps) != len(prev.Steps) || rb.Steps[start].Name != prev.Steps[start].Name {
+		writeErr(w, fmt.Errorf("runbook %q changed since run %s; start a new run with \"from\"", rb.Name, prev.ID))
+		return
+	}
+	vars := engine.ResumeInputs(&prev)
+	for k, v := range req.Vars {
+		vars[k] = v
+	}
+	req.Vars = vars
+	s.launch(w, r, rb, req, start, prev.ID)
+}
+
+func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, req startReq, start int, resumes string) {
+	if req.Wait && !req.Unattended {
+		writeErr(w, errors.New("wait requires unattended (nobody could answer prompts)"))
+		return
+	}
 	id := engine.NewRunID()
 	ctx, cancel := context.WithCancel(context.Background())
 	l := newLiveRun(id, cancel)
@@ -236,14 +345,17 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 	s.live[id] = l
 	s.mu.Unlock()
 
+	done := make(chan *engine.Run, 1)
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		defer cancel()
-		engine.Execute(ctx, rb, ui, id, engine.Options{
+		done <- engine.Execute(ctx, rb, ui, id, engine.Options{
 			Vars:        req.Vars,
 			DryRun:      req.DryRun,
 			Interactive: !req.Unattended,
+			StartAt:     start,
+			Resumes:     resumes,
 			Save:        func(run *engine.Run) { _ = s.st.SaveRun(run.ID, run) },
 		})
 		// Keep the event log around briefly for late subscribers.
@@ -253,7 +365,16 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 		})
 	}()
-	writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
+	if !req.Wait {
+		writeJSON(w, http.StatusAccepted, map[string]string{"id": id})
+		return
+	}
+	select {
+	case run := <-done:
+		writeJSON(w, http.StatusOK, run)
+	case <-r.Context().Done():
+		// Client went away; the run carries on and stays in history.
+	}
 }
 
 func (s *Server) getLive(id string) *liveRun {

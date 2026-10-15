@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -63,7 +64,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), runCmd(s), historyCmd(s), uiCmd(s),
+		validateCmd(s), runCmd(s), resumeCmd(s), historyCmd(s), serveCmd(s),
 	)
 	return root
 }
@@ -305,81 +306,142 @@ func validateCmd(s func() *store.Store) *cobra.Command {
 	}
 }
 
+type runFlags struct {
+	vars                     []string
+	unattended, yes, dry, js bool
+	quiet, noHistory         bool
+}
+
+func (f *runFlags) register(cmd *cobra.Command) {
+	fl := cmd.Flags()
+	fl.StringArrayVarP(&f.vars, "var", "v", nil, "set an input (key=value), repeatable")
+	fl.BoolVarP(&f.unattended, "unattended", "u", false, "never prompt")
+	fl.BoolVarP(&f.yes, "yes", "y", false, "approve confirm-gated steps when unattended")
+	fl.BoolVar(&f.dry, "dry-run", false, "render steps without executing them")
+	fl.BoolVar(&f.js, "json", false, "unattended; print the run record as JSON instead of progress")
+	fl.BoolVarP(&f.quiet, "quiet", "q", false, "hide command output")
+	fl.BoolVar(&f.noHistory, "no-history", false, "don't record this run")
+}
+
+// execute runs rb with these flags; base holds inputs that --var overrides.
+func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, base map[string]string, startAt int, resumes string) error {
+	values := map[string]string{}
+	for k, v := range base {
+		values[k] = v
+	}
+	for _, kv := range f.vars {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			return fmt.Errorf("--var %q must be key=value", kv)
+		}
+		values[k] = v
+	}
+	interactive := !f.unattended && !f.js && isTTY(os.Stdin)
+
+	term := NewTerminal(len(rb.Steps))
+	term.quiet = f.quiet
+	var ui engine.Interactor = term
+	if !interactive {
+		onEvent := term.Notify
+		if f.js {
+			onEvent = nil
+		}
+		ui = engine.Unattended{OnEvent: onEvent, AssumeYes: f.yes}
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	opts := engine.Options{Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt, Resumes: resumes}
+	if !f.noHistory {
+		opts.Save = func(r *engine.Run) {
+			if err := st.SaveRun(r.ID, r); err != nil {
+				fmt.Fprintln(os.Stderr, "warning: saving run history:", err)
+			}
+		}
+	}
+	run := engine.Execute(ctx, rb, ui, "", opts)
+	if f.js {
+		_ = printJSON(run)
+	} else if run.Status != engine.StatusSucceeded && !f.noHistory && engine.ResumePoint(run) >= 0 {
+		fmt.Fprintf(os.Stderr, "resume with: runnr resume %s\n", run.ID)
+	}
+	switch run.Status {
+	case engine.StatusSucceeded:
+		return nil
+	case engine.StatusAborted:
+		return ExitError{130}
+	}
+	return ExitError{1}
+}
+
 func runCmd(s func() *store.Store) *cobra.Command {
-	var (
-		vars                     []string
-		unattended, yes, dry, js bool
-		quiet, noHistory         bool
-	)
+	var f runFlags
+	var from string
 	cmd := &cobra.Command{
 		Use:   "run <name|file>",
 		Short: "Run a runbook",
 		Long: `Run a runbook by library name or file path.
 
 Interactive (default on a terminal): prompts for missing inputs, manual
-steps, confirmations, and what to do when a step fails.
+steps, confirmations, and what to do when a step fails. Steps marked tty
+take over the terminal.
 
 Unattended (--unattended, or when stdin isn't a terminal): no prompts.
 Inputs come from --var or defaults, confirm-gated steps need --yes, manual
-steps follow their 'unattended' policy, and any failure aborts the run.`,
+and tty steps follow their 'unattended' policy, and any failure aborts.
+
+--from starts at a later step (by id, number or name); steps marked
+'always' (e.g. environment setup) still run.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rb, err := s().Resolve(args[0])
 			if err != nil {
 				return err
 			}
-			values := map[string]string{}
-			for _, kv := range vars {
-				k, v, ok := strings.Cut(kv, "=")
-				if !ok {
-					return fmt.Errorf("--var %q must be key=value", kv)
-				}
-				values[k] = v
-			}
-			interactive := !unattended && !js && isTTY(os.Stdin)
-
-			term := NewTerminal(len(rb.Steps))
-			term.quiet = quiet
-			var ui engine.Interactor = term
-			if !interactive {
-				onEvent := term.Notify
-				if js {
-					onEvent = nil
-				}
-				ui = engine.Unattended{OnEvent: onEvent, AssumeYes: yes}
-			}
-
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
-			opts := engine.Options{Vars: values, DryRun: dry, Interactive: interactive}
-			if !noHistory {
-				opts.Save = func(r *engine.Run) {
-					if err := s().SaveRun(r.ID, r); err != nil {
-						fmt.Fprintln(os.Stderr, "warning: saving run history:", err)
-					}
+			start := 0
+			if from != "" {
+				if start, err = rb.StepIndex(from); err != nil {
+					return err
 				}
 			}
-			run := engine.Execute(ctx, rb, ui, "", opts)
-			if js {
-				_ = printJSON(run)
-			}
-			switch run.Status {
-			case engine.StatusSucceeded:
-				return nil
-			case engine.StatusAborted:
-				return ExitError{130}
-			}
-			return ExitError{1}
+			return f.execute(s(), rb, nil, start, "")
 		},
 	}
-	f := cmd.Flags()
-	f.StringArrayVarP(&vars, "var", "v", nil, "set an input (key=value), repeatable")
-	f.BoolVarP(&unattended, "unattended", "u", false, "never prompt")
-	f.BoolVarP(&yes, "yes", "y", false, "approve confirm-gated steps when unattended")
-	f.BoolVar(&dry, "dry-run", false, "render steps without executing them")
-	f.BoolVar(&js, "json", false, "unattended; print the run record as JSON instead of progress")
-	f.BoolVarP(&quiet, "quiet", "q", false, "hide command output")
-	f.BoolVar(&noHistory, "no-history", false, "don't record this run")
+	f.register(cmd)
+	cmd.Flags().StringVar(&from, "from", "", "start at this step (id, number or name)")
+	return cmd
+}
+
+func resumeCmd(s func() *store.Store) *cobra.Command {
+	var f runFlags
+	cmd := &cobra.Command{
+		Use:   "resume <run-id>",
+		Short: "Continue a failed or aborted run from where it stopped",
+		Long: `Start a new run of the same runbook with the same inputs, beginning at the
+first step that didn't succeed. Secret inputs aren't stored, so they're asked
+for again (or pass them with -v). Steps marked 'always' run again.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var prev engine.Run
+			if err := s().LoadRun(args[0], &prev); err != nil {
+				return err
+			}
+			start := engine.ResumePoint(&prev)
+			if start < 0 {
+				return fmt.Errorf("run %s has no unfinished steps", prev.ID)
+			}
+			rb, err := s().Get(prev.Runbook)
+			if err != nil {
+				return err
+			}
+			if len(rb.Steps) != len(prev.Steps) || rb.Steps[start].Name != prev.Steps[start].Name {
+				return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step>", rb.Name, prev.ID, rb.Name)
+			}
+			fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
+			return f.execute(s(), rb, engine.ResumeInputs(&prev), start, prev.ID)
+		},
+	}
+	f.register(cmd)
 	return cmd
 }
 
@@ -469,28 +531,59 @@ func printRun(r *engine.Run) {
 	}
 }
 
-func uiCmd(s func() *store.Store) *cobra.Command {
-	var addr string
-	var open bool
+func serveCmd(s func() *store.Store) *cobra.Command {
+	var addr, token string
+	var open, noUI bool
 	cmd := &cobra.Command{
-		Use:   "ui",
-		Short: "Start the web GUI",
-		Args:  cobra.NoArgs,
+		Use:     "serve",
+		Aliases: []string{"ui"},
+		Short:   "Serve the web GUI and HTTP API",
+		Long: `Serve the web GUI and the HTTP API (see docs/API.md).
+
+Without a token, runnr only listens on loopback. To listen on other
+interfaces, set --token (or RUNNR_TOKEN); API clients then send
+"Authorization: Bearer <token>" and the GUI asks for it once.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if token == "" && !isLoopback(addr) {
+				return fmt.Errorf("refusing to listen on %s without --token: anyone who can reach it could run commands", addr)
+			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			srv := server.New(s())
+			srv := server.New(s(), server.Config{Token: token, NoUI: noUI})
 			url := "http://" + addr
-			fmt.Println("runnr UI on", url)
-			if open {
+			what := "GUI and API"
+			if noUI {
+				what = "API"
+			}
+			auth := "no auth (loopback only)"
+			if token != "" {
+				auth = "token required"
+			}
+			fmt.Printf("runnr %s on %s (%s)\n", what, url, auth)
+			if open && !noUI {
 				go openBrowser(url)
 			}
 			return srv.ListenAndServe(ctx, addr)
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:7777", "listen address")
-	cmd.Flags().BoolVar(&open, "open", false, "open in the default browser")
+	cmd.Flags().StringVar(&token, "token", os.Getenv("RUNNR_TOKEN"), "API token (env RUNNR_TOKEN)")
+	cmd.Flags().BoolVar(&open, "open", false, "open the GUI in the default browser")
+	cmd.Flags().BoolVar(&noUI, "no-ui", false, "serve only the API")
 	return cmd
+}
+
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func openBrowser(url string) {

@@ -8,7 +8,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -31,6 +34,8 @@ const (
 type StepResult struct {
 	Index    int       `json:"index"`
 	Name     string    `json:"name"`
+	Section  string    `json:"section,omitempty"`
+	Owner    string    `json:"owner,omitempty"`
 	Kind     string    `json:"kind"`
 	Status   Status    `json:"status"`
 	Command  string    `json:"command,omitempty"`
@@ -48,6 +53,8 @@ type Run struct {
 	Runbook string            `json:"runbook"`
 	Mode    string            `json:"mode"`
 	DryRun  bool              `json:"dry_run,omitempty"`
+	StartAt int               `json:"start_at,omitempty"`
+	Resumes string            `json:"resumes,omitempty"`
 	Status  Status            `json:"status"`
 	Error   string            `json:"error,omitempty"`
 	Inputs  map[string]string `json:"inputs"`
@@ -106,8 +113,18 @@ type Options struct {
 	DryRun bool
 	// Interactive controls whether missing inputs are asked for.
 	Interactive bool
+	// StartAt skips steps before this index, except those marked always.
+	StartAt int
+	// Resumes records the run ID this run continues, if any.
+	Resumes string
 	// Save is called with a snapshot after every state change worth keeping.
 	Save func(*Run)
+}
+
+// Attacher is implemented by interactors that own a real terminal. Steps
+// marked tty run attached to it; without one they become manual steps.
+type Attacher interface {
+	AttachedIO() (stdin io.Reader, stdout, stderr io.Writer)
 }
 
 const maxOutput = 64 << 10
@@ -139,13 +156,15 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		mode = "interactive"
 	}
 	x := &executor{rb: rb, ui: ui, opts: opts, vars: map[string]string{}}
-	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
+	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
 	for i, s := range rb.Steps {
 		kind := "run"
 		if s.IsManual() {
 			kind = "manual"
+		} else if s.TTY {
+			kind = "tty"
 		}
-		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Kind: kind, Status: StatusPending})
+		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: kind, Status: StatusPending})
 	}
 
 	x.save()
@@ -172,8 +191,8 @@ func (x *executor) finish(ctx context.Context, err error) {
 		x.run.Error = x.mask(err.Error())
 	}
 	for i := range x.run.Steps {
-		if x.run.Steps[i].Status == StatusPending || x.run.Steps[i].Status == StatusRunning {
-			x.run.Steps[i].Status = StatusSkipped
+		if x.run.Steps[i].Status == StatusRunning {
+			x.run.Steps[i].Status = x.run.Status
 		}
 	}
 	x.save()
@@ -181,6 +200,9 @@ func (x *executor) finish(ctx context.Context, err error) {
 }
 
 var errAborted = errors.New("aborted")
+
+// NoteBeforeStart marks steps skipped because the run started later on.
+const NoteBeforeStart = "before start step"
 
 func (x *executor) resolveInputs(ctx context.Context) error {
 	known := map[string]bool{}
@@ -224,6 +246,11 @@ func (x *executor) steps(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if i < x.opts.StartAt && !step.Always {
+			x.run.Steps[i].Status, x.run.Steps[i].Note = StatusSkipped, NoteBeforeStart
+			x.stepDone(i)
+			continue
+		}
 		if err := x.step(ctx, i, step); err != nil {
 			return err
 		}
@@ -234,7 +261,7 @@ func (x *executor) steps(ctx context.Context) error {
 func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	res := &x.run.Steps[i]
 	if step.When != "" {
-		cond, err := runbook.Render(step.When, x.vars)
+		cond, err := x.render(step.When)
 		if err != nil {
 			return x.fail(i, fmt.Errorf("when: %w", err))
 		}
@@ -248,14 +275,19 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	x.notify(Event{Kind: EventStepStarted, Step: i, Result: x.result(i)})
 
 	if step.IsManual() {
-		return x.manual(ctx, i, step)
+		return x.manual(ctx, i, step, step.Manual)
 	}
 
-	cmd, err := runbook.Render(step.Run, x.vars)
+	cmd, err := x.render(step.Run)
 	if err != nil {
 		return x.fail(i, fmt.Errorf("run: %w", err))
 	}
 	res.Command = x.mask(cmd)
+
+	if _, ok := x.ui.(Attacher); step.TTY && !ok {
+		// No terminal here: hand the command to a human instead.
+		return x.manual(ctx, i, step, "Run in a terminal (needs interactive input):\n\n"+step.Run)
+	}
 
 	if step.Confirm && !x.opts.DryRun {
 		ok, err := x.ui.Confirm(ctx, i, step, x.mask(cmd))
@@ -280,8 +312,14 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 		for a := 1; a <= attempts; a++ {
 			res.Attempts++
 			out = x.exec(ctx, i, step, cmd)
-			if out.err == nil || ctx.Err() != nil {
+			if out.err == nil || ctx.Err() != nil || a == attempts {
 				break
+			}
+			delay := step.RetryDelayDuration()
+			x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: fmt.Sprintf("attempt %d/%d failed (%s); retrying in %s", a, attempts, x.mask(out.err.Error()), delay)})
+			select {
+			case <-ctx.Done():
+			case <-time.After(delay):
 			}
 		}
 		res.Output = x.mask(out.combined)
@@ -289,6 +327,13 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 		if out.err == nil {
 			if step.Capture != "" {
 				x.vars[step.Capture] = strings.TrimSpace(out.stdout)
+			}
+			for k, v := range out.outputs {
+				x.vars[k] = v
+			}
+			for k, v := range out.secrets {
+				x.vars[k] = v
+				x.addSecret(v)
 			}
 			res.Status, res.Error = StatusSucceeded, ""
 			x.stepDone(i)
@@ -321,9 +366,9 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	}
 }
 
-func (x *executor) manual(ctx context.Context, i int, step runbook.Step) error {
+func (x *executor) manual(ctx context.Context, i int, step runbook.Step, tmpl string) error {
 	res := &x.run.Steps[i]
-	text, err := runbook.Render(step.Manual, x.vars)
+	text, err := x.render(tmpl)
 	if err != nil {
 		return x.fail(i, fmt.Errorf("manual: %w", err))
 	}
@@ -411,11 +456,23 @@ func (x *executor) mask(s string) string {
 	return s
 }
 
+func (x *executor) addSecret(v string) {
+	// Very short values would mask unrelated text.
+	if len(v) >= 4 && !slices.Contains(x.secrets, v) {
+		x.secrets = append(x.secrets, v)
+	}
+}
+
+// env layers: process env, runnr vars (inputs and outputs), runbook env, step env.
 func (x *executor) env(step runbook.Step) ([]string, error) {
-	env := append(os.Environ(), "RUNNR_RUN_ID="+x.run.ID, "RUNNR_RUNBOOK="+x.rb.Name)
+	env := os.Environ()
+	for k, v := range x.vars {
+		env = append(env, k+"="+v)
+	}
+	env = append(env, "RUNNR_RUN_ID="+x.run.ID, "RUNNR_RUNBOOK="+x.rb.Name)
 	for _, m := range []map[string]string{x.rb.Env, step.Env} {
 		for k, v := range m {
-			r, err := runbook.Render(v, x.vars)
+			r, err := x.render(v)
 			if err != nil {
 				return nil, fmt.Errorf("env %s: %w", k, err)
 			}
@@ -427,3 +484,43 @@ func (x *executor) env(step runbook.Step) ([]string, error) {
 
 // ErrAborted lets interactors signal that the user aborted the run.
 var ErrAborted = errAborted
+
+// ResumePoint returns the first step of a previous run that neither
+// succeeded nor was skipped, or -1 if there's nothing left to do.
+func ResumePoint(r *Run) int {
+	for i, s := range r.Steps {
+		if s.Status != StatusSucceeded && s.Status != StatusSkipped {
+			return i
+		}
+	}
+	return -1
+}
+
+// ResumeInputs returns a previous run's inputs, minus masked secrets
+// (which must be supplied again).
+func ResumeInputs(r *Run) map[string]string {
+	vars := map[string]string{}
+	for k, v := range r.Inputs {
+		if v != "****" {
+			vars[k] = v
+		}
+	}
+	return vars
+}
+
+var varRefRe = regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)`)
+
+// render expands a template. In a dry run, variables that earlier steps
+// would have produced don't exist yet, so they render as <name>.
+func (x *executor) render(text string) (string, error) {
+	if !x.opts.DryRun {
+		return runbook.Render(text, x.vars)
+	}
+	vars := maps.Clone(x.vars)
+	for _, m := range varRefRe.FindAllStringSubmatch(text, -1) {
+		if _, ok := vars[m[1]]; !ok {
+			vars[m[1]] = "<" + m[1] + ">"
+		}
+	}
+	return runbook.Render(text, vars)
+}

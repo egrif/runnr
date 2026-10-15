@@ -15,10 +15,29 @@ async function api(method, path, body, raw = false) {
     opts.headers["Content-Type"] = raw ? "application/yaml" : "application/json";
   }
   const res = await fetch(path, opts);
+  if (res.status === 401 && path !== "/api/login") {
+    await login();
+    return api(method, path, body, raw);
+  }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
+}
+
+async function login() {
+  for (;;) {
+    const token = prompt("This runnr server requires an API token:");
+    if (token === null) throw new Error("token required");
+    const res = await fetch("/api/login", { method: "POST", headers: { "X-Runnr": "1", "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+    if (res.ok) return;
+  }
+}
+
+// sectionHeading returns a heading when step i starts a new section.
+function sectionHeading(steps, i) {
+  const s = steps[i].section;
+  return s && (i === 0 || steps[i - 1].section !== s) ? `<li class="section">${esc(s)}</li>` : "";
 }
 
 function toast(msg) {
@@ -124,13 +143,14 @@ function renderRunForm(el, rb) {
         <label><input type="radio" name="mode" value="unattended"> Unattended</label>
         <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
         <label><input type="checkbox" name="dry"> Dry run</label>
+        <label>Start at <select name="from"><option value="">step 1</option>${rb.steps.slice(1).map((s, i) => `<option value="${i + 2}">${i + 2}. ${esc(s.name)}</option>`).join("")}</select></label>
       </div>
       <button class="primary" type="submit">▶ Start run</button>
     </form>
     <h2>Steps</h2>
-    <ol class="steps">${rb.steps.map((s, i) => `
-      <li class="step"><div class="step-head"><span class="n">${i + 1}</span><span class="name">${esc(s.name)}</span>
-        <span class="meta">${[s.manual ? "manual" : "run", s.confirm && "confirm", s.when && "conditional", s.continue_on_error && "continue on error", s.retries && `retries ${s.retries}`, s.timeout && `timeout ${s.timeout}`].filter(Boolean).join(" · ")}</span></div>
+    <ol class="steps">${rb.steps.map((s, i) => `${sectionHeading(rb.steps, i)}
+      <li class="step"><div class="step-head"><span class="n">${i + 1}</span><span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
+        <span class="meta">${[s.manual ? "manual" : s.tty ? "terminal" : "run", s.always && "always", s.confirm && "confirm", s.when && "conditional", s.continue_on_error && "continue on error", s.retries && `retries ${s.retries}`, s.timeout && `timeout ${s.timeout}`].filter(Boolean).join(" · ")}</span></div>
         <div class="step-body"><pre class="cmd">${esc(s.run || s.manual)}</pre></div></li>`).join("")}
     </ol>`;
   const form = $("#run-form");
@@ -143,7 +163,7 @@ function renderRunForm(el, rb) {
     inputs.forEach((i) => (vars[i.name] = form.elements[i.name].value));
     try {
       const { id } = await api("POST", "/api/runs", {
-        runbook: rb.name, vars, unattended: form.mode.value === "unattended", yes: form.yes.checked, dry_run: form.dry.checked,
+        runbook: rb.name, vars, unattended: form.mode.value === "unattended", yes: form.yes.checked, dry_run: form.dry.checked, from: form.from.value,
       });
       location.hash = `#/runs/${id}`;
     } catch (e) { toast(e.message); }
@@ -267,6 +287,8 @@ function applyEvent(state, e) {
 
 function renderRun(state) {
   const { run } = state;
+  const stopAt = state.steps.findIndex((s) => s.status !== "succeeded" && s.status !== "skipped");
+  state.resumable = ["failed", "aborted"].includes(run.status) && stopAt >= 0 ? stopAt + 1 : 0;
   const scroll = {};
   main.querySelectorAll("pre.log").forEach((p) => (scroll[p.dataset.i] = p.scrollHeight - p.scrollTop - p.clientHeight < 8));
   const active = !["succeeded", "failed", "aborted"].includes(run.status);
@@ -280,17 +302,18 @@ function renderRun(state) {
       </div>
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
-      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="rerun">Run again</button>`}
+      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `${state.resumable ? `<button class="primary" id="resume">Resume from step ${state.resumable}</button>` : ""}<button id="rerun">Run again</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
+    ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
     ${state.question?.step === -1 ? renderQuestion(state.question, run.id) : ""}
-    <ol class="steps">${state.steps.map((s, i) => `
-      <li class="step ${state.question?.step === i ? "focus" : ""}">
+    <ol class="steps">${state.steps.map((s, i) => `${sectionHeading(state.steps, i)}
+      <li class="step ${state.question?.step === i ? "focus" : ""} ${s.note === "before start step" ? "dim" : ""}">
         <div class="step-head" data-toggle="${i}">
           <span class="icon s-${s.status}">${ICONS[s.status] || ""}</span>
           <span class="n">${i + 1}</span>
-          <span class="name">${esc(s.name)} <span class="kind">${esc(s.kind)}</span></span>
+          <span class="name">${esc(s.name)} <span class="kind">${esc(s.kind)}</span>${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
           <span class="meta">${[s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}</span>
         </div>
         ${state.question?.step === i ? `<div class="step-body">${renderQuestion(state.question, run.id)}</div>` : ""}
@@ -309,6 +332,12 @@ function renderRun(state) {
     renderRun(state);
   }));
   $("#cancel") && ($("#cancel").onclick = () => api("POST", `/api/runs/${run.id}/cancel`).catch((e) => toast(e.message)));
+  $("#resume") && ($("#resume").onclick = async () => {
+    try {
+      const { id } = await api("POST", `/api/runs/${run.id}/resume`, {});
+      location.hash = `#/runs/${id}`;
+    } catch (e) { toast(e.message); }
+  });
   $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${encodeURIComponent(run.runbook)}`));
   const q = $(".question");
   if (q) bindQuestion(q, state.question, run.id);
@@ -388,12 +417,23 @@ inputs:
 steps:
   - name: Automated step
     run: echo "hello {{.target}}"
-    id: hello                # optional
+    id: hello                # optional; usable with "start at" / --from
+    section: Deploy          # heading shown above a group of steps
+    owner: Datastores        # who does it (display only)
+    always: true             # still runs when starting at a later step
     when: '{{eq .target "production"}}'  # skip unless truthy
     confirm: true            # ask before running (unattended needs --yes)
     timeout: 30s
     retries: 2
+    retry_delay: 10s
     capture: greeting        # stdout saved as {{.greeting}} for later steps
+  - name: Publish values
+    run: |
+      echo "region=us-east-1" >> "$RUNNR_OUTPUT"  # {{.region}} / $region later
+      echo "pw=..." >> "$RUNNR_SECRET"            # same, masked
+  - name: Needs a terminal
+    run: terraform apply
+    tty: true                # CLI: attached; GUI/unattended: becomes a manual step
     continue_on_error: true
     dir: /tmp
     env: { FOO: bar }

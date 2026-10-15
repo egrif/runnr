@@ -29,7 +29,7 @@ func do(t *testing.T, method, url, body string, hdr map[string]string) *http.Res
 
 func TestInteractiveRunOverHTTP(t *testing.T) {
 	st, _ := store.New(t.TempDir())
-	ts := httptest.NewServer(New(st).Handler())
+	ts := httptest.NewServer(New(st, Config{}).Handler())
 	defer ts.Close()
 
 	rb := "name: demo\nsteps:\n  - {name: hi, run: 'echo hello'}\n  - {name: check, manual: look around}\n  - {name: go, run: 'echo going', confirm: true}\n"
@@ -91,7 +91,7 @@ func TestInteractiveRunOverHTTP(t *testing.T) {
 
 func TestGuardRejectsCrossOrigin(t *testing.T) {
 	st, _ := store.New(t.TempDir())
-	ts := httptest.NewServer(New(st).Handler())
+	ts := httptest.NewServer(New(st, Config{}).Handler())
 	defer ts.Close()
 
 	if r := do(t, "POST", ts.URL+"/api/runs", `{}`, map[string]string{"Origin": "https://evil.example"}); r.StatusCode != http.StatusForbidden {
@@ -100,5 +100,44 @@ func TestGuardRejectsCrossOrigin(t *testing.T) {
 	req, _ := http.NewRequest("POST", ts.URL+"/api/runs", strings.NewReader(`{}`))
 	if r, _ := http.DefaultClient.Do(req); r.StatusCode != http.StatusForbidden {
 		t.Fatalf("missing header: %d", r.StatusCode)
+	}
+}
+
+func TestTokenAuthWaitAndResume(t *testing.T) {
+	st, _ := store.New(t.TempDir())
+	ts := httptest.NewServer(New(st, Config{Token: "s3cret", NoUI: true}).Handler())
+	defer ts.Close()
+
+	if r := do(t, "GET", ts.URL+"/api/runbooks", "", nil); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no token: %d", r.StatusCode)
+	}
+	if r := do(t, "GET", ts.URL+"/api/runbooks", "", map[string]string{"Authorization": "Bearer nope"}); r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad token: %d", r.StatusCode)
+	}
+	auth := map[string]string{"Authorization": "Bearer s3cret"}
+	rb := "name: flaky\ninputs: [{name: mode, default: fail}]\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: '[ \"$mode\" = ok ]'}\n"
+	if r := do(t, "POST", ts.URL+"/api/runbooks", rb, auth); r.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d", r.StatusCode)
+	}
+
+	var run engine.Run
+	r := do(t, "POST", ts.URL+"/api/runs", `{"runbook":"flaky","unattended":true,"wait":true}`, auth)
+	json.NewDecoder(r.Body).Decode(&run)
+	if r.StatusCode != http.StatusOK || run.Status != engine.StatusFailed {
+		t.Fatalf("wait: %d %s", r.StatusCode, run.Status)
+	}
+
+	var resumed engine.Run
+	r = do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true}`, auth)
+	json.NewDecoder(r.Body).Decode(&resumed)
+	if resumed.Status != engine.StatusSucceeded || resumed.Resumes != run.ID || resumed.Steps[0].Status != engine.StatusSkipped {
+		t.Fatalf("resume: %d %+v", r.StatusCode, resumed)
+	}
+
+	if r := do(t, "POST", ts.URL+"/api/runs", `{"runbook":"flaky","wait":true}`, auth); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("interactive wait should be rejected: %d", r.StatusCode)
+	}
+	if r := do(t, "GET", ts.URL+"/", "", auth); r.StatusCode != http.StatusNotFound {
+		t.Fatalf("no-ui should not serve GUI: %d", r.StatusCode)
 	}
 }

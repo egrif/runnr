@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +19,8 @@ import (
 )
 
 type cmdResult struct {
+	outputs  map[string]string
+	secrets  map[string]string
 	stdout   string
 	combined string
 	exitCode *int
@@ -64,16 +69,35 @@ func (x *executor) exec(ctx context.Context, i int, step runbook.Step, command s
 	if err != nil {
 		return cmdResult{err: err}
 	}
-	dir, err := runbook.Render(step.Dir, x.vars)
+	dir, err := x.render(step.Dir)
 	if err != nil {
 		return cmdResult{err: fmt.Errorf("dir: %w", err)}
 	}
 
+	tmp, err := os.MkdirTemp("", "runnr-step-")
+	if err != nil {
+		return cmdResult{err: err}
+	}
+	defer os.RemoveAll(tmp)
+	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
+	env = append(env, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile)
+
 	cmd := exec.CommandContext(ctx, shell, "-c", command)
 	cmd.Env = env
 	cmd.Dir = dir
-	setProcessGroup(cmd)
 	cmd.WaitDelay = 5 * time.Second
+
+	if a, ok := x.ui.(Attacher); ok && step.TTY {
+		// Attached: the command owns the terminal, so it stays in our
+		// process group (for job control) and its output isn't recorded.
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = a.AttachedIO()
+		err := cmd.Run()
+		res := x.finishCmd(ctx, step, cmd, err)
+		res.combined = "(attached to terminal; output not recorded)\n"
+		x.readOutputs(i, &res, outFile, secFile)
+		return res
+	}
+	setProcessGroup(cmd)
 
 	var stdout bytes.Buffer
 	combined := &ringBuffer{}
@@ -103,7 +127,48 @@ func (x *executor) exec(ctx context.Context, i int, step runbook.Step, command s
 	wg.Wait()
 	err = cmd.Wait()
 
-	res := cmdResult{stdout: stdout.String(), combined: combined.String()}
+	res := x.finishCmd(ctx, step, cmd, err)
+	res.stdout, res.combined = stdout.String(), combined.String()
+	x.readOutputs(i, &res, outFile, secFile)
+	return res
+}
+
+// readOutputs parses key=value lines that a step wrote to $RUNNR_OUTPUT or
+// $RUNNR_SECRET. Outputs are only applied if the step succeeds.
+func (x *executor) readOutputs(i int, res *cmdResult, outFile, secFile string) {
+	parse := func(path string) map[string]string {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		m := map[string]string{}
+		for _, line := range strings.Split(string(b), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			k, v, ok := strings.Cut(line, "=")
+			if !ok || !identRe.MatchString(k) {
+				x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "ignoring malformed output line (want key=value)"})
+				continue
+			}
+			m[k] = v
+		}
+		return m
+	}
+	res.outputs, res.secrets = parse(outFile), parse(secFile)
+	// Mask secrets in what this step already produced.
+	for _, v := range res.secrets {
+		if len(v) >= 4 {
+			res.stdout = strings.ReplaceAll(res.stdout, v, "****")
+			res.combined = strings.ReplaceAll(res.combined, v, "****")
+		}
+	}
+}
+
+var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (x *executor) finishCmd(ctx context.Context, step runbook.Step, cmd *exec.Cmd, err error) cmdResult {
+	var res cmdResult
 	if cmd.ProcessState != nil {
 		code := cmd.ProcessState.ExitCode()
 		res.exitCode = &code
