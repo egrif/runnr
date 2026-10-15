@@ -39,6 +39,9 @@ type Config struct {
 	Token string
 	// NoUI serves only the API.
 	NoUI bool
+	// Local: the server runs on the operator's machine, so terminal steps
+	// and shells may open Terminal windows there.
+	Local bool
 }
 
 func New(st *store.Store, cfg Config) *Server {
@@ -287,6 +290,10 @@ type startReq struct {
 	From string `json:"from"`
 	// Wait blocks until the run finishes and returns its record.
 	Wait bool `json:"wait"`
+	// Skip lists 1-based step numbers to leave out.
+	Skip []int `json:"skip"`
+	// StepMode pauses before every step (interactive runs).
+	StepMode bool `json:"step_mode"`
 }
 
 func decode(r *http.Request, v any) error {
@@ -314,7 +321,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.launch(w, r, rb, ver, req, start, "")
+	s.launch(w, r, rb, ver, req, start, "", nil)
 }
 
 func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
@@ -347,10 +354,18 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 		vars[k] = v
 	}
 	req.Vars = vars
-	s.launch(w, r, rb, ver, req, start, prev.ID)
+	s.launch(w, r, rb, ver, req, start, prev.ID, engine.ResumeState(prev))
 }
 
-func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, ver int, req startReq, start int, resumes string) {
+func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, ver int, req startReq, start int, resumes string, state map[string]string) {
+	skip := map[int]bool{}
+	for _, n := range req.Skip {
+		if n < 1 || n > len(rb.Steps) {
+			writeErr(w, fmt.Errorf("skip: no step %d", n))
+			return
+		}
+		skip[n-1] = true
+	}
 	if req.Wait && !req.Unattended {
 		writeErr(w, errors.New("wait requires unattended (nobody could answer prompts)"))
 		return
@@ -358,6 +373,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	id := engine.NewRunID()
 	ctx, cancel := context.WithCancel(context.Background())
 	l := newLiveRun(id, cancel)
+	l.windows = s.cfg.Local
 	var ui engine.Interactor = l
 	if req.Unattended {
 		ui = engine.Unattended{OnEvent: l.Notify, AssumeYes: req.Yes}
@@ -376,6 +392,9 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 			DryRun:         req.DryRun,
 			Interactive:    !req.Unattended,
 			StartAt:        start,
+			Skip:           skip,
+			StepMode:       req.StepMode && !req.Unattended,
+			State:          state,
 			Resumes:        resumes,
 			RunbookVersion: ver,
 			Save: func(run *engine.Run) {

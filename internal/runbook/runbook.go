@@ -60,6 +60,13 @@ type Step struct {
 	Capture         string            `yaml:"capture,omitempty" json:"capture,omitempty"`
 	ContinueOnError bool              `yaml:"continue_on_error,omitempty" json:"continue_on_error,omitempty"`
 	Unattended      string            `yaml:"unattended,omitempty" json:"unattended,omitempty"`
+	// Expect describes what success looks like (shown when reviewing,
+	// inspecting, or running a step by hand). Template.
+	Expect string `yaml:"expect,omitempty" json:"expect,omitempty"`
+	// Outputs and SecretOutputs name shell variables to capture into the
+	// run's state when the step ends, for later steps to use.
+	Outputs       []string `yaml:"outputs,omitempty" json:"outputs,omitempty"`
+	SecretOutputs []string `yaml:"secret_outputs,omitempty" json:"secret_outputs,omitempty"`
 }
 
 func (s Step) IsManual() bool { return s.Manual != "" }
@@ -91,6 +98,12 @@ func Parse(data []byte) (*Runbook, error) {
 	dec.KnownFields(true)
 	if err := dec.Decode(&rb); err != nil {
 		return nil, fmt.Errorf("parse: %w", err)
+	}
+	// A section applies to the steps after it until the next one.
+	for i := 1; i < len(rb.Steps); i++ {
+		if rb.Steps[i].Section == "" {
+			rb.Steps[i].Section = rb.Steps[i-1].Section
+		}
 	}
 	if err := rb.Validate(); err != nil {
 		return nil, err
@@ -166,10 +179,15 @@ func (rb *Runbook) Validate() error {
 		default:
 			add("%s: unattended must be fail, skip or pass", where)
 		}
-		if s.IsManual() && (s.Capture != "" || s.Retries > 0 || s.Timeout != "" || s.RetryDelay != "" || s.TTY) {
-			add("%s: capture, retries, retry_delay, timeout and tty only apply to run steps", where)
+		if s.IsManual() && (s.Capture != "" || s.Retries > 0 || s.Timeout != "" || s.RetryDelay != "" || s.TTY || len(s.Outputs)+len(s.SecretOutputs) > 0) {
+			add("%s: capture, retries, retry_delay, timeout, tty and outputs only apply to run steps", where)
 		}
-		for field, text := range map[string]string{"run": s.Run, "manual": s.Manual, "when": s.When, "dir": s.Dir} {
+		for _, o := range append(append([]string{}, s.Outputs...), s.SecretOutputs...) {
+			if !identRe.MatchString(o) {
+				add("%s: output %q must be a valid identifier", where, o)
+			}
+		}
+		for field, text := range map[string]string{"run": s.Run, "manual": s.Manual, "when": s.When, "dir": s.Dir, "expect": s.Expect} {
 			if _, err := template.New("").Funcs(TemplateFuncs).Option("missingkey=error").Parse(text); err != nil {
 				add("%s: %s template: %v", where, field, err)
 			}

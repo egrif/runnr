@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -74,7 +75,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), runCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), inspectCmd(s), runCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -357,6 +358,8 @@ type runFlags struct {
 	vars                     []string
 	unattended, yes, dry, js bool
 	quiet, noHistory         bool
+	stepMode, noReview       bool
+	skip                     string
 }
 
 func (f *runFlags) register(cmd *cobra.Command) {
@@ -368,10 +371,23 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.BoolVar(&f.js, "json", false, "unattended; print the run record as JSON instead of progress")
 	fl.BoolVarP(&f.quiet, "quiet", "q", false, "hide command output")
 	fl.BoolVar(&f.noHistory, "no-history", false, "don't record this run")
+	fl.BoolVar(&f.stepMode, "step", false, "pause before every step (run / run it myself / skip / view / …)")
+	fl.BoolVar(&f.noReview, "no-review", false, "start without reviewing the plan")
+	fl.StringVar(&f.skip, "skip", "", "steps to leave out, e.g. 3,5-7")
 }
 
 // execute runs rb with these flags; base holds inputs that --var overrides.
-func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, base map[string]string, startAt int, resumes string) error {
+func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, base map[string]string, startAt int, resumes string, state map[string]string) error {
+	skip := map[int]bool{}
+	if f.skip != "" {
+		idxs, err := parseRanges(f.skip, len(rb.Steps))
+		if err != nil {
+			return fmt.Errorf("--skip: %w", err)
+		}
+		for _, i := range idxs {
+			skip[i] = true
+		}
+	}
 	values := map[string]string{}
 	for k, v := range base {
 		values[k] = v
@@ -405,7 +421,11 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, base m
 			return err
 		}
 	}
-	opts := engine.Options{Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt, Resumes: resumes, RunbookVersion: ver}
+	opts := engine.Options{
+		Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt, Skip: skip,
+		Review: interactive && !f.noReview, StepMode: interactive && f.stepMode,
+		State: state, Resumes: resumes, RunbookVersion: ver,
+	}
 	if !f.noHistory {
 		opts.Save = func(r *engine.Run) {
 			if err := st.SaveRun(r); err != nil {
@@ -483,7 +503,7 @@ and tty steps follow their 'unattended' policy, and any failure aborts.
 					return err
 				}
 			}
-			return f.execute(s(), rb, ver, nil, start, "")
+			return f.execute(s(), rb, ver, nil, start, "", nil)
 		},
 	}
 	f.register(cmd)
@@ -517,10 +537,87 @@ for again (or pass them with -v). Steps marked 'always' run again.`,
 				return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step>", rb.Name, prev.ID, rb.Name)
 			}
 			fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
-			return f.execute(s(), rb, ver, engine.ResumeInputs(prev), start, prev.ID)
+			return f.execute(s(), rb, ver, engine.ResumeInputs(prev), start, prev.ID, engine.ResumeState(prev))
 		},
 	}
 	f.register(cmd)
+	return cmd
+}
+
+func inspectCmd(s func() *store.Store) *cobra.Command {
+	var vars []string
+	var asJSON, all bool
+	cmd := &cobra.Command{
+		Use:   "inspect <runbook|file> [step]",
+		Short: "Show what a runbook will do: every step, or one step in full",
+		Long: `Without a step, lists every step with its kind and flags. With a step (id,
+number or exact name), shows its code, expected outcome, directory, and the
+values it publishes. --all shows every step in full.
+
+Templates are filled in from inputs (defaults, or -v); values earlier steps
+would publish show as <name>.`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rb, _, err := s().Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			values := map[string]string{}
+			for _, kv := range vars {
+				k, v, ok := strings.Cut(kv, "=")
+				if !ok {
+					return fmt.Errorf("--var %q must be key=value", kv)
+				}
+				values[k] = v
+			}
+			plan := engine.Preview(rb, values)
+			if len(args) == 2 {
+				i, err := rb.StepIndex(args[1])
+				if err != nil {
+					return err
+				}
+				plan = plan[i : i+1]
+				all = true
+			}
+			if asJSON {
+				return printJSON(plan)
+			}
+			t := NewTerminal(len(rb.Steps))
+			if all {
+				for _, v := range plan {
+					fmt.Println(t.viewText(v, "") + "\n")
+				}
+				return nil
+			}
+			fmt.Printf("%s — %s\n", t.c("1", rb.Name), rb.Description)
+			section := ""
+			for _, v := range plan {
+				if v.Section != "" && v.Section != section {
+					section = v.Section
+					fmt.Println(t.c("35;1", "══ "+section))
+				}
+				flags := []string{v.Kind}
+				if v.Always {
+					flags = append(flags, "always")
+				}
+				if v.Confirm {
+					flags = append(flags, "confirm")
+				}
+				if v.When != "" {
+					flags = append(flags, "conditional")
+				}
+				if v.Owner != "" {
+					flags = append(flags, "owner: "+v.Owner)
+				}
+				fmt.Printf("%3d  %s %s\n", v.Index+1, v.Name, t.c("2", strings.Join(flags, " · ")))
+			}
+			fmt.Println(t.c("2", "\nDetails: runnr inspect "+rb.Name+" <step>   (or --all)"))
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "fill in an input (key=value)")
+	cmd.Flags().BoolVar(&all, "all", false, "show every step in full")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return cmd
 }
 
@@ -760,6 +857,17 @@ func printRun(r *engine.Run) {
 		fmt.Printf("Input:   %s=%s\n", k, v)
 	}
 	printNotes(r.Notes, "")
+	if len(r.State) > 0 {
+		fmt.Println("State:")
+		keys := make([]string, 0, len(r.State))
+		for k := range r.State {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Printf("  %s=%s\n", k, r.State[k])
+		}
+	}
 	for _, st := range r.Steps {
 		fmt.Printf("\n[%d] %s — %s", st.Index+1, st.Name, st.Status)
 		if st.Note != "" {
@@ -798,7 +906,7 @@ interfaces, set --token (or RUNNR_TOKEN); API clients then send
 			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			srv := server.New(s(), server.Config{Token: token, NoUI: noUI})
+			srv := server.New(s(), server.Config{Token: token, NoUI: noUI, Local: isLoopback(addr)})
 			url := "http://" + addr
 			what := "GUI and API"
 			if noUI {

@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -29,8 +32,8 @@ type Terminal struct {
 
 	// addNote saves an operator note for a step (nil: notes unavailable).
 	addNote func(step int, text string) error
-	// openShell is the engine's shell opener (nil: no shell).
-	openShell func(ctx context.Context, step int) error
+	// session is the run being driven (set by the engine via Bind).
+	session engine.Session
 	// interrupts, when set, makes runnr ignore Ctrl-C while a shell runs.
 	interrupts *atomic.Bool
 }
@@ -221,28 +224,49 @@ func (t *Terminal) choose(ctx context.Context, prompt string, opts map[string]st
 	}
 }
 
-// stepPrompt is choose plus two extras available at every step prompt:
-// [n]ote adds an operator note to the step, [!] opens a shell with the
-// run's environment. Both return to the same question afterwards.
+// Bind receives the run's Session (engine.Binder).
+func (t *Terminal) Bind(se engine.Session) { t.session = se }
+
+func (t *Terminal) canShell() bool {
+	return t.session != nil && t.session.CanShell() && isTTY(os.Stdin)
+}
+
+// stepPrompt is choose plus extras available at every step prompt:
+// [v]iew the step, [e]nv (the run's state), [n]ote, and [!] shell. Each
+// returns to the same question afterwards.
 func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts map[string]string, def string) (string, error) {
 	extra := ""
+	all := map[string]string{}
+	if t.session != nil && idx >= 0 {
+		extra += " · [v]iew"
+		all["v"], all["view"] = "\x00view", "\x00view"
+	}
+	if t.session != nil {
+		extra += " · [e]nv"
+		all["e"], all["env"] = "\x00env", "\x00env"
+	}
 	if t.addNote != nil {
-		extra += " / [n]ote"
+		extra += " · [n]ote"
+		all["n"], all["note"] = "\x00note", "\x00note"
 	}
-	if t.openShell != nil {
-		extra += " / [!] shell"
+	if t.canShell() {
+		extra += " · [!] shell"
+		all["!"], all["shell"] = "\x00shell", "\x00shell"
 	}
-	all := map[string]string{"n": "\x00note", "note": "\x00note", "!": "\x00shell", "shell": "\x00shell"}
 	for k, v := range opts {
 		all[k] = v
 	}
 	for {
-		a, err := t.choose(ctx, prompt+extra+":", all, def)
+		a, err := t.choose(ctx, prompt+t.c("2", extra)+":", all, def)
 		if err != nil {
 			return "", err
 		}
-		switch {
-		case a == "\x00note" && t.addNote != nil:
+		switch a {
+		case "\x00view":
+			t.printView(t.session.View(idx))
+		case "\x00env":
+			t.printState(t.session.State())
+		case "\x00note":
 			fmt.Fprint(t.out, "  note: ")
 			text, err := t.readLine(ctx)
 			if err != nil {
@@ -256,37 +280,208 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 			} else {
 				fmt.Fprintln(t.out, t.c("2", "  note saved"))
 			}
-		case a == "\x00shell" && t.openShell != nil:
+		case "\x00shell":
 			if err := t.OpenShell(ctx, idx); err != nil {
 				fmt.Fprintln(t.out, t.c("31", "  shell: "+err.Error()))
 			}
-		case !strings.HasPrefix(a, "\x00"):
+		default:
 			return a, nil
 		}
 	}
 }
 
-// SetShell receives the engine's shell opener (engine.ShellHost).
-func (t *Terminal) SetShell(open func(ctx context.Context, step int) error) {
-	if isTTY(os.Stdin) {
-		t.openShell = open
+// printView shows a step as it would run now.
+func (t *Terminal) printView(v engine.StepView) {
+	fmt.Fprintln(t.out, t.viewText(v, "  "))
+}
+
+func (t *Terminal) viewText(v engine.StepView, in string) string {
+	var b strings.Builder
+	var flags []string
+	for _, f := range []struct {
+		on   bool
+		name string
+	}{{true, v.Kind}, {v.Always, "always"}, {v.Confirm, "confirm"}, {v.When != "", "when " + v.When},
+		{v.Timeout != "", "timeout " + v.Timeout}, {v.Retries > 0, fmt.Sprintf("retries %d", v.Retries)}} {
+		if f.on {
+			flags = append(flags, f.name)
+		}
+	}
+	fmt.Fprintf(&b, "%s%s %s %s\n", in, t.c("36;1", fmt.Sprintf("step %d", v.Index+1)), t.c("1", v.Name), t.c("2", "["+strings.Join(flags, " · ")+"]"))
+	var meta []string
+	if v.Section != "" {
+		meta = append(meta, v.Section)
+	}
+	if v.Owner != "" {
+		meta = append(meta, "owner: "+v.Owner)
+	}
+	if len(meta) > 0 {
+		fmt.Fprintf(&b, "%s%s\n", in, t.c("2", strings.Join(meta, " · ")))
+	}
+	if v.Dir != "" {
+		fmt.Fprintf(&b, "%s%s %s\n", in, t.c("2", "dir:"), v.Dir)
+	}
+	label := "$ "
+	if v.Kind == "manual" {
+		label = "☞ "
+	}
+	for _, l := range strings.Split(strings.TrimRight(v.Command, "\n"), "\n") {
+		fmt.Fprintf(&b, "%s  %s%s\n", in, t.c("2", label), l)
+		label = "  "
+	}
+	if v.Expect != "" {
+		for i, l := range strings.Split(strings.TrimRight(v.Expect, "\n"), "\n") {
+			p := "expect: "
+			if i > 0 {
+				p = "        "
+			}
+			fmt.Fprintf(&b, "%s%s%s\n", in, t.c("32", p), l)
+		}
+	}
+	if len(v.Outputs)+len(v.SecretOutputs) > 0 {
+		outs := append([]string{}, v.Outputs...)
+		for _, o := range v.SecretOutputs {
+			outs = append(outs, o+" (secret)")
+		}
+		fmt.Fprintf(&b, "%s%s %s\n", in, t.c("2", "publishes:"), strings.Join(outs, ", "))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func (t *Terminal) printState(state map[string]string) {
+	if len(state) == 0 {
+		fmt.Fprintln(t.out, t.c("2", "  (no variables yet)"))
+		return
+	}
+	keys := make([]string, 0, len(state))
+	for k := range state {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := state[k]
+		if len(v) > 120 {
+			v = v[:117] + "…"
+		}
+		fmt.Fprintf(t.out, "  %s=%s\n", t.c("36", k), v)
 	}
 }
 
-// OpenShell opens an interactive shell with the run's environment. Ctrl-C
-// belongs to the shell meanwhile, not to runnr.
+// BeforeStep asks what to do with the next step (engine.Stepper).
+func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.StepDecision, error) {
+	fmt.Fprintln(t.out, t.viewText(v, "  "))
+	opts := map[string]string{"r": "r", "run": "r", "s": "s", "skip": "s", "c": "c", "continue": "c", "a": "a", "abort": "a"}
+	prompt := "[r]un"
+	if v.Kind != "manual" {
+		opts["m"] = "m"
+		prompt += " / [m] run it myself"
+	}
+	prompt += " / [s]kip / [c]ontinue without pausing / [a]bort"
+	a, err := t.stepPrompt(ctx, v.Index, prompt, opts, "r")
+	if err != nil {
+		return "", err
+	}
+	return map[string]engine.StepDecision{"r": engine.StepRun, "m": engine.StepByHand, "s": engine.StepSkip, "c": engine.StepContinue, "a": engine.StepAbort}[a], nil
+}
+
+// Review shows the plan and lets the operator deselect steps (engine.Reviewer).
+func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, skip map[int]bool) (map[int]bool, error) {
+	skip = maps.Clone(skip)
+	for {
+		fmt.Fprintln(t.out, t.c("1", "\nPlan")+t.c("2", fmt.Sprintf(" (%d steps)", len(plan))))
+		section := ""
+		for _, v := range plan {
+			if v.Section != "" && v.Section != section {
+				section = v.Section
+				fmt.Fprintln(t.out, t.c("35;1", "  ══ "+section))
+			}
+			mark, name := t.c("32", "✓"), v.Name
+			if skip[v.Index] {
+				mark, name = t.c("2", "·"), t.c("2", v.Name+" (skip)")
+			}
+			flags := v.Kind
+			if v.Always {
+				flags += " · always"
+			}
+			if v.Confirm {
+				flags += " · confirm"
+			}
+			if v.When != "" {
+				flags += " · conditional"
+			}
+			fmt.Fprintf(t.out, "  %s %3d  %s %s\n", mark, v.Index+1, name, t.c("2", flags))
+		}
+		fmt.Fprint(t.out, t.c("33;1", "  ? ")+"Enter to start · numbers/ranges toggle steps (e.g. 3,5-7) · v N view a step · a abort: ")
+		line, err := t.readLine(ctx)
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "":
+			return skip, nil
+		case line == "a" || line == "abort":
+			return nil, engine.ErrAborted
+		case strings.HasPrefix(line, "v"):
+			n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "view"), "v")))
+			if err != nil || n < 1 || n > len(plan) {
+				fmt.Fprintln(t.out, t.c("31", "  usage: v <step number>"))
+				continue
+			}
+			t.printView(plan[n-1])
+			fmt.Fprint(t.out, t.c("2", "  (enter to go back) "))
+			if _, err := t.readLine(ctx); err != nil {
+				return nil, err
+			}
+		default:
+			idxs, err := parseRanges(line, len(plan))
+			if err != nil {
+				fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
+				continue
+			}
+			for _, i := range idxs {
+				skip[i] = !skip[i]
+			}
+		}
+	}
+}
+
+// parseRanges turns "3,5-7" into 0-based indexes, checked against n.
+func parseRanges(s string, n int) ([]int, error) {
+	var out []int
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		lo, hi, isRange := strings.Cut(part, "-")
+		a, err1 := strconv.Atoi(strings.TrimSpace(lo))
+		b := a
+		var err2 error
+		if isRange {
+			b, err2 = strconv.Atoi(strings.TrimSpace(hi))
+		}
+		if err1 != nil || err2 != nil || a < 1 || b > n || a > b {
+			return nil, fmt.Errorf("can't read %q (steps are 1-%d)", part, n)
+		}
+		for i := a; i <= b; i++ {
+			out = append(out, i-1)
+		}
+	}
+	return out, nil
+}
+
+// OpenShell opens an interactive shell with the run's environment
+// (engine.ShellOpener). Ctrl-C belongs to the shell meanwhile, not runnr.
 func (t *Terminal) OpenShell(ctx context.Context, idx int) error {
-	if t.openShell == nil {
+	if !t.canShell() {
 		return errors.New("no terminal to open a shell in")
 	}
-	fmt.Fprintln(t.out, t.c("2", "  ── runnr shell: run variables are in the environment (try `env`).\n"+
+	fmt.Fprintln(t.out, t.c("2", "  ── runnr shell: the run's variables are in the environment (try `env`).\n"+
 		"     Publish values back with: echo name=value >> \"$RUNNR_OUTPUT\" (or $RUNNR_SECRET).\n"+
 		"     Type `exit` to return."))
 	if t.interrupts != nil {
 		t.interrupts.Store(true)
 		defer t.interrupts.Store(false)
 	}
-	err := t.openShell(ctx, idx)
+	err := t.session.Shell(ctx, idx)
 	fmt.Fprintln(t.out, t.c("2", "  ── back in runnr"))
 	return err
 }
@@ -330,8 +525,14 @@ func (t *Terminal) Manual(ctx context.Context, idx int, _ runbook.Step, text str
 }
 
 func (t *Terminal) OnFailure(ctx context.Context, idx int, _ runbook.Step, _ engine.StepResult) (engine.FailureAction, string, error) {
-	a, err := t.stepPrompt(ctx, idx, "Step failed. [r]etry / [s]kip / [f]orce success / [a]bort",
-		map[string]string{"r": "r", "retry": "r", "s": "s", "skip": "s", "f": "f", "force": "f", "a": "a", "abort": "a"}, "a")
+	opts := map[string]string{"r": "r", "retry": "r", "s": "s", "skip": "s", "f": "f", "force": "f", "a": "a", "abort": "a"}
+	prompt := "Step failed. [r]etry"
+	if t.canShell() {
+		opts["m"] = "m"
+		prompt += " / [m] run it myself"
+	}
+	prompt += " / [s]kip / [f]orce success / [a]bort"
+	a, err := t.stepPrompt(ctx, idx, prompt, opts, "a")
 	if err != nil {
 		return "", "", err
 	}
@@ -347,5 +548,5 @@ func (t *Terminal) OnFailure(ctx context.Context, idx int, _ runbook.Step, _ eng
 			}
 		}
 	}
-	return map[string]engine.FailureAction{"r": engine.FailRetry, "s": engine.FailSkip, "a": engine.FailAbort}[a], "", nil
+	return map[string]engine.FailureAction{"r": engine.FailRetry, "m": engine.FailByHand, "s": engine.FailSkip, "a": engine.FailAbort}[a], "", nil
 }

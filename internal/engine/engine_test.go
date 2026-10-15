@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -296,5 +298,124 @@ steps:
 	ui = &scripted{failures: []FailureAction{FailForce}}
 	if run := Execute(context.Background(), rb, ui, "", Options{Interactive: true}); run.Status != StatusFailed {
 		t.Fatalf("force without reason must fail, got %s", run.Status)
+	}
+}
+
+func TestDeclaredOutputsAndState(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+inputs: [{name: pw, secret: true, default: inputsecret}]
+steps:
+  - name: setup
+    shell: bash
+    run: |
+      region=use1
+      token=tok-123456
+      unset_one=
+      unset unset_one
+    outputs: [region, unset_one]
+    secret_outputs: [token]
+  - {name: use, run: 'echo "$region $token"'}
+`)
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{})
+	if run.Status != StatusSucceeded || ui.output[0] != "use1 ****" {
+		t.Fatalf("%s %s %q", run.Status, run.Error, ui.output)
+	}
+	want := map[string]string{"pw": "****", "region": "use1", "token": "****"}
+	for k, v := range want {
+		if run.State[k] != v {
+			t.Fatalf("state %v", run.State)
+		}
+	}
+	if _, ok := run.State["unset_one"]; ok {
+		t.Fatalf("unset variables must not be published: %v", run.State)
+	}
+
+	// Resuming restores non-secret state; secrets need re-deriving.
+	rb2 := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: 'echo \"[$region][$token]\"'}\n")
+	ui = &scripted{}
+	Execute(context.Background(), rb2, ui, "", Options{StartAt: 1, State: run.State})
+	if ui.output[len(ui.output)-1] != "[use1][]" {
+		t.Fatalf("restore: %q", ui.output)
+	}
+}
+
+func TestDeselectedSteps(t *testing.T) {
+	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: 'exit 1'}\n  - {name: c, run: 'true'}\n")
+	run := Execute(context.Background(), rb, Unattended{}, "", Options{Skip: map[int]bool{1: true}})
+	if run.Status != StatusSucceeded || statuses(run) != "succeeded,skipped,succeeded" || run.Steps[1].Note != NoteDeselected {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+}
+
+// stepper drives step mode and review; it also has a terminal whose
+// "keyboard" is a script, so shells and by-hand steps can be tested.
+type stepper struct {
+	scripted
+	decisions []StepDecision
+	keys      string
+	reviewed  []StepView
+	session   Session
+}
+
+func (s *stepper) BeforeStep(_ context.Context, v StepView) (StepDecision, error) {
+	d := s.decisions[0]
+	s.decisions = s.decisions[1:]
+	return d, nil
+}
+func (s *stepper) Review(_ context.Context, plan []StepView, skip map[int]bool) (map[int]bool, error) {
+	s.reviewed = plan
+	return map[int]bool{0: true}, nil
+}
+func (s *stepper) AttachedIO() (io.Reader, io.Writer, io.Writer) {
+	return strings.NewReader(s.keys), io.Discard, io.Discard
+}
+func (s *stepper) Bind(se Session) { s.session = se }
+
+func TestStepModeByHandAndReview(t *testing.T) {
+	t.Setenv("SHELL", "/bin/sh")
+	rb := mustParse(t, `
+name: t
+inputs: [{name: who, default: eric}]
+steps:
+  - {name: deselected, run: 'exit 1'}
+  - {name: auto, run: 'echo auto', expect: 'prints auto for {{.who}}'}
+  - {name: mine, run: 'echo "fixed=yes" >> "$RUNNR_OUTPUT"'}
+  - {name: skipme, run: 'exit 1'}
+  - {name: rest, run: 'echo "fixed=$fixed"'}
+  - {name: rest2, run: 'echo more'}
+`)
+	ui := &stepper{
+		decisions: []StepDecision{StepRun, StepByHand, StepSkip, StepContinue},
+		keys:      "echo fixed=by-hand >> \"$RUNNR_OUTPUT\"\nexit\n",
+	}
+	ui.manuals = []ManualOutcome{ManualDone}
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, StepMode: true, Review: true})
+	if run.Status != StatusSucceeded {
+		t.Fatalf("%s %s", run.Status, run.Error)
+	}
+	if got := statuses(run); got != "skipped,succeeded,succeeded,skipped,succeeded,succeeded" {
+		t.Fatalf("statuses %s", got)
+	}
+	if run.Steps[2].Note != "run by hand" {
+		t.Fatalf("note %q", run.Steps[2].Note)
+	}
+	if !slices.Contains(ui.output, "fixed=by-hand") {
+		t.Fatalf("by-hand shell output not published: %q", ui.output)
+	}
+	if ui.reviewed[1].Expect != "prints auto for eric" {
+		t.Fatalf("review view %+v", ui.reviewed[1])
+	}
+	if ui.session.State()["fixed"] != "by-hand" {
+		t.Fatalf("session state %v", ui.session.State())
+	}
+}
+
+func TestPreview(t *testing.T) {
+	rb := mustParse(t, "name: t\ninputs: [{name: env, default: staging}]\nsteps:\n  - {name: a, run: 'deploy {{.env}} {{.version}}', expect: ok}\n")
+	v := Preview(rb, nil)[0]
+	if v.Command != "deploy staging <version>" || v.Kind != "run" {
+		t.Fatalf("%+v", v)
 	}
 }

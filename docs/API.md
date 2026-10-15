@@ -58,6 +58,8 @@ Start request:
   "yes": true,            // approve confirm-gated steps when unattended
   "dry_run": false,
   "from": "deploy",       // optional: start at a step id, 1-based number or name
+  "skip": [3, 5],         // optional: 1-based steps to leave out
+  "step_mode": false,     // interactive: pause before every step
   "wait": true            // block until done and return the run (requires unattended)
 }
 ```
@@ -79,7 +81,16 @@ Start without `unattended`, then read `/events`. Each event is
 | `input` | the input's value |
 | `confirm` | `run`, `skip`, `abort` |
 | `manual` | `done`, `skip`, `fail`, `abort` (optional `note`) |
-| `failure` | `retry`, `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
+| `failure` | `retry`, `manual` (run it myself), `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
+| `before` (step mode) | `run`, `manual`, `skip`, `continue` (stop pausing), `abort` |
+
+Questions carry `text` (the rendered command or instructions) and `expect`.
+When the server is local, `confirm`/`manual`/`failure`/`before` questions also
+offer `shell`, which opens a Terminal window with the run's environment and
+then asks the same question again; `manual` (run it myself) opens one too.
+
+`step_finished` events carry `state`: the run's variables, secrets masked.
+The run record's `state` holds the same as of the last finished step.
 
 On reconnect the stream replays from `seq` 0.
 

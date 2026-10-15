@@ -11,8 +11,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -76,6 +74,9 @@ type Run struct {
 	Ended          time.Time         `json:"ended,omitzero"`
 	Steps          []StepResult      `json:"steps"`
 	Notes          []Note            `json:"notes,omitempty"`
+	// State is every variable the run has (inputs and published values)
+	// as of the last finished step; secrets are "****".
+	State map[string]string `json:"state,omitempty"`
 }
 
 type EventKind string
@@ -95,6 +96,8 @@ type Event struct {
 	Text   string      `json:"text,omitempty"`
 	Result *StepResult `json:"result,omitempty"`
 	Run    *Run        `json:"run,omitempty"`
+	// State accompanies step_finished: the run's variables, secrets masked.
+	State map[string]string `json:"state,omitempty"`
 }
 
 type ManualOutcome string
@@ -113,6 +116,19 @@ const (
 	FailAbort FailureAction = "abort"
 	// FailForce accepts the failure as success; the reason is required.
 	FailForce FailureAction = "force"
+	// FailByHand lets the operator run the step themselves in a shell.
+	FailByHand FailureAction = "manual"
+)
+
+// StepDecision is the answer to "about to run this step" in step mode.
+type StepDecision string
+
+const (
+	StepRun      StepDecision = "run"
+	StepByHand   StepDecision = "manual"
+	StepSkip     StepDecision = "skip"
+	StepContinue StepDecision = "continue" // run this and all later steps without pausing
+	StepAbort    StepDecision = "abort"
 )
 
 // Interactor supplies human decisions and receives progress events.
@@ -133,6 +149,15 @@ type Options struct {
 	Interactive bool
 	// StartAt skips steps before this index, except those marked always.
 	StartAt int
+	// Skip lists step indexes the operator deselected.
+	Skip map[int]bool
+	// Review shows the plan before running (if the Interactor is a Reviewer).
+	Review bool
+	// StepMode pauses before every step (if the Interactor is a Stepper).
+	StepMode bool
+	// State seeds variables from an earlier run (resume). Inputs win, and
+	// masked secrets are not restored.
+	State map[string]string
 	// Resumes records the run ID this run continues, if any.
 	Resumes string
 	// RunbookVersion records which saved version of the runbook ran.
@@ -140,27 +165,74 @@ type Options struct {
 	// Save is called with a snapshot after every state change worth keeping.
 	Save func(*Run)
 	// ShellOnly runs only the steps marked always (the setup), then opens an
-	// interactive shell with the resulting environment. Needs a ShellHost.
+	// interactive shell with the resulting environment.
 	ShellOnly bool
 }
 
-// Attacher is implemented by interactors that own a real terminal. Steps
-// marked tty run attached to it; without one they become manual steps.
+// Attacher is implemented by interactors that own a real terminal: tty
+// steps, shells and by-hand steps run attached to it.
 type Attacher interface {
 	AttachedIO() (stdin io.Reader, stdout, stderr io.Writer)
 }
 
-// ShellHost is an Attacher that can open an interactive shell mid-run. The
-// engine gives it a function that opens one with the run's environment
-// (inputs, published values, env) for the given step (-1 for none).
-// Values written to $RUNNR_OUTPUT/$RUNNR_SECRET in that shell flow back
-// into the run.
-type ShellHost interface {
-	Attacher
-	SetShell(open func(ctx context.Context, step int) error)
-	// OpenShell opens the shell (via the function given to SetShell),
-	// wrapping it in whatever the host needs, e.g. signal handling.
-	OpenShell(ctx context.Context, step int) error
+// WindowLauncher is implemented by interactors without a terminal of their
+// own that can open terminal windows on the operator's machine (the GUI
+// server running locally).
+type WindowLauncher interface {
+	LaunchWindows() bool
+}
+
+// StepView is a step as it would run now: templates rendered against the
+// run's current state (values not known yet show as <name>).
+type StepView struct {
+	Index         int      `json:"index"`
+	Name          string   `json:"name"`
+	Section       string   `json:"section,omitempty"`
+	Owner         string   `json:"owner,omitempty"`
+	Kind          string   `json:"kind"`
+	Command       string   `json:"command"`
+	Expect        string   `json:"expect,omitempty"`
+	Dir           string   `json:"dir,omitempty"`
+	When          string   `json:"when,omitempty"`
+	Confirm       bool     `json:"confirm,omitempty"`
+	Always        bool     `json:"always,omitempty"`
+	Timeout       string   `json:"timeout,omitempty"`
+	Retries       int      `json:"retries,omitempty"`
+	Outputs       []string `json:"outputs,omitempty"`
+	SecretOutputs []string `json:"secret_outputs,omitempty"`
+}
+
+// Session gives an interactor read access to the run it's driving, plus
+// its shell. Call it only from inside Interactor callbacks.
+type Session interface {
+	View(idx int) StepView
+	Plan() []StepView
+	// State returns the run's variables with secrets masked.
+	State() map[string]string
+	// CanShell reports whether Shell can work here.
+	CanShell() bool
+	// Shell opens an interactive shell with the environment step idx would
+	// get (-1: none). Values written to $RUNNR_OUTPUT/$RUNNR_SECRET there
+	// are added to the run's state.
+	Shell(ctx context.Context, idx int) error
+}
+
+// Binder receives the Session before the run starts.
+type Binder interface{ Bind(Session) }
+
+// ShellOpener lets an interactor wrap shells it opens (e.g. signal handling).
+type ShellOpener interface {
+	OpenShell(ctx context.Context, idx int) error
+}
+
+// Reviewer is shown the plan before steps run and may deselect steps.
+type Reviewer interface {
+	Review(ctx context.Context, plan []StepView, skip map[int]bool) (map[int]bool, error)
+}
+
+// Stepper is asked before each step in step mode.
+type Stepper interface {
+	BeforeStep(ctx context.Context, v StepView) (StepDecision, error)
 }
 
 const maxOutput = 64 << 10
@@ -172,13 +244,15 @@ func NewRunID() string {
 }
 
 type executor struct {
-	rb      *runbook.Runbook
-	ui      Interactor
-	opts    Options
-	run     *Run
-	vars    map[string]string
-	secrets []string
-	mu      sync.Mutex
+	rb         *runbook.Runbook
+	ui         Interactor
+	opts       Options
+	run        *Run
+	vars       map[string]string
+	secrets    []string
+	secretVars map[string]bool
+	pausing    bool
+	mu         sync.Mutex
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -191,7 +265,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	if opts.Interactive {
 		mode = "interactive"
 	}
-	x := &executor{rb: rb, ui: ui, opts: opts, vars: map[string]string{}}
+	x := &executor{rb: rb, ui: ui, opts: opts, vars: map[string]string{}, secretVars: map[string]bool{}}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
 	for i, s := range rb.Steps {
 		kind := "run"
@@ -203,23 +277,47 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: kind, Status: StatusPending})
 	}
 
-	if h, ok := ui.(ShellHost); ok {
-		h.SetShell(x.openShell)
+	if b, ok := ui.(Binder); ok {
+		b.Bind(x)
 	}
 	if opts.ShellOnly {
 		x.opts.StartAt = len(rb.Steps)
 	}
+	// Starting later is just skipping the earlier (non-always) steps, so
+	// the review can show it and the operator can change it.
+	skip := map[int]bool{}
+	for i, on := range opts.Skip {
+		skip[i] = on
+	}
+	for i := 0; i < x.opts.StartAt && i < len(rb.Steps); i++ {
+		if !rb.Steps[i].Always {
+			skip[i] = true
+		}
+	}
+	x.opts.Skip = skip
+	_, x.pausing = ui.(Stepper)
+	x.pausing = x.pausing && opts.StepMode && !opts.DryRun
 	x.save()
 	err := x.resolveInputs(ctx)
+	if err == nil {
+		x.restoreState()
+		x.run.State = x.State()
+		if r, ok := ui.(Reviewer); ok && opts.Review && !opts.ShellOnly {
+			var skip map[int]bool
+			if skip, err = r.Review(ctx, x.Plan(), x.opts.Skip); err == nil && skip != nil {
+				x.opts.Skip = skip
+			}
+		}
+	}
 	if err == nil {
 		x.notify(Event{Kind: EventRunStarted, Run: x.snapshot()})
 		x.save()
 		err = x.steps(ctx)
 		if err == nil && opts.ShellOnly {
-			if h, ok := ui.(ShellHost); ok {
-				err = h.OpenShell(ctx, -1)
+			if o, ok := ui.(ShellOpener); ok {
+				err = o.OpenShell(ctx, -1)
 			} else {
-				err = errors.New("no terminal to open a shell in")
+				err = x.Shell(ctx, -1)
 			}
 		}
 	}
@@ -253,6 +351,9 @@ var errAborted = errors.New("aborted")
 // NoteBeforeStart marks steps skipped because the run started later on.
 const NoteBeforeStart = "before start step"
 
+// NoteDeselected marks steps the operator excluded before the run.
+const NoteDeselected = "deselected"
+
 func (x *executor) resolveInputs(ctx context.Context) error {
 	known := map[string]bool{}
 	for _, in := range x.rb.Inputs {
@@ -276,6 +377,7 @@ func (x *executor) resolveInputs(ctx context.Context) error {
 		}
 		x.vars[in.Name] = v
 		if in.Secret && v != "" {
+			x.secretVars[in.Name] = true
 			x.secrets = append(x.secrets, v)
 			x.run.Inputs[in.Name] = "****"
 		} else {
@@ -295,8 +397,12 @@ func (x *executor) steps(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if i < x.opts.StartAt && !step.Always {
-			x.run.Steps[i].Status, x.run.Steps[i].Note = StatusSkipped, NoteBeforeStart
+		if x.opts.Skip[i] {
+			note := NoteDeselected
+			if i < x.opts.StartAt && !step.Always {
+				note = NoteBeforeStart
+			}
+			x.run.Steps[i].Status, x.run.Steps[i].Note = StatusSkipped, note
 			x.stepDone(i)
 			continue
 		}
@@ -323,6 +429,27 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	res.Status, res.Started = StatusRunning, time.Now()
 	x.notify(Event{Kind: EventStepStarted, Step: i, Result: x.result(i)})
 
+	byHand, confirmed := false, false
+	if x.pausing {
+		d, err := x.ui.(Stepper).BeforeStep(ctx, x.View(i))
+		if err != nil {
+			return x.fail(i, err)
+		}
+		switch d {
+		case StepSkip:
+			res.Status, res.Note = StatusSkipped, "skipped by operator"
+			x.stepDone(i)
+			return nil
+		case StepContinue:
+			x.pausing = false
+		case StepByHand:
+			byHand = true
+		case StepAbort:
+			return x.fail(i, errAborted)
+		}
+		confirmed = true // choosing to run counts as the confirmation
+	}
+
 	if step.IsManual() {
 		return x.manual(ctx, i, step, step.Manual)
 	}
@@ -333,12 +460,12 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	}
 	res.Command = x.mask(cmd)
 
-	if _, ok := x.ui.(Attacher); step.TTY && !ok {
+	if step.TTY && !x.CanShell() && !x.opts.DryRun {
 		// No terminal here: hand the command to a human instead.
 		return x.manual(ctx, i, step, "Run in a terminal (needs interactive input):\n\n"+step.Run)
 	}
 
-	if step.Confirm && !x.opts.DryRun {
+	if step.Confirm && !confirmed && !x.opts.DryRun {
 		ok, err := x.ui.Confirm(ctx, i, step, x.mask(cmd))
 		if err != nil {
 			return x.fail(i, err)
@@ -356,6 +483,28 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	}
 
 	for {
+		if byHand {
+			outcome, note, err := x.byHand(ctx, i, step, cmd)
+			if err != nil {
+				return x.fail(i, err)
+			}
+			switch outcome {
+			case ManualDone:
+				res.Status, res.Note, res.Error = StatusSucceeded, strings.TrimSpace("run by hand "+note), ""
+				x.stepDone(i)
+				return nil
+			case ManualSkip:
+				res.Status, res.Note = StatusSkipped, strings.TrimSpace("skipped by hand "+note)
+				x.stepDone(i)
+				return nil
+			}
+			res.Error = strings.TrimSpace("failed when run by hand " + note)
+			byHand = false
+			if err := x.onFailure(ctx, i, step, cmdResult{}, &byHand); err != errRetry {
+				return err
+			}
+			continue
+		}
 		attempts := step.Retries + 1
 		var out cmdResult
 		for a := 1; a <= attempts; a++ {
@@ -389,31 +538,68 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 			x.stepDone(i)
 			return nil
 		}
-		action, reason, err := x.ui.OnFailure(ctx, i, step, *x.result(i))
-		if err != nil {
-			return x.fail(i, err)
-		}
-		switch action {
-		case FailForce:
-			if strings.TrimSpace(reason) == "" {
-				return x.fail(i, errors.New("forcing a failed step requires a reason"))
-			}
-			// Accepted as success, so whatever it published is used.
-			x.apply(step, out)
-			res.Status, res.Note = StatusForced, "forced: "+strings.TrimSpace(reason)
-			x.stepDone(i)
-			return nil
-		case FailRetry:
-			x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "retrying…"})
-			continue
-		case FailSkip:
-			res.Status, res.Note = StatusSkipped, "skipped after failure"
-			x.stepDone(i)
-			return nil
-		default:
-			return x.fail(i, fmt.Errorf("step %d (%s) failed: %s", i+1, step.Name, res.Error))
+		if err := x.onFailure(ctx, i, step, out, &byHand); err != errRetry {
+			return err
 		}
 	}
+}
+
+var errRetry = errors.New("retry")
+
+// onFailure asks what to do about failed step i. It returns errRetry to
+// run it again (by hand if *byHand is set), nil if the step is settled,
+// or the error that ends the run.
+func (x *executor) onFailure(ctx context.Context, i int, step runbook.Step, out cmdResult, byHand *bool) error {
+	res := &x.run.Steps[i]
+	action, reason, err := x.ui.OnFailure(ctx, i, step, *x.result(i))
+	if err != nil {
+		return x.fail(i, err)
+	}
+	switch action {
+	case FailForce:
+		if strings.TrimSpace(reason) == "" {
+			return x.fail(i, errors.New("forcing a failed step requires a reason"))
+		}
+		// Accepted as success, so whatever it published is used.
+		x.apply(step, out)
+		res.Status, res.Note = StatusForced, "forced: "+strings.TrimSpace(reason)
+		x.stepDone(i)
+		return nil
+	case FailRetry:
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "retrying…"})
+		return errRetry
+	case FailByHand:
+		*byHand = true
+		return errRetry
+	case FailSkip:
+		res.Status, res.Note = StatusSkipped, "skipped after failure"
+		x.stepDone(i)
+		return nil
+	}
+	return x.fail(i, fmt.Errorf("step %d (%s) failed: %s", i+1, step.Name, res.Error))
+}
+
+// byHand shows the operator the step's commands, opens a shell with its
+// environment for them to run it, then asks how it went.
+func (x *executor) byHand(ctx context.Context, i int, step runbook.Step, cmd string) (ManualOutcome, string, error) {
+	if !x.CanShell() {
+		return x.ui.Manual(ctx, i, step, "Run this yourself, then report how it went:\n\n"+x.mask(cmd))
+	}
+	x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "run this yourself in the shell:"})
+	for _, l := range strings.Split(strings.TrimRight(x.mask(cmd), "\n"), "\n") {
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "  " + l})
+	}
+	if v := x.View(i); len(v.Outputs)+len(v.SecretOutputs) > 0 {
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "then publish: " + strings.Join(append(v.Outputs, v.SecretOutputs...), ", ") + ` (echo name=value >> "$RUNNR_OUTPUT")`})
+	}
+	if err := x.shellViaUI(ctx, i); err != nil {
+		return "", "", err
+	}
+	msg := "How did running it by hand go?"
+	if v := x.View(i); v.Expect != "" {
+		msg += "\nExpected: " + v.Expect
+	}
+	return x.ui.Manual(ctx, i, step, msg)
 }
 
 // apply records what a successful (or forced) step produced.
@@ -423,9 +609,11 @@ func (x *executor) apply(step runbook.Step, out cmdResult) {
 	}
 	for k, v := range out.outputs {
 		x.vars[k] = v
+		delete(x.secretVars, k)
 	}
 	for k, v := range out.secrets {
 		x.vars[k] = v
+		x.secretVars[k] = true
 		x.addSecret(v)
 	}
 }
@@ -486,7 +674,8 @@ func (x *executor) fail(i int, err error) error {
 
 func (x *executor) stepDone(i int) {
 	x.run.Steps[i].Ended = time.Now()
-	x.notify(Event{Kind: EventStepFinished, Step: i, Result: x.result(i)})
+	x.run.State = x.State()
+	x.notify(Event{Kind: EventStepFinished, Step: i, Result: x.result(i), State: x.run.State})
 	x.save()
 }
 
@@ -498,6 +687,7 @@ func (x *executor) result(i int) *StepResult {
 func (x *executor) snapshot() *Run {
 	r := *x.run
 	r.Steps = slices.Clone(x.run.Steps)
+	r.State = maps.Clone(x.run.State)
 	return &r
 }
 
@@ -529,7 +719,13 @@ func (x *executor) addSecret(v string) {
 
 // env layers: process env, runnr vars (inputs and outputs), runbook env, step env.
 func (x *executor) env(step runbook.Step) ([]string, error) {
-	env := os.Environ()
+	extra, err := x.runnrEnv(step)
+	return append(os.Environ(), extra...), err
+}
+
+// runnrEnv is what runnr adds to the process environment for step.
+func (x *executor) runnrEnv(step runbook.Step) ([]string, error) {
+	var env []string
 	for k, v := range x.vars {
 		env = append(env, k+"="+v)
 	}
@@ -577,73 +773,10 @@ var varRefRe = regexp.MustCompile(`\.([A-Za-z_][A-Za-z0-9_]*)`)
 // render expands a template. In a dry run, variables that earlier steps
 // would have produced don't exist yet, so they render as <name>.
 func (x *executor) render(text string) (string, error) {
-	if !x.opts.DryRun {
-		return runbook.Render(text, x.vars)
+	if x.opts.DryRun {
+		return x.lenient(text), nil
 	}
-	vars := maps.Clone(x.vars)
-	for _, m := range varRefRe.FindAllStringSubmatch(text, -1) {
-		if _, ok := vars[m[1]]; !ok {
-			vars[m[1]] = "<" + m[1] + ">"
-		}
-	}
-	return runbook.Render(text, vars)
-}
-
-// openShell runs an interactive shell attached to the terminal, with the
-// environment step idx would get (idx -1: no step-specific env or dir).
-func (x *executor) openShell(ctx context.Context, idx int) error {
-	a, ok := x.ui.(Attacher)
-	if !ok {
-		return errors.New("no terminal to open a shell in")
-	}
-	var step runbook.Step
-	if idx >= 0 && idx < len(x.rb.Steps) {
-		step = x.rb.Steps[idx]
-	}
-	env, err := x.env(step)
-	if err != nil {
-		return err
-	}
-	dir, err := x.render(step.Dir)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.MkdirTemp("", "runnr-shell-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmp)
-	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
-	env = append(env, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile, "RUNNR_SHELL=1")
-
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = nonEmpty(x.rb.Shell, "sh")
-	}
-	cmd := exec.CommandContext(ctx, shell)
-	cmd.Env, cmd.Dir = env, dir
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = a.AttachedIO()
-	err = cmd.Run()
-	var ee *exec.ExitError
-	if err != nil && !errors.As(err, &ee) { // a shell's exit status is just its last command's
-		return err
-	}
-
-	var res cmdResult
-	x.readOutputs(idx, &res, outFile, secFile)
-	x.apply(runbook.Step{}, res)
-	var names []string
-	for k := range res.outputs {
-		names = append(names, k)
-	}
-	for k := range res.secrets {
-		names = append(names, k+" (secret)")
-	}
-	if len(names) > 0 && idx >= 0 {
-		slices.Sort(names)
-		x.notify(Event{Kind: EventOutput, Step: idx, Stream: "info", Text: "shell published: " + strings.Join(names, ", ")})
-	}
-	return nil
+	return runbook.Render(text, x.vars)
 }
 
 func nonEmpty(s, def string) string {
@@ -652,3 +785,6 @@ func nonEmpty(s, def string) string {
 	}
 	return s
 }
+
+// ResumeState returns a previous run's state for Options.State.
+func ResumeState(r *Run) map[string]string { return maps.Clone(r.State) }

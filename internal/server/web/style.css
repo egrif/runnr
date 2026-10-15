@@ -164,3 +164,13 @@ tbody tr:hover { background: var(--bg); cursor: pointer; }
 .notes { margin: 8px 0 12px; }
 button.link { background: none; border: none; padding: 2px 0; color: var(--accent); font-size: 13px; }
 button.link:hover { text-decoration: underline; }
+
+.expect { margin: 8px 0; padding: 6px 10px; border-left: 3px solid var(--ok); background: var(--bg); border-radius: 4px; white-space: pre-wrap; }
+.step details > summary { list-style: none; }
+.step details > summary::-webkit-details-marker { display: none; }
+.step details[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+.start-bar { position: sticky; bottom: 0; padding: 12px 0; background: var(--bg); }
+.state summary { cursor: pointer; font-weight: 600; }
+table.kv { border: none; margin-top: 8px; }
+table.kv td { padding: 3px 8px; border: none; word-break: break-all; }
+table.kv tr:hover { background: none; cursor: default; }

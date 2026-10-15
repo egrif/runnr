@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -210,5 +211,75 @@ func TestForceAndNotesOverHTTP(t *testing.T) {
 	}
 	if len(run.Steps[0].Notes) != 1 || run.Steps[0].Notes[0].Text != "investigating" {
 		t.Fatalf("notes %+v", run.Steps[0].Notes)
+	}
+}
+
+func TestStepModeSkipAndTerminalWindow(t *testing.T) {
+	// Stand-in for opening a Terminal window: run the script directly.
+	t.Setenv("RUNNR_TERMINAL", "sh")
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{Local: true}).Handler())
+	defer ts.Close()
+
+	do(t, "POST", ts.URL+"/api/runbooks", `name: w
+steps:
+  - {name: tty, run: 'answer=42', tty: true, outputs: [answer]}
+  - {name: left-out, run: 'exit 1'}
+  - {name: skipped-live, run: 'exit 1'}
+  - {name: last, run: 'echo "answer=$answer"', expect: 'prints 42'}
+`, nil)
+	res := do(t, "POST", ts.URL+"/api/runs", `{"runbook":"w","step_mode":true,"skip":[2]}`, nil)
+	var started struct{ ID string }
+	json.NewDecoder(res.Body).Decode(&started)
+
+	evs, err := http.Get(ts.URL + "/api/runs/" + started.ID + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evs.Body.Close()
+	sc := bufio.NewScanner(evs.Body)
+	deadline := time.AfterFunc(15*time.Second, func() { evs.Body.Close() })
+	defer deadline.Stop()
+	var output []string
+	var sawExpect bool
+	for sc.Scan() {
+		line, ok := strings.CutPrefix(sc.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var e WireEvent
+		json.Unmarshal([]byte(line), &e)
+		switch e.Kind {
+		case "question":
+			if e.Question.Type != "before" || !slices.Contains(e.Question.Options, "shell") {
+				t.Fatalf("question %+v", e.Question)
+			}
+			answer := "run"
+			if e.Question.Title == "Next: skipped-live" {
+				answer = "skip"
+			}
+			sawExpect = sawExpect || e.Question.Expect == "prints 42"
+			body, _ := json.Marshal(Answer{QuestionID: e.Question.ID, Value: answer})
+			do(t, "POST", ts.URL+"/api/runs/"+started.ID+"/answer", string(body), nil)
+		case engine.EventOutput:
+			output = append(output, e.Text)
+		}
+		if e.Kind == engine.EventRunFinished {
+			break
+		}
+	}
+	run, err := st.LoadRun(started.ID)
+	if err != nil || run.Status != engine.StatusSucceeded {
+		t.Fatalf("%v %+v", err, run)
+	}
+	got := []string{}
+	for _, s := range run.Steps {
+		got = append(got, string(s.Status)+":"+s.Note)
+	}
+	if strings.Join(got, ",") != "succeeded:,skipped:deselected,skipped:skipped by operator,succeeded:" {
+		t.Fatalf("steps %v", got)
+	}
+	if !slices.Contains(output, "answer=42") || run.State["answer"] != "42" || !sawExpect {
+		t.Fatalf("output %q state %v expect %v", output, run.State, sawExpect)
 	}
 }

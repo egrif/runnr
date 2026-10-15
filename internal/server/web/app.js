@@ -61,6 +61,13 @@ function pushNote(state, idx, n) {
   if (!list.some((m) => m.time === n.time && m.text === n.text)) list.push(n);
 }
 
+function renderState(vars, state) {
+  const keys = Object.keys(vars || {}).sort();
+  if (!keys.length) return "";
+  return `<details class="card state" ${state.stateOpen ? "open" : ""}><summary>State · ${keys.length} variables</summary>
+    <table class="kv">${keys.map((k) => `<tr><td><code>${esc(k)}</code></td><td><code>${esc(vars[k])}</code></td></tr>`).join("")}</table></details>`;
+}
+
 function renderNotes(notes) {
   return (notes || []).map((n) => `<div class="note">✎ <span class="muted">${new Date(n.time).toLocaleString()} · ${esc(n.author || "")}</span> ${esc(n.text)}</div>`).join("");
 }
@@ -154,6 +161,22 @@ async function viewRunbook(name, tab) {
   renderRunForm($("#tab"), rb);
 }
 
+function stepFlags(s) {
+  return [s.manual ? "manual" : s.tty ? "terminal" : "run", s.always && "always", s.confirm && "confirm", s.when && "conditional",
+    s.continue_on_error && "continue on error", s.retries && `retries ${s.retries}`, s.timeout && `timeout ${s.timeout}`].filter(Boolean).join(" · ");
+}
+
+// stepDetails shows what a step does: code, expected outcome, outputs.
+function stepDetails(s) {
+  const outs = [...(s.outputs || []), ...(s.secret_outputs || []).map((o) => `${o} (secret)`)];
+  return `
+    ${s.dir ? `<div class="muted">dir: <code>${esc(s.dir)}</code></div>` : ""}
+    ${s.when ? `<div class="muted">only when: <code>${esc(s.when)}</code></div>` : ""}
+    <pre class="cmd">${esc(s.run || s.manual || s.command)}</pre>
+    ${s.expect ? `<div class="expect"><b>Expect:</b> ${esc(s.expect)}</div>` : ""}
+    ${outs.length ? `<div class="muted">publishes: ${outs.map((o) => `<code>${esc(o)}</code>`).join(" ")}</div>` : ""}`;
+}
+
 function renderRunForm(el, rb) {
   const inputs = rb.inputs || [];
   const field = (i) => {
@@ -167,34 +190,62 @@ function renderRunForm(el, rb) {
     return `<label for="${id}">${esc(i.name)}${i.required ? " *" : ""}</label>${ctl}${i.description ? `<div class="hint">${esc(i.description)}</div>` : ""}`;
   };
   el.innerHTML = `
-    <form id="run-form" class="card">
-      ${inputs.length ? `<div class="form-grid">${inputs.map(field).join("")}</div>` : `<div class="muted">This runbook takes no inputs.</div>`}
-      <div class="options">
-        <label><input type="radio" name="mode" value="interactive" checked> Interactive</label>
-        <label><input type="radio" name="mode" value="unattended"> Unattended</label>
-        <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
-        <label><input type="checkbox" name="dry"> Dry run</label>
-        <label>Start at <select name="from"><option value="">step 1</option>${rb.steps.slice(1).map((s, i) => `<option value="${i + 2}">${i + 2}. ${esc(s.name)}</option>`).join("")}</select></label>
+    <form id="run-form">
+      <div class="card">
+        ${inputs.length ? `<div class="form-grid">${inputs.map(field).join("")}</div>` : `<div class="muted">This runbook takes no inputs.</div>`}
+        <div class="options">
+          <label><input type="radio" name="mode" value="interactive" checked> Interactive</label>
+          <label><input type="radio" name="mode" value="unattended"> Unattended</label>
+          <label title="Ask before every step: run, run it myself, skip, or continue"><input type="checkbox" name="stepmode"> Pause before each step</label>
+          <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
+          <label><input type="checkbox" name="dry"> Dry run</label>
+        </div>
       </div>
-      <button class="primary" type="submit">▶ Start run</button>
-    </form>
-    <h2>Steps</h2>
-    <ol class="steps">${rb.steps.map((s, i) => `${sectionHeading(rb.steps, i)}
-      <li class="step"><div class="step-head"><span class="n">${i + 1}</span><span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
-        <span class="meta">${[s.manual ? "manual" : s.tty ? "terminal" : "run", s.always && "always", s.confirm && "confirm", s.when && "conditional", s.continue_on_error && "continue on error", s.retries && `retries ${s.retries}`, s.timeout && `timeout ${s.timeout}`].filter(Boolean).join(" · ")}</span></div>
-        <div class="step-body"><pre class="cmd">${esc(s.run || s.manual)}</pre></div></li>`).join("")}
-    </ol>`;
+      <div class="row" style="margin:20px 0 8px">
+        <h2 style="margin:0">Review steps</h2>
+        <span class="muted" id="count"></span>
+        <span class="spacer"></span>
+        <label class="muted">Start at <select name="from"><option value="1">step 1</option>${rb.steps.slice(1).map((s, i) => `<option value="${i + 2}">${i + 2}. ${esc(s.name)}</option>`).join("")}</select></label>
+        <button type="button" id="all">All</button><button type="button" id="none">None</button>
+      </div>
+      <ol class="steps">${rb.steps.map((s, i) => `${sectionHeading(rb.steps, i)}
+        <li class="step"><details><summary class="step-head">
+          <input type="checkbox" name="step" value="${i + 1}" checked>
+          <span class="n">${i + 1}</span><span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
+          <span class="meta">${stepFlags(s)}</span></summary>
+          <div class="step-body">${stepDetails(s)}</div></details></li>`).join("")}
+      </ol>
+      <div class="row start-bar"><button class="primary" type="submit" id="start">▶ Start run</button></div>
+    </form>`;
   const form = $("#run-form");
-  const syncYes = () => (form.yes.disabled = form.mode.value !== "unattended");
-  form.addEventListener("change", syncYes);
-  syncYes();
+  const boxes = [...form.querySelectorAll("input[name=step]")];
+  const sync = () => {
+    form.yes.disabled = form.mode.value !== "unattended";
+    form.stepmode.disabled = form.mode.value === "unattended";
+    const n = boxes.filter((b) => b.checked).length;
+    $("#count").textContent = `${n} of ${boxes.length} selected`;
+    $("#start").textContent = `▶ Start run (${n} step${n === 1 ? "" : "s"})`;
+    boxes.forEach((b) => b.closest(".step").classList.toggle("dim", !b.checked));
+  };
+  form.addEventListener("change", sync);
+  boxes.forEach((b) => b.addEventListener("click", (e) => e.stopPropagation()));
+  form.from.addEventListener("change", () => {
+    const from = +form.from.value;
+    boxes.forEach((b, i) => (b.checked = i + 1 >= from || !!rb.steps[i].always));
+    sync();
+  });
+  $("#all").onclick = () => { boxes.forEach((b) => (b.checked = true)); sync(); };
+  $("#none").onclick = () => { boxes.forEach((b) => (b.checked = false)); sync(); };
+  sync();
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const vars = {};
     inputs.forEach((i) => (vars[i.name] = form.elements[i.name].value));
+    const skip = boxes.filter((b) => !b.checked).map((b) => +b.value);
     try {
       const { id } = await api("POST", "/api/runs", {
-        runbook: rb.name, vars, unattended: form.mode.value === "unattended", yes: form.yes.checked, dry_run: form.dry.checked, from: form.from.value,
+        runbook: rb.name, vars, unattended: form.mode.value === "unattended", yes: form.yes.checked,
+        dry_run: form.dry.checked, step_mode: form.stepmode.checked, skip,
       });
       location.hash = `#/runs/${id}`;
     } catch (e) { toast(e.message); }
@@ -306,10 +357,12 @@ function applyEvent(state, e) {
       state.open.add(e.step);
       break;
     case "output":
-      state.steps[e.step].log.push({ stream: e.stream, text: e.text });
+      if (e.step < 0) (state.messages ||= []).push(e.text);
+      else state.steps[e.step].log.push({ stream: e.stream, text: e.text });
       break;
     case "step_finished":
       Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes });
+      if (e.state) state.run.state = e.state;
       if (e.result.status === "succeeded" && !e.result.output) state.open.delete(e.step);
       break;
     case "question":
@@ -346,7 +399,9 @@ function renderRun(state) {
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
+    ${(state.messages || []).map((m) => `<p class="muted">ℹ ${esc(m)}</p>`).join("")}
     <div class="notes">${renderNotes(run.notes)}<button class="link" data-note="0">✎ Add run note</button></div>
+    ${renderState(run.state, state)}
     ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
     ${state.question?.step === -1 ? renderQuestion(state.question, run.id) : ""}
     <ol class="steps">${state.steps.map((s, i) => `${sectionHeading(state.steps, i)}
@@ -369,6 +424,8 @@ function renderRun(state) {
     </ol>`;
 
   main.querySelectorAll("pre.log").forEach((p) => { if (scroll[p.dataset.i] !== false) p.scrollTop = p.scrollHeight; });
+  const st = $("details.state");
+  if (st) st.ontoggle = () => (state.stateOpen = st.open);
   main.querySelectorAll("[data-note]").forEach((b) => (b.onclick = (ev) => {
     ev.stopPropagation();
     addNote(run.id, +b.dataset.note, state);
@@ -390,7 +447,10 @@ function renderRun(state) {
   if (q) bindQuestion(q, state.question, run.id);
 }
 
-const QLABELS = { run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…" };
+const QLABELS = {
+  run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…",
+  manual: "✋ Run it myself", shell: "⌨ Open shell", continue: "Run the rest without pausing",
+};
 
 function renderQuestion(q, runId) {
   let body = "";
@@ -404,7 +464,9 @@ function renderQuestion(q, runId) {
     if (q.type === "manual") body += `<input type="text" name="note" placeholder="Note (optional)">`;
     body += q.options.map((o, idx) => `<button data-v="${esc(o)}" class="${idx === 0 ? "primary" : o === "abort" ? "danger" : ""}">${QLABELS[o] || esc(o)}</button>`).join("");
   }
-  const text = q.type === "confirm" ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
+  let text = ["confirm", "before"].includes(q.type) ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
+  if (q.expect) text += `<div class="expect"><b>Expect:</b> ${esc(q.expect)}</div>`;
+  if (q.options?.includes("shell") || q.options?.includes("manual")) text += `<div class="muted">“Run it myself” and “Open shell” open a Terminal window with this run's variables loaded.</div>`;
   return `<div class="question"><h3>${esc(q.title)}</h3>${text}<div class="actions">${body}</div></div>`;
 }
 
@@ -481,8 +543,11 @@ steps:
     capture: greeting        # stdout saved as {{.greeting}} for later steps
   - name: Publish values
     run: |
-      echo "region=us-east-1" >> "$RUNNR_OUTPUT"  # {{.region}} / $region later
-      echo "pw=..." >> "$RUNNR_SECRET"            # same, masked
+      region=us-east-1
+      pw=$(fetch-password)
+    outputs: [region]        # joins the run's state: {{.region}} / $region later
+    secret_outputs: [pw]     # same, masked and never stored
+    expect: what success looks like (shown when reviewing / running by hand)
   - name: Needs a terminal
     run: terraform apply
     tty: true                # CLI: attached; GUI/unattended: becomes a manual step

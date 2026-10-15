@@ -82,21 +82,31 @@ func (x *executor) exec(ctx context.Context, i int, step runbook.Step, command s
 	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
 	env = append(env, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile)
 
+	command = withOutputs(step, command)
+
+	if step.TTY {
+		// The command owns a terminal (ours, or a new window); its output
+		// isn't recorded.
+		extra, _ := x.runnrEnv(step)
+		extra = append(extra, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile)
+		code, err := x.inTerminal(ctx, fmt.Sprintf("%s · step %d: %s", x.rb.Name, i+1, step.Name), shell, command, extra, dir)
+		res := cmdResult{exitCode: code, combined: "(ran in a terminal; output not recorded)\n"}
+		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			res.err = fmt.Errorf("timed out after %s", step.Timeout)
+		case err != nil:
+			res.err = err
+		case code != nil && *code != 0:
+			res.err = fmt.Errorf("exit status %d", *code)
+		}
+		x.readOutputs(i, &res, outFile, secFile)
+		return res
+	}
+
 	cmd := exec.CommandContext(ctx, shell, "-c", command)
 	cmd.Env = env
 	cmd.Dir = dir
 	cmd.WaitDelay = 5 * time.Second
-
-	if a, ok := x.ui.(Attacher); ok && step.TTY {
-		// Attached: the command owns the terminal, so it stays in our
-		// process group (for job control) and its output isn't recorded.
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = a.AttachedIO()
-		err := cmd.Run()
-		res := x.finishCmd(ctx, step, cmd, err)
-		res.combined = "(attached to terminal; output not recorded)\n"
-		x.readOutputs(i, &res, outFile, secFile)
-		return res
-	}
 	setProcessGroup(cmd)
 
 	var stdout bytes.Buffer
@@ -185,4 +195,21 @@ func (x *executor) finishCmd(ctx context.Context, step runbook.Step, cmd *exec.C
 		}
 	}
 	return res
+}
+
+// withOutputs makes the shell write the step's declared outputs to
+// $RUNNR_OUTPUT / $RUNNR_SECRET when it exits (only set variables).
+func withOutputs(step runbook.Step, command string) string {
+	if len(step.Outputs)+len(step.SecretOutputs) == 0 {
+		return command
+	}
+	var b strings.Builder
+	b.WriteString("__runnr_outputs() {\n")
+	for file, names := range map[string][]string{"RUNNR_OUTPUT": step.Outputs, "RUNNR_SECRET": step.SecretOutputs} {
+		for _, n := range names {
+			fmt.Fprintf(&b, "  [ -n \"${%[1]s+x}\" ] && printf '%%s=%%s\\n' %[1]s \"$%[1]s\" >> \"$%[2]s\"\n", n, file)
+		}
+	}
+	b.WriteString("  return 0\n}\ntrap __runnr_outputs EXIT\n")
+	return b.String() + command
 }

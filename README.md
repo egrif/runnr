@@ -41,6 +41,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr new <name>` | Create from a starter template and open `$EDITOR` |
 | `runnr edit <name>` | Edit in `$EDITOR`; only saved once it validates |
 | `runnr show <name>` | Print YAML (`--version N` for an older save) |
+| `runnr inspect <name> [step]` | Explore what will run: all steps, or one step's code, expected outcome and outputs (`-v` fills in inputs, `--all`) |
 | `runnr versions <name>` | List saved versions |
 | `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin) |
 | `runnr delete <name>` | Delete (`-f` to skip the prompt) |
@@ -81,39 +82,56 @@ SQLite database imports them once, on first use, and leaves the files alone.
 ### Running
 
 ```
-runnr run <name|file> [-v key=value]... [-u] [-y] [--dry-run] [--json] [-q] [--no-history]
+runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--no-review] [-u] [-y] [--dry-run] [--json] [-q] [--no-history]
 ```
 
 | Mode | Behaviour |
 |---|---|
-| **Interactive** (default on a TTY) | Prompts for missing inputs, manual steps and confirmations. On failure: retry / skip / force / abort. |
+| **Interactive** (default on a TTY) | Asks for missing inputs, shows the plan for review (deselect steps, view any step), then runs. It stops on its own for confirm-gated steps, manual steps and failures (retry / run it myself / skip / force / abort). |
+| **Step by step** (`--step`) | Interactive, but pauses before *every* step: run / run it myself / skip / continue without pausing / abort. |
 | **Unattended** (`-u`, or stdin isn't a TTY) | Never prompts. Inputs from `-v` or defaults. Confirm-gated steps fail unless `-y`. Manual steps follow their `unattended` policy. Any failure aborts. |
 
 `--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted.
 
 At any step prompt you can also:
 
+- **`v`**: view the step as it will run: commands with current values filled
+  in, expected outcome, directory, what it publishes.
+- **`e`**: show the run's state: every variable so far, secrets as `****`.
 - **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
 - **`!`**: open your `$SHELL` with the run's environment (inputs, values
   published so far, `env:`), in the step's `dir`. Investigate, fix things,
   `exit` to come back to the same prompt. `echo name=value >> "$RUNNR_OUTPUT"`
   in that shell publishes a value to later steps. Ctrl-C in the shell doesn't
   touch the run.
+- **`m`** (before a step, or after it fails): run it yourself. runnr prints the
+  commands and opens a shell with the run's environment; paste or adapt them,
+  `exit`, then say how it went. Values you publish in that shell are kept.
 - **`f`** (failed steps): force the step to count as success. A reason is
   required; the step is recorded as `forced` with it, and whatever it
   published is kept.
 
 A failed or aborted run can be continued with `runnr resume <run-id>`: same
-inputs (secret inputs are asked again), starting at the step that didn't
-finish. Steps marked `always` (typically environment setup) run again. For
+inputs (secret inputs are asked again) and the same state (secrets excepted),
+starting at the step that didn't finish. Steps marked `always` (typically
+environment setup) run again and re-derive the secrets. For
 multi-day procedures, abort at a "wait" step and resume later.
 
 ## GUI
 
 `runnr serve` serves a local web app: browse/filter runbooks, edit YAML with live
-validation, start runs (interactive or unattended, dry run, from any step),
-watch output stream in, answer manual/confirm/failure prompts in the browser,
-resume failed runs, and browse history.
+validation, review and deselect steps before starting (each step expands to its code and
+expected outcome), run interactively, step by step, or unattended, watch
+output stream in, answer prompts in the browser, see the run's state, add
+notes, resume failed runs, and browse history.
+
+When the server runs on your own machine, steps that need a terminal (`tty`),
+"run it myself", and "open shell" open a **Terminal window** with the run's
+variables loaded, and the run waits for it to finish. On macOS that's
+Terminal.app (`RUNNR_TERMINAL_APP=iTerm` for iTerm); elsewhere
+`x-terminal-emulator`, or set `RUNNR_TERMINAL` to a command that runs a script
+in a new window. On a remote server those steps fall back to manual
+instructions.
 
 It binds to `127.0.0.1` by default and refuses other addresses unless you set
 an API token (`--token` or `RUNNR_TOKEN`), since it can run commands. See
@@ -138,11 +156,14 @@ inputs:
     required: true
 steps:
   - name: Derive environment
-    section: Setup              # groups steps under a heading in CLI and GUI
+    section: Setup              # heading for this and the following steps
     always: true                # runs even with --from / resume
     run: |
-      echo "region=us-east-1" >> "$RUNNR_OUTPUT"   # → {{.region}} and $region later
-      echo "db_pass=$(fetch-pass)" >> "$RUNNR_SECRET"  # same, but masked everywhere
+      region=us-east-1
+      db_pass=$(fetch-pass)
+    outputs: [region]           # these shell variables join the run's state → $region, {{.region}}
+    secret_outputs: [db_pass]   # same, but masked everywhere and never stored
+    expect: Prints nothing; fails if the password can't be fetched.
   - name: Resolve version
     run: git describe --tags
     capture: version            # trimmed stdout → {{.version}} for later steps
@@ -177,9 +198,20 @@ variables are an error. `when` is truthy unless it renders to empty, `false`,
 `0`, `no` or `off`. Steps also get `RUNNR_RUN_ID` and `RUNNR_RUNBOOK` in their
 environment.
 
-`tty` steps run attached to your terminal under `runnr run` and aren't
-recorded. In the GUI or unattended they become manual steps ("run this in a
-terminal"), following their `unattended` policy. Shell aliases aren't loaded in
+**State.** Inputs and everything published (`outputs`, `secret_outputs`,
+`capture`, or `name=value` lines written to `$RUNNR_OUTPUT`/`$RUNNR_SECRET`)
+form the run's state. Every later step gets all of it as environment variables
+and template values, whichever step published it. The state is saved with the
+run after each step (secrets as `****`), shown in history, the GUI and at
+prompts (`e`), and restored on resume.
+
+`expect` describes what success looks like; it's shown when reviewing,
+inspecting, and running a step yourself.
+
+`tty` steps run attached to your terminal under `runnr run`, or in a Terminal
+window from a local GUI; their output isn't recorded. Without a terminal
+(remote GUI, unattended) they become manual steps ("run this in a terminal"),
+following their `unattended` policy. Shell aliases aren't loaded in
 steps, so call real binaries (`terraform`, not `tf`).
 
 Secrets published via `$RUNNR_SECRET` are masked from the moment they're
