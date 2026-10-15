@@ -1,0 +1,13 @@
+name: hello
+description: Minimal example — greets someone and asks a human to wave back.
+tags: [example]
+inputs:
+  - name: who
+    description: Who to greet
+    default: world
+steps:
+  - name: Greet
+    run: echo "Hello, {{.who}}!"
+  - name: Wave back
+    manual: Wave at {{.who}}.
+    unattended: pass

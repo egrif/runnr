@@ -1,0 +1,51 @@
+name: deploy-service
+description: Example deploy with checks, a confirmation gate, retries and a manual verification.
+tags: [example, deploy]
+shell: bash
+inputs:
+  - name: service
+    description: Service to deploy
+    required: true
+    default: web
+  - name: env
+    description: Target environment
+    default: staging
+    choices: [staging, production]
+  - name: version
+    description: Version to deploy
+    default: latest
+  - name: api_token
+    description: Token for the deploy API (masked in logs)
+    secret: true
+env:
+  DEPLOY_ENV: "{{.env}}"
+steps:
+  - name: Preflight checks
+    run: |
+      echo "Checking $DEPLOY_ENV is healthy…"
+      sleep 1
+      echo "ok"
+  - name: Resolve version
+    run: |
+      if [ "{{.version}}" = latest ]; then echo "v1.4.2"; else echo "{{.version}}"; fi
+    capture: resolved
+  - name: "Announce in #deploys"
+    manual: |
+      Post "Deploying {{.service}} {{.resolved}} to {{.env}}" in #deploys.
+    when: '{{eq .env "production"}}'
+    unattended: skip
+  - name: Deploy
+    run: |
+      echo "Deploying {{.service}} {{.resolved}} to {{.env}}"
+      for i in 1 2 3; do echo "rolling out batch $i/3"; sleep 1; done
+    confirm: true
+    timeout: 5m
+  - name: Smoke test
+    run: |
+      echo "GET /healthz"
+      curl -fsS --max-time 2 https://example.com >/dev/null && echo "200 OK"
+    retries: 2
+    continue_on_error: true
+  - name: Verify dashboards
+    manual: Check the {{.service}} dashboard for {{.env}} — error rate and latency normal?
+    unattended: pass
