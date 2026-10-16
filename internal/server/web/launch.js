@@ -182,7 +182,7 @@ function renderLaunchSteps(st) {
   $("#launch-steps").innerHTML = rb.steps.map((s, i) => {
     const r = prev?.steps[i];
     const view = preview?.[i] || s;
-    return `${sectionHeading(rb.steps, i)}
+    return `${sectionHeading(rb.steps, i, rb.sections)}
       <li class="step ${st.include[i] ? "" : "dim"}">
         <div class="step-head" data-open="${i}">
           <input type="checkbox" data-inc="${i}" ${st.include[i] ? "checked" : ""} title="Include this step">

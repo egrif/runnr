@@ -56,6 +56,7 @@ func (x *executor) View(i int) StepView {
 	}
 	v.Command = x.mask(b.String())
 	v.Expect = x.mask(x.lenient(s.Expect))
+	v.Description = x.mask(x.lenient(s.Description))
 	v.Dir = x.lenient(s.Dir)
 	return v
 }

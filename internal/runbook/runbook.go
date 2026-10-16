@@ -21,12 +21,17 @@ const (
 )
 
 type Runbook struct {
-	Name        string            `yaml:"name" json:"name"`
-	Description string            `yaml:"description,omitempty" json:"description,omitempty"`
-	Tags        []string          `yaml:"tags,omitempty" json:"tags,omitempty"`
-	Inputs      []Input           `yaml:"inputs,omitempty" json:"inputs,omitempty"`
-	Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	Shell       string            `yaml:"shell,omitempty" json:"shell,omitempty"`
+	Name string `yaml:"name" json:"name"`
+	// Description says what the runbook is for and what it does.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Expect is where things stand once the runbook has run.
+	Expect string   `yaml:"expect,omitempty" json:"expect,omitempty"`
+	Tags   []string `yaml:"tags,omitempty" json:"tags,omitempty"`
+	// Sections describe the groups of steps (named by the steps' section).
+	Sections []Section         `yaml:"sections,omitempty" json:"sections,omitempty"`
+	Inputs   []Input           `yaml:"inputs,omitempty" json:"inputs,omitempty"`
+	Env      map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Shell    string            `yaml:"shell,omitempty" json:"shell,omitempty"`
 	// Profile lists files sourced before every step (e.g. ~/.zshrc), so
 	// aliases, functions and settings from your shell config work in steps.
 	Profile []string `yaml:"profile,omitempty" json:"profile,omitempty"`
@@ -40,6 +45,14 @@ type Runbook struct {
 	// library's of the same name).
 	Functions map[string]Function `yaml:"functions,omitempty" json:"functions,omitempty"`
 	Steps     []Step              `yaml:"steps" json:"steps"`
+}
+
+// Section describes a group of steps: what it does and how things should
+// stand at its end.
+type Section struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Expect      string `yaml:"expect,omitempty" json:"expect,omitempty"`
 }
 
 type Input struct {
@@ -72,8 +85,10 @@ type Step struct {
 	Capture         string            `yaml:"capture,omitempty" json:"capture,omitempty"`
 	ContinueOnError bool              `yaml:"continue_on_error,omitempty" json:"continue_on_error,omitempty"`
 	Unattended      string            `yaml:"unattended,omitempty" json:"unattended,omitempty"`
-	// Expect describes what success looks like (shown when reviewing,
-	// inspecting, or running a step by hand). Template.
+	// Description says what this step is doing and why. Template.
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Expect is how things should stand when the step is done (shown when
+	// reviewing, at prompts, beside shells). Template.
 	Expect string `yaml:"expect,omitempty" json:"expect,omitempty"`
 	// Outputs and SecretOutputs name shell variables to capture into the
 	// run's state when the step ends, for later steps to use.
@@ -243,6 +258,22 @@ func (rb *Runbook) Validate() error {
 		}
 	}
 	errs = append(errs, validateFunctions("", rb.Functions)...)
+	used := map[string]bool{}
+	for _, st := range rb.Steps {
+		used[st.Section] = true
+	}
+	seenSec := map[string]bool{}
+	for i, sec := range rb.Sections {
+		switch {
+		case sec.Name == "":
+			add("sections[%d]: name is required", i)
+		case !used[sec.Name]:
+			add("sections[%d]: no step is in section %q", i, sec.Name)
+		case seenSec[sec.Name]:
+			add("sections[%d]: %q is described twice", i, sec.Name)
+		}
+		seenSec[sec.Name] = true
+	}
 	for i, l := range rb.Libraries {
 		if !slugRe.MatchString(l) {
 			add("libraries[%d]: %q isn't a library name", i, l)
@@ -339,7 +370,7 @@ func validateStep(where string, s Step, nested bool) []error {
 			add("output %q must be a valid identifier", o)
 		}
 	}
-	for field, text := range map[string]string{"run": s.Run, "manual": s.Manual, "when": s.When, "dir": s.Dir, "expect": s.Expect} {
+	for field, text := range map[string]string{"run": s.Run, "manual": s.Manual, "when": s.When, "dir": s.Dir, "expect": s.Expect, "description": s.Description} {
 		if err := validTemplate(text); err != nil {
 			add("%s template: %v", field, err)
 		}

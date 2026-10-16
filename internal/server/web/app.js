@@ -72,10 +72,13 @@ function renderNotes(notes) {
   return (notes || []).map((n) => `<div class="note">✎ <span class="muted">${new Date(n.time).toLocaleString()} · ${esc(n.author || "")}</span> ${esc(n.text)}</div>`).join("");
 }
 
-// sectionHeading returns a heading when step i starts a new section.
-function sectionHeading(steps, i) {
+// sectionHeading returns a heading when step i starts a new section, with
+// the section's description and outcome if the runbook gives them.
+function sectionHeading(steps, i, sections) {
   const s = steps[i].section;
-  return s && (i === 0 || steps[i - 1].section !== s) ? `<li class="section">${esc(s)}</li>` : "";
+  if (!s || (i > 0 && steps[i - 1].section === s)) return "";
+  const info = (sections || []).find((x) => x.name === s);
+  return `<li class="section">${esc(s)}${info?.description ? `<div class="section-desc">${esc(info.description)}</div>` : ""}${info?.expect ? `<div class="section-desc"><b>By the end:</b> ${esc(info.expect)}</div>` : ""}</li>`;
 }
 
 function toast(msg) {
@@ -96,21 +99,34 @@ function duration(a, b) {
 // ---------- sidebar ----------
 
 async function loadRunbooks() {
-  runbooks = await api("GET", "/api/runbooks");
+  [runbooks] = await Promise.all([api("GET", "/api/runbooks"), loadCollections()]);
   renderSidebar();
 }
 
+// renderSidebar lists runbooks grouped by collection (others at the end).
 function renderSidebar() {
   const q = $("#filter").value.toLowerCase();
-  const current = decodeURIComponent((location.hash.match(/^#\/runbooks\/([^/]+)/) || [])[1] || "");
-  $("#runbook-list").innerHTML = runbooks
-    .filter((r) => !q || r.name.includes(q) || (r.description || "").toLowerCase().includes(q) || (r.tags || []).some((t) => t.includes(q)))
-    .map((r) => `<li><a href="#/runbooks/${encodeURIComponent(r.name)}" class="${r.name === current ? "active" : ""} ${r.error ? "invalid" : ""}">
-        ${esc(r.name)}<span class="desc">${esc(r.error ? "invalid runbook" : r.description || `${r.steps} steps`)}</span></a></li>`)
-    .join("") || `<li class="muted">No runbooks</li>`;
+  const current = decodeURIComponent((location.hash.match(/^#\/runbooks\/([^/?]+)/) || [])[1] || "");
+  const matches = (r) => !q || r.name.includes(q) || (r.description || "").toLowerCase().includes(q) || (r.tags || []).some((t) => t.includes(q));
+  const item = (r) => `<li><a href="#/runbooks/${encodeURIComponent(r.name)}" class="${r.name === current ? "active" : ""} ${r.error ? "invalid" : ""}">
+      ${esc(r.name)}<span class="desc">${esc(r.error ? "invalid runbook" : (r.description || "").split("\n")[0] || `${r.steps} steps`)}</span></a></li>`;
+  const byName = new Map(runbooks.map((r) => [r.name, r]));
+  const grouped = new Set();
+  let html = "";
+  for (const c of collections) {
+    const members = (c.collection?.runbooks || []).map((n) => byName.get(n)).filter(Boolean);
+    members.forEach((r) => grouped.add(r.name));
+    const shown = members.filter(matches);
+    if (!shown.length && q) continue;
+    html += `<li class="col-head"><a href="#/collections/${enc(c.name)}" title="${esc(c.collection?.description || "")}">${esc(c.name)}</a></li>${shown.map(item).join("")}`;
+  }
+  const rest = runbooks.filter((r) => !grouped.has(r.name) && matches(r));
+  if (rest.length) html += (collections.length ? `<li class="col-head muted">Other runbooks</li>` : "") + rest.map(item).join("");
+  $("#runbook-list").innerHTML = html || `<li class="muted">No runbooks</li>`;
   $("#history-link").classList.toggle("active", location.hash.startsWith("#/history"));
   $("#help-link").classList.toggle("active", location.hash === "#/help");
   $("#libs-link").classList.toggle("active", location.hash.startsWith("#/libraries"));
+  $("#cols-link").classList.toggle("active", location.hash.startsWith("#/collections"));
 }
 
 $("#filter").addEventListener("input", renderSidebar);
@@ -132,6 +148,8 @@ async function route() {
     if (h.startsWith("#/history")) return await viewHistory();
     if (h === "#/help") return viewHelp();
     if (h === "#/libraries") return await viewLibraries();
+    if (h === "#/collections") return await viewCollections();
+    if ((m = h.match(/^#\/collections\/([^/]+)$/))) return await viewCollection(decodeURIComponent(m[1]));
     if ((m = h.match(/^#\/libraries\/([^/]+)$/))) return await viewLibrary(decodeURIComponent(m[1]));
     return viewHome();
   } catch (e) {
@@ -155,7 +173,9 @@ async function viewRunbook(name, tab, query) {
   main.innerHTML = `
     <div class="row"><div>
       <h1>${esc(name)}</h1>
-      <div class="muted">${esc(rb?.description || "")}</div>
+      ${rb?.description ? `<div class="rb-desc">${esc(rb.description)}</div>` : ""}
+      ${rb?.expect ? `<div class="rb-desc muted"><b>By the end:</b> ${esc(rb.expect)}</div>` : ""}
+      ${collections.filter((c) => c.collection?.runbooks.includes(name)).map((c) => `<span class="tag">in <a href="#/collections/${enc(c.name)}">${esc(c.name)}</a></span>`).join("")}
       <div>${(rb?.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>
     </div></div>
     <nav class="tabs">
@@ -173,10 +193,11 @@ async function viewRunbook(name, tab, query) {
 function stepDetails(s) {
   const outs = [...(s.outputs || []), ...(s.secret_outputs || []).map((o) => `${o} (secret)`)];
   return `
+    ${s.description ? `<div class="doing">${esc(s.description)}</div>` : ""}
     ${s.dir ? `<div class="muted">dir: <code>${esc(s.dir)}</code></div>` : ""}
     ${s.when ? `<div class="muted">only when: <code>${esc(s.when)}</code></div>` : ""}
     <pre class="cmd">${esc(s.run || s.manual || s.command)}</pre>
-    ${s.expect ? `<div class="expect"><b>Expect:</b> ${esc(s.expect)}</div>` : ""}
+    ${s.expect ? `<div class="expect"><b>By the end:</b> ${esc(s.expect)}</div>` : ""}
     ${outs.length ? `<div class="muted">publishes: ${outs.map((o) => `<code>${esc(o)}</code>`).join(" ")}</div>` : ""}`;
 }
 
@@ -200,7 +221,7 @@ async function viewRun(id) {
   // Earlier runs (for History) and the runbook's configuration (for Details).
   state.history = [];
   api("GET", `/api/runs?runbook=${enc(run.runbook)}&limit=30`).then((rs) => { state.history = rs.filter((r) => r.id !== run.id); renderRun(state); }).catch(() => {});
-  api("GET", `/api/runbooks/${enc(run.runbook)}`).then((d) => { state.cfg = d.runbook?.steps; renderRun(state); }).catch(() => {});
+  api("GET", `/api/runbooks/${enc(run.runbook)}`).then((d) => { state.cfg = d.runbook?.steps; state.rbSections = d.runbook?.sections; renderRun(state); }).catch(() => {});
   let pt;
   state.onState = () => { clearTimeout(pt); pt = setTimeout(loadPreview, 300); };
   // Past runs: show stored output; expand failures.
@@ -314,7 +335,7 @@ function renderRun(state) {
     ${live && state.controls && run.mode === "interactive" ? `<p><label><input type="checkbox" id="step-all" ${state.controls.step_mode ? "checked" : ""}> Step through the remaining steps</label>
       <span class="muted small"> · upcoming steps can be skipped or paused below</span></p>` : ""}
     ${state.question?.step === -1 ? renderQuestion(state.question, run.id) : ""}
-    <ol class="steps">${state.steps.map((s, i) => `${sectionHeading(state.steps, i)}
+    <ol class="steps">${state.steps.map((s, i) => `${sectionHeading(state.steps, i, state.rbSections)}
       <li class="step ${state.question?.step === i ? "focus" : ""} ${s.note === "before start step" ? "dim" : ""}">
         <div class="step-head" data-toggle="${i}">
           <span class="icon s-${s.status}">${ICONS[s.status] || ""}</span>

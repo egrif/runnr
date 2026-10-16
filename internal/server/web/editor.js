@@ -4,7 +4,9 @@
 // them (POST /api/parse, /api/format), so both views follow the same rules.
 
 function renderEditor(el, raw, name, initialError, version, updatedAt) {
-  const ed = { mode: "yaml", doc: null, open: new Set(), hasComments: /^\s*#/m.test(raw) };
+  const ed = { mode: "yaml", doc: null, open: new Set(), hasComments: /^\s*#/m.test(raw), name,
+    test: { vars: {}, extra: {}, setup: true }, secretVars: {} };
+  if (name) api("GET", `/api/runbooks/${enc(name)}/test-values`).then((tv) => { ed.test = tv; if (ed.mode === "struct") renderStruct(ed); }).catch(() => {});
   el.innerHTML = `
     <div class="row editor-bar">
       <button class="primary" id="save">Save</button>
@@ -224,71 +226,195 @@ function stepLeft(s, i) {
   return seg + body;
 }
 
-// stepRight holds the step's settings, grouped: common things first, related
-// things together, rarely used groups folded away.
-function stepRight(d, s, i) {
+// Optional step fields, offered under "More fields". [key, label, kind, help, applies(step kind), group]
+const MORE_FIELDS = [
+  ["always", "Always run", "bool", H.step.always, () => true, "Behaviour"],
+  ["continue_on_error", "Keep going if it fails", "bool", H.step.continue_on_error, () => true, "Behaviour"],
+  ["tty", "Needs a terminal", "bool", H.step.tty, (k) => k === "run", "Behaviour"],
+  ["background", "Run in background", "bool", H.step.background, (k) => k === "run", "Behaviour"],
+  ["when", "Only when", "text", H.step.when, () => true, "Conditions & timing"],
+  ["timeout", "Timeout", "text", H.step.timeout, (k) => k !== "manual", "Conditions & timing"],
+  ["retries", "Retries", "int", H.step.retries, (k) => k === "run", "Conditions & timing"],
+  ["retry_delay", "Retry delay", "text", H.step.retry_delay, (k) => k === "run", "Conditions & timing"],
+  ["repeat", "Repeat until all pass", "repeat", H.step.repeat_every, (k) => k === "checks", "Conditions & timing"],
+  ["dir", "Directory", "text", H.step.dir, (k) => k !== "manual", "Where it runs"],
+  ["shell", "Shell", "text", H.step.step_shell, (k) => k !== "manual", "Where it runs"],
+  ["env", "Environment", "kv", H.step.step_env, (k) => k !== "manual", "Where it runs"],
+  ["outputs", "Publishes", "list", H.step.outputs, (k) => k === "run" || k === "alternatives", "Publishes to later steps"],
+  ["secret_outputs", "Publishes (secret)", "list", H.step.secret_outputs, (k) => k === "run" || k === "alternatives", "Publishes to later steps"],
+  ["capture", "Capture stdout as", "text", H.step.capture, (k) => k === "run", "Publishes to later steps"],
+  ["id", "ID", "text", H.step.id, () => true, "Other"],
+  ["unattended", "When unattended", "select", H.step.unattended, () => true, "Other"],
+];
+
+const isSet = (v) => v !== undefined && v !== "" && v !== false && !(Array.isArray(v) && !v.length) && !(v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
+
+// detailsPane: the common fields, any others that are set or were added,
+// and a menu to add the rest.
+function detailsPane(ed, d, s, i) {
   const kind = kindOf(s);
   const P = `steps.${i}`;
-  const isRun = kind === "run";
+  const shown = ed.more.get(i) || new Set();
   const later = d.steps.slice(i + 1).map((o, k) => [o.id || o.name, `${i + k + 2}. ${o.name}`]);
-  const flags = [
+  const rows = [
+    row("Name", H.step.name, control(`${P}.name`, "text", s.name)),
+    row("What we're doing", H.step.description, control(`${P}.description`, "area", s.description, { placeholder: "what this step does, and why" })),
+    row("By the end", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "how things should stand when it's done" })),
+    row("Section", H.step.section, control(`${P}.section`, "text", s.section)),
+    row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner)),
     row("Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)),
-    row("Always run", H.step.always, control(`${P}.always`, "bool", s.always)),
-    row("Keep going if it fails", H.step.continue_on_error, control(`${P}.continue_on_error`, "bool", s.continue_on_error)),
-    isRun && row("Needs a terminal", H.step.tty, control(`${P}.tty`, "bool", s.tty)),
-    isRun && row("Run in background", H.step.background, control(`${P}.background`, "bool", s.background)),
-    isRun && s.background && row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })),
   ];
-  return [
-    group("Step", [
-      row("Name", H.step.name, control(`${P}.name`, "text", s.name)),
-      row("Section", H.step.section, control(`${P}.section`, "text", s.section)),
-      row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner)),
-      row("Expected", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "what success looks like" })),
-    ]),
-    group("Behaviour", flags),
-    kind === "checks" && group("Repeat until all pass", [
-      row("Every", H.step.repeat_every, control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "e.g. 20s (blank: don't repeat)" })),
-      row("Give up after", H.step.repeat_timeout, control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "e.g. 10m" })),
-    ]),
-    group("Conditions & timing", [
-      row("Only when", H.step.when, control(`${P}.when`, "text", s.when, { placeholder: '{{eq .env "production"}}' })),
-      kind !== "manual" && row("Timeout", H.step.timeout, control(`${P}.timeout`, "text", s.timeout, { placeholder: "e.g. 10m" })),
-      isRun && row("Retries", H.step.retries, control(`${P}.retries`, "int", s.retries)),
-      isRun && row("Retry delay", H.step.retry_delay, control(`${P}.retry_delay`, "text", s.retry_delay, { placeholder: "e.g. 10s" })),
-    ], { collapsible: true, id: "timing", open: hasAny(s, ["when", "timeout", "retries", "retry_delay"]) }),
-    kind !== "manual" && group("Where it runs", [
-      row("Directory", H.step.dir, control(`${P}.dir`, "text", s.dir)),
-      row("Shell", H.step.step_shell, control(`${P}.shell`, "text", s.shell, { placeholder: d.shell || "sh" })),
-      row("Environment", H.step.step_env, control(`${P}.env`, "kv", s.env, { placeholder: "KEY=value" })),
-    ], { collapsible: true, id: "where", open: hasAny(s, ["dir", "shell", "env"]) }),
-    (isRun || kind === "alternatives") && !s.background && group("Publishes to later steps", [
-      row("Values", H.step.outputs, control(`${P}.outputs`, "list", s.outputs, { placeholder: "var1, var2" })),
-      row("Secret values", H.step.secret_outputs, control(`${P}.secret_outputs`, "list", s.secret_outputs)),
-      isRun && row("Capture stdout as", H.step.capture, control(`${P}.capture`, "text", s.capture)),
-    ], { collapsible: true, id: "outputs", open: hasAny(s, ["outputs", "secret_outputs", "capture"]) }),
-    group("Advanced", [
-      row("ID", H.step.id, control(`${P}.id`, "text", s.id)),
-      row("When unattended", H.step.unattended, control(`${P}.unattended`, "select", s.unattended, { choices: [["", "fail (default)"], ["fail", "fail"], ["skip", "skip"], ["pass", "pass"]] })),
-    ], { collapsible: true, id: "advanced", open: hasAny(s, ["id", "unattended"]) }),
-  ].filter(Boolean).join("");
+  const extra = MORE_FIELDS.filter(([k, , , , applies]) => applies(kind) && (isSet(s[k]) || shown.has(k)));
+  for (const [k, label, fkind, help] of extra) {
+    const remove = `<button class="icon-btn small-x" data-act="less" data-i="${i}" data-field="${k}" title="Remove this setting">✕</button>`;
+    let ctl;
+    if (fkind === "repeat") {
+      ctl = `<div class="row tight">${control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "every, e.g. 20s" })}${control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "give up after, e.g. 10m" })}</div>`;
+    } else if (fkind === "select") {
+      ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "fail (default)"], ["skip", "skip"], ["pass", "pass"]] });
+    } else {
+      ctl = control(`${P}.${k}`, fkind, s[k]);
+    }
+    rows.push(`<label class="frow"><span class="flabel">${esc(label)}${helpIcon(help)}</span><span class="with-x">${ctl}${remove}</span></label>`);
+    if (k === "background" && s.background) {
+      rows.push(row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })));
+    }
+  }
+  const available = MORE_FIELDS.filter(([k, , , , applies]) => applies(kind) && !extra.some(([e]) => e === k));
+  const groups = [...new Set(available.map((f) => f[5]))];
+  const menu = available.length ? `<select class="more-fields" data-more="${i}">
+      <option value="">+ More fields…</option>
+      ${groups.map((g) => `<optgroup label="${esc(g)}">${available.filter((f) => f[5] === g).map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join("")}</optgroup>`).join("")}
+    </select>` : "";
+  return `<div class="fgroup-rows">${rows.join("")}</div>${menu}`;
+}
+
+// The Run this pane: runs just this step (with the edits as they are now),
+// optionally after the setup steps, with the runbook's test values.
+function runPane(ed, i) {
+  const r = ed.runs.get(i);
+  if (!r) return "";
+  const lines = r.lines.map((l) => `<span class="${esc(l.stream)}">${esc(l.text)}</span>`).join("\n");
+  return `<div class="run-pane">
+    <div class="row run-pane-head"><b>Run this</b>
+      <span class="badge s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span>
+      <span class="spacer"></span>
+      ${r.status === "running" ? `<button class="link danger" data-act="stop-run" data-i="${i}">Stop</button>` : `<button class="link" data-act="run-this" data-i="${i}">Run again</button>`}
+      <button class="link" data-act="close-run" data-i="${i}">Close</button></div>
+    ${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}
+    ${r.question ? renderQuestion(r.question, r.id) : ""}
+    <pre class="log run-log">${lines || '<span class="info">starting…</span>'}</pre>
+  </div>`;
+}
+
+async function runThis(ed, i) {
+  const old = ed.runs.get(i);
+  old?.es?.close();
+  const y = await api("POST", "/api/format", cleanDoc(ed.doc));
+  const r = { id: null, lines: [], status: "running", question: null, error: y.ok ? "" : y.error };
+  ed.runs.set(i, r);
+  if (!y.ok) { r.status = "failed"; return renderStruct(ed); }
+  try {
+    // Inputs without a test value use their default (blank secrets are asked for).
+    const vars = {};
+    for (const inp of ed.doc.inputs || []) {
+      const v = (inp.secret ? ed.secretVars : ed.test.vars)[inp.name];
+      if (v || !inp.secret) vars[inp.name] = v || "";
+    }
+    const res = await api("POST", "/api/test-run", {
+      raw: y.raw, step: i + 1, vars, extra: ed.test.extra, setup: ed.test.setup,
+    });
+    r.id = res.id;
+  } catch (e) { r.status = "failed"; r.error = e.message; return renderStruct(ed); }
+  renderStruct(ed);
+  r.es = new EventSource(`/api/runs/${enc(r.id)}/events`);
+  r.es.onmessage = (msg) => {
+    const e = JSON.parse(msg.data);
+    if (e.kind.startsWith("term")) { termEvent(r.id, e); return; }
+    const name = ed.doc.steps[e.step]?.name;
+    const tag = e.step >= 0 && e.step !== i ? `[setup: ${name}] ` : "";
+    switch (e.kind) {
+      case "output": r.lines.push({ stream: e.stream, text: tag + e.text }); break;
+      case "step_started": if (e.step !== i) r.lines.push({ stream: "info", text: `── setup: ${name}` }); break;
+      case "step_finished":
+        if (e.result.status !== "skipped" || e.step === i) r.lines.push({ stream: "info", text: `${tag}${ICONS[e.result.status] || ""} ${e.result.status}${e.result.note ? " — " + e.result.note : ""}${e.result.error ? " — " + e.result.error : ""}` });
+        break;
+      case "question": r.question = e.question; break;
+      case "answered": if (r.question?.id === e.answered) r.question = null; break;
+      case "run_finished":
+        r.status = e.run.status;
+        if (e.run.error) r.error = e.run.error;
+        r.question = null;
+        r.es.close();
+        break;
+    }
+    updateRunPane(ed, i);
+  };
+}
+
+// updateRunPane redraws just the run pane, so typing elsewhere isn't disturbed.
+function updateRunPane(ed, i) {
+  const el = $(`#struct-pane .run-slot[data-i="${i}"]`);
+  if (!el) return;
+  el.innerHTML = runPane(ed, i);
+  const log = el.querySelector(".run-log");
+  if (log) log.scrollTop = log.scrollHeight;
+  const q = el.querySelector(".question");
+  if (q) bindQuestion(q, ed.runs.get(i).question, ed.runs.get(i).id);
+}
+
+// testValuesCard: inputs and extra variables used by Run this.
+function testValuesCard(ed, d) {
+  const t = ed.test;
+  return `<details class="card test-values" ${ed.testOpen ? "open" : ""}><summary><b>Test values</b> <span class="muted small">used by “Run this”${ed.name ? "" : " (save the runbook to keep them)"}</span>${helpIcon("Inputs and extra variables for trying steps out while editing. Saved with this runbook, except secret inputs, which are kept only in this browser tab.")}</summary>
+    <div class="fgroup-rows">
+      ${(d.inputs || []).filter((x) => x.name).map((x) => row(x.name + (x.secret ? " (secret)" : ""), x.description || "",
+        `<input data-test-var="${esc(x.name)}" ${x.secret ? 'type="password"' : ""} value="${esc((x.secret ? ed.secretVars : t.vars)[x.name] ?? "")}" placeholder="${esc(x.default || "")}">`)).join("")}
+      ${row("Extra variables", "Variables an earlier step would normally publish (KEY=value per line), so a step can run on its own.",
+        `<textarea data-test-extra rows="3" spellcheck="false" placeholder="region=use1">${esc(Object.entries(t.extra || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`)}
+      ${row("Run setup first", "Run the steps marked “always” before the step, to build its environment.", `<input type="checkbox" data-test-setup ${t.setup ? "checked" : ""}>`)}
+    </div>
+    ${ed.name ? `<button data-act="save-test">Save test values</button>` : ""}
+  </details>`;
+}
+
+function sectionsGroup(d) {
+  const names = [...new Set(d.steps.map((s) => s.section).filter(Boolean))];
+  if (!names.length) return "";
+  const info = (n) => (d.sections || []).find((x) => x.name === n) || {};
+  return group("Sections", names.map((n) => `<div class="sec-edit" style="grid-column: 1 / -1">
+      <div class="flabel">${esc(n)}</div>
+      <div class="fgroup-rows">
+        ${row("What it does", H.section.description, `<textarea rows="2" data-sec="${esc(n)}" data-sec-field="description">${esc(info(n).description || "")}</textarea>`)}
+        ${row("By the end", H.section.expect, `<textarea rows="2" data-sec="${esc(n)}" data-sec-field="expect">${esc(info(n).expect || "")}</textarea>`)}
+      </div></div>`), { collapsible: true, id: "rb-sections", open: (d.sections || []).length > 0 });
 }
 
 function renderStruct(ed) {
   const d = ed.doc;
   d.inputs ||= [];
   d.steps ||= [];
+  ed.more ||= new Map();
+  ed.runs ||= new Map();
+  ed.widths ||= [null, null]; // px once dragged; proportional until then
   const pane = $("#struct-pane");
   pane.innerHTML = `
     <div class="card">
       <h3>Runbook</h3>
       <div class="fgroup-rows">
         ${row("Name", H.runbook.name, control("name", "text", d.name))}
-        ${row("Description", H.runbook.description, control("description", "area", d.description))}
+        ${row("What it's for", H.runbook.description, control("description", "area", d.description, { rows: 3 }))}
+        ${row("By the end", H.runbook.expect, control("expect", "area", d.expect))}
         ${row("Tags", H.runbook.tags, control("tags", "list", d.tags, { placeholder: "ops, deploy" }))}
-        ${row("Shell", H.runbook.shell, control("shell", "text", d.shell, { placeholder: "sh" }))}
         ${row("Libraries", H.runbook.libraries, control("libraries", "list", d.libraries, { placeholder: "aurora-helpers" }))}
       </div>
+      ${sectionsGroup(d)}
+      ${group("Shell, environment & masking", [
+        row("Shell", H.runbook.shell, control("shell", "text", d.shell, { placeholder: "sh" })),
+        row("Environment", H.runbook.env, control("env", "kv", d.env, { placeholder: "KEY=value" })),
+        row("Profile", H.runbook.profile, control("profile", "list", d.profile, { placeholder: "~/.zshrc" })),
+        row("Sensitive patterns", H.runbook.sensitive, control("sensitive", "kv", d.sensitive, { placeholder: "api_key=X-Api-Key: {{SENSITIVE}}" })),
+      ], { collapsible: true, id: "rb-more", open: hasAny(d, ["env", "profile", "sensitive", "shell"]) })}
       ${group("Functions", [
         `<div class="fn-list" style="grid-column: 1 / -1">${Object.entries(d.functions || {}).map(([n, f]) => `
           <div class="sub-card">
@@ -298,11 +424,6 @@ function renderStruct(ed) {
             ${control(`functions.${n}.body`, "code", f.body, { rows: 3 })}
           </div>`).join("")}<button data-act="add-fn">+ Add function</button></div>`,
       ], { collapsible: true, id: "rb-fns", open: Object.keys(d.functions || {}).length > 0 })}
-      ${group("Environment, profile & masking", [
-        row("Environment", H.runbook.env, control("env", "kv", d.env, { placeholder: "KEY=value" })),
-        row("Profile", H.runbook.profile, control("profile", "list", d.profile, { placeholder: "~/.zshrc" })),
-        row("Sensitive patterns", H.runbook.sensitive, control("sensitive", "kv", d.sensitive, { placeholder: "api_key=X-Api-Key: {{SENSITIVE}}" })),
-      ], { collapsible: true, id: "rb-more", open: hasAny(d, ["env", "profile", "sensitive"]) })}
     </div>
     <div class="card">
       <h3>Inputs${helpIcon(H.runbook.inputs)}</h3>
@@ -320,30 +441,85 @@ function renderStruct(ed) {
       </tbody></table>
       <button data-act="add-input">+ Add input</button>
     </div>
+    ${testValuesCard(ed, d)}
     <h3>Steps${helpIcon(H.runbook.steps)}</h3>
-    <ol class="steps struct-steps">${d.steps.map((s, i) => `${sectionHeading(d.steps, i)}<li class="step">
+    <ol class="steps struct-steps">${d.steps.map((s, i) => `${sectionHeading(d.steps, i, d.sections)}<li class="step">
         <div class="step-head" data-act="open" data-i="${i}">
           <span class="n">${i + 1}</span><span class="name">${esc(s.name || "(unnamed)")} ${stepBadges(s)}</span>
           <span class="spacer"></span>
+          <button class="icon-btn" data-act="run-this" data-i="${i}" title="Run just this step with the test values">▶ Run this</button>
           <button class="icon-btn" data-act="up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
           <button class="icon-btn" data-act="down" data-i="${i}" title="Move down" ${i === d.steps.length - 1 ? "disabled" : ""}>↓</button>
           <button class="icon-btn" data-act="dup" data-i="${i}" title="Duplicate">⧉</button>
           <button class="icon-btn danger" data-act="del" data-i="${i}" title="Delete">✕</button>
         </div>
         ${ed.open.has(i) ? `<div class="step-body step-edit">
-          <div class="se-left" style="${ed.leftWidth ? `width:${ed.leftWidth}px` : ""}">${stepLeft(s, i)}</div>
-          <div class="se-right">${stepRight(d, s, i)}</div>
+          <div class="se-details" style="width:${ed.widths[0] ? ed.widths[0] + "px" : ed.runs.has(i) ? "30%" : "38%"}">${detailsPane(ed, d, s, i)}</div>
+          <div class="split" data-split="0" title="Drag to resize"></div>
+          <div class="se-command">${stepLeft(s, i)}</div>
+          ${ed.runs.has(i) ? `<div class="split" data-split="1" title="Drag to resize"></div>
+            <div class="se-run run-slot" data-i="${i}" style="width:${ed.widths[1] ? ed.widths[1] + "px" : "34%"}">${runPane(ed, i)}</div>` : ""}
         </div>` : ""}
       </li>`).join("")}</ol>
     <button data-act="add-step">+ Add step</button>`;
 
-  // Remember the command pane's width when it's resized.
-  pane.querySelectorAll(".se-left").forEach((el) => new ResizeObserver(() => {
-    if (el.offsetWidth) ed.leftWidth = el.offsetWidth;
-  }).observe(el));
+  pane.querySelectorAll(".run-slot").forEach((el) => {
+    const log = el.querySelector(".run-log");
+    if (log) log.scrollTop = log.scrollHeight;
+    const q = el.querySelector(".question");
+    const r = ed.runs.get(+el.dataset.i);
+    if (q && r?.question) bindQuestion(q, r.question, r.id);
+  });
+  const tv = pane.querySelector("details.test-values");
+  if (tv) tv.ontoggle = () => (ed.testOpen = tv.open);
+
+  // Draggable dividers: the first sizes the details, the second the run pane.
+  pane.querySelectorAll("[data-split]").forEach((h) => (h.onmousedown = (e) => {
+    e.preventDefault();
+    const which = +h.dataset.split;
+    const target = which === 0 ? h.previousElementSibling : h.nextElementSibling;
+    const start = e.clientX, w0 = target.offsetWidth;
+    const move = (ev) => {
+      const w = Math.max(200, Math.min(h.parentElement.offsetWidth * 0.6, w0 + (which === 0 ? ev.clientX - start : start - ev.clientX)));
+      target.style.width = w + "px";
+      ed.widths[which] = w;
+    };
+    const up = () => { removeEventListener("mousemove", move); removeEventListener("mouseup", up); document.body.classList.remove("dragging"); };
+    addEventListener("mousemove", move);
+    addEventListener("mouseup", up);
+    document.body.classList.add("dragging");
+  }));
 
   pane.oninput = pane.onchange = (e) => {
-    const rn = e.target.closest("[data-fn-rename]");
+    const t = e.target;
+    if (t.matches("[data-test-var]")) {
+      const n = t.dataset.testVar;
+      const secret = (d.inputs.find((x) => x.name === n) || {}).secret;
+      (secret ? ed.secretVars : ed.test.vars)[n] = t.value;
+      return;
+    }
+    if (t.matches("[data-test-extra]")) {
+      ed.test.extra = {};
+      t.value.split("\n").forEach((l) => { const at = l.indexOf("="); if (at > 0) ed.test.extra[l.slice(0, at).trim()] = l.slice(at + 1); });
+      return;
+    }
+    if (t.matches("[data-test-setup]")) { ed.test.setup = t.checked; return; }
+    if (t.matches("[data-sec]")) {
+      d.sections ||= [];
+      let sec = d.sections.find((x) => x.name === t.dataset.sec);
+      if (!sec) d.sections.push((sec = { name: t.dataset.sec }));
+      sec[t.dataset.secField] = t.value || undefined;
+      d.sections = d.sections.filter((x) => x.description || x.expect);
+      return;
+    }
+    if (t.matches("[data-more]") && e.type === "change") {
+      if (!t.value) return;
+      const i = +t.dataset.more;
+      if (!ed.more.has(i)) ed.more.set(i, new Set());
+      ed.more.get(i).add(t.value);
+      return renderStruct(ed);
+    }
+    const rn = t.closest("[data-fn-rename]");
     if (rn) {
       if (e.type !== "change") return;
       const old = rn.dataset.fnRename, nw = rn.value.trim();
@@ -352,7 +528,7 @@ function renderStruct(ed) {
       }
       return renderStruct(ed);
     }
-    const k = e.target.closest("[data-act-change]");
+    const k = t.closest("[data-act-change]");
     if (k && e.type === "change") {
       const sub = d.steps[+k.dataset.i].alternatives[+k.dataset.j].steps[+k.dataset.k];
       const text = sub.run ?? sub.manual ?? "";
@@ -360,20 +536,27 @@ function renderStruct(ed) {
       sub[k.value] = text;
       return renderStruct(ed);
     }
-    const el = e.target.closest("[data-path]");
+    const el = t.closest("[data-path]");
     if (!el) return;
     setPath(d, el.dataset.path, readField(el));
     // Structure-changing fields redraw the form.
-    if (e.type === "change" && /\.(name|background)$/.test(el.dataset.path)) renderStruct(ed);
+    if (e.type === "change" && /\.(name|background|section)$/.test(el.dataset.path)) renderStruct(ed);
   };
   pane.onclick = (e) => {
     const b = e.target.closest("[data-act]");
-    if (!b || b.tagName === "SELECT") return;
+    if (!b || b.tagName === "SELECT" || e.target.closest(".question")) return;
     e.preventDefault();
+    e.stopPropagation();
     const i = +b.dataset.i, j = +b.dataset.j, k = +b.dataset.k;
     const s = d.steps[i];
     const swap = (a, c) => {
       [d.steps[a], d.steps[c]] = [d.steps[c], d.steps[a]];
+      for (const m of [ed.more, ed.runs]) {
+        const va = m.get(a), vc = m.get(c);
+        m.delete(a); m.delete(c);
+        if (va) m.set(c, va);
+        if (vc) m.set(a, vc);
+      }
       const oa = ed.open.has(a), oc = ed.open.has(c);
       ed.open.delete(a); ed.open.delete(c);
       if (oa) ed.open.add(c);
@@ -384,7 +567,20 @@ function renderStruct(ed) {
       case "up": swap(i, i - 1); break;
       case "down": swap(i, i + 1); break;
       case "dup": d.steps.splice(i + 1, 0, structuredClone({ ...s, id: undefined, name: `${s.name} (copy)` })); break;
-      case "del": if (!confirm(`Delete step ${i + 1} (${s.name})?`)) return; d.steps.splice(i, 1); ed.open.clear(); break;
+      case "del": if (!confirm(`Delete step ${i + 1} (${s.name})?`)) return; d.steps.splice(i, 1); ed.open.clear(); ed.runs.clear(); ed.more.clear(); break;
+      case "less": {
+        const f = b.dataset.field;
+        delete s[f];
+        if (f === "background") delete s.stop_after;
+        ed.more.get(i)?.delete(f);
+        break;
+      }
+      case "run-this": ed.open.add(i); return runThis(ed, i);
+      case "stop-run": { const r = ed.runs.get(i); if (r?.id) api("POST", `/api/runs/${enc(r.id)}/cancel`).catch(() => {}); return; }
+      case "close-run": ed.runs.get(i)?.es?.close(); ed.runs.delete(i); break;
+      case "save-test":
+        api("PUT", `/api/runbooks/${enc(ed.name)}/test-values`, ed.test).then(() => toast("Test values saved")).catch((err) => toast(err.message));
+        return;
       case "kind": {
         // Carry the text over where it makes sense.
         const text = s.run ?? s.manual ?? s.checks?.[0]?.run ?? s.alternatives?.[0]?.run ?? "";
@@ -413,6 +609,7 @@ function renderStruct(ed) {
         ed.open.add(d.steps.length - 1);
         break;
       case "add-input": d.inputs.push({ name: "" }); break;
+      case "del-input": d.inputs.splice(i, 1); break;
       case "add-fn": {
         d.functions ||= {};
         let n = 1;
@@ -421,7 +618,6 @@ function renderStruct(ed) {
         break;
       }
       case "del-fn": delete d.functions[b.dataset.fn]; break;
-      case "del-input": d.inputs.splice(i, 1); break;
     }
     renderStruct(ed);
   };

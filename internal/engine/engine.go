@@ -205,6 +205,7 @@ type StepView struct {
 	Owner         string   `json:"owner,omitempty"`
 	Kind          string   `json:"kind"`
 	Command       string   `json:"command"`
+	Description   string   `json:"description,omitempty"`
 	Expect        string   `json:"expect,omitempty"`
 	Dir           string   `json:"dir,omitempty"`
 	When          string   `json:"when,omitempty"`

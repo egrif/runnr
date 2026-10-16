@@ -5,7 +5,9 @@
 const FIELD_HELP = {
   runbook: {
     name: "The runbook's identifier: lowercase letters, digits, '.', '_' or '-'. Used in URLs and `runnr run <name>`.",
-    description: "One or two sentences on what the runbook does, shown in lists.",
+    description: "What the runbook is for and what it does. The first line is shown in lists.",
+    expect: "How things should stand once the runbook has run.",
+    sections: "Descriptions for the groups of steps: for each section name used by steps, what it does and how things should stand at its end.",
     tags: "Labels for filtering the runbook list.",
     shell: "Shell that runs every step (sh by default). Use zsh or bash if your commands need their syntax.",
     profile: "Files sourced before every step, e.g. ~/.zshrc, so your aliases and functions work in steps. Adds the time it takes to load them to each step.",
@@ -31,10 +33,11 @@ const FIELD_HELP = {
     checks: "Commands that each pass if they exit 0. Every check runs on each attempt (it doesn't stop at the first failure); the step passes when all pass.",
     alternatives: "Ways to do this step. The operator picks one when the step runs; unattended runs use the first whose “when” holds. Each is a command or a short list of steps.",
     name: "Shown in the plan, prompts and history.",
+    description: "What we're doing in this step, and why. Shown when reviewing, stepping through and in Details.",
     id: "Optional short identifier, for --from, stop_after and references. Letters, digits, _.",
     section: "Heading the step is grouped under. Applies to the following steps until another section.",
     owner: "Who does this step (shown, not enforced).",
-    expect: "What success looks like. Shown when reviewing, at prompts, when checking a result, and beside a shell.",
+    expect: "By the end of this step, how things should stand (what success looks like). Shown when reviewing, at prompts, when checking a result, and beside a shell.",
     confirm: "Ask before running, even when not stepping through. Unattended runs need --yes (or Auto-approve).",
     always: "Run even when starting later or resuming: for setup that later steps depend on.",
     tty: "The command needs a keyboard (prompts, live displays): it runs on a terminal you type into. Output is still recorded.",
@@ -54,6 +57,17 @@ const FIELD_HELP = {
     unattended: "What a manual or terminal step does when nobody is there: fail (default), skip, or pass.",
     repeat_every: "With repeat: how long to wait between attempts, e.g. 20s.",
     repeat_timeout: "With repeat: give up (and fail) after this long, e.g. 10m.",
+  },
+  section: {
+    name: "A section name used by steps (their section field).",
+    description: "What this group of steps does.",
+    expect: "How things should stand at the end of the section.",
+  },
+  collection: {
+    name: "The collection's identifier.",
+    description: "What this group of runbooks is for.",
+    expect: "How things stand once they've all run.",
+    runbooks: "The runbooks in it, in the order they're usually run.",
   },
   library: {
     name: "The library's identifier, used under a runbook's libraries:.",
@@ -95,7 +109,28 @@ function viewHelp() {
     </nav>
 
     <h2 id="help-top">Runbook</h2>
-    ${helpTable("runbook", [["name"], ["description"], ["tags"], ["shell"], ["profile"], ["env"], ["sensitive"], ["libraries"], ["functions"], ["inputs"], ["steps"]])}
+    ${helpTable("runbook", [["name"], ["description"], ["expect"], ["sections"], ["tags"], ["shell"], ["profile"], ["env"], ["sensitive"], ["libraries"], ["functions"], ["inputs"], ["steps"]])}
+
+    <h3>Describing what's happening</h3>
+    <p>Every level can say what it's doing and how things should stand afterwards: a <b>collection</b> of runbooks, the <b>runbook</b>, each <b>section</b>, and each <b>step</b> (<code>description</code> and <code>expect</code>).</p>
+    <pre class="cmd">description: Move a silo from RDS to Aurora with ~20 minutes of downtime.
+expect: The silo runs on Aurora; RDS is detached and can be deleted.
+sections:
+  - name: 3. Cutoff
+    description: Stop all traffic to RDS and confirm Aurora has every write.
+    expect: The app is down, RDS takes no writes, Aurora is caught up.
+steps:
+  - name: Maintenance mode ON
+    section: 3. Cutoff
+    description: Put the app in maintenance mode so customers see a notice, not errors.
+    expect: Greenhouse shows the maintenance page.
+    run: lotus maintenance-mode on …</pre>
+    <p><b>Collections</b> group runbooks (managed under Collections, or <code>runnr collection</code>):</p>
+    <pre class="cmd">name: aurora-migration
+description: Moving GHR silos from RDS to Aurora.
+expect: All silos on Aurora; RDS instances retired.
+runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
+    ${helpTable("collection", [["name"], ["description"], ["expect"], ["runbooks"]])}
 
     <h2 id="help-inputs">Inputs</h2>
     <pre class="cmd">inputs:
@@ -111,7 +146,7 @@ function viewHelp() {
 
     <h2 id="help-steps">Steps</h2>
     <p>Every step has a <code>name</code> and exactly one of <code>run</code>, <code>manual</code>, <code>checks</code> or <code>alternatives</code>. The rest is optional.</p>
-    ${helpTable("step", [["name"], ["id"], ["section"], ["owner"], ["expect"], ["confirm"], ["always"], ["when"], ["continue_on_error"],
+    ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["expect"], ["confirm"], ["always"], ["when"], ["continue_on_error"],
       ["tty"], ["background"], ["stop_after"], ["timeout"], ["retries"], ["retry_delay"], ["dir"], ["step_shell", "shell"], ["step_env", "env"],
       ["outputs"], ["secret_outputs", "secret_outputs"], ["capture"], ["unattended"]])}
 

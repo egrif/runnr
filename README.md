@@ -44,6 +44,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr inspect <name> [step]` | Explore what will run: all steps, or one step's code, expected outcome and outputs (`-v` fills in inputs, `--all`) |
 | `runnr versions <name>` | List saved versions |
 | `runnr lib list/show/new/edit/import/delete/versions` | Manage function libraries |
+| `runnr collection list/show/new/edit/import/delete` | Group runbooks that belong together, with what they're for |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
 | `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin) |
 | `runnr delete <name>` | Delete (`-f` to skip the prompt) |
@@ -150,9 +151,15 @@ multi-day procedures, abort at a "wait" step and resume later.
   and after) are answered in the browser; notes and the run's state are there
   too.
 - **Editing**: YAML with live validation, or a **structured view** (switch
-  any time) to edit inputs and steps as forms, reorder, duplicate and delete
-  steps. The structured view saves by regenerating the YAML, so YAML comments
-  are dropped (it asks first).
+  any time). Each step opens as **details | command | run**: the common
+  details (what we're doing, by the end, section, owner, confirm) with a
+  **More fields** menu for the rest, then the command or procedure. **Run
+  this** runs just that step with your unsaved edits in a third pane (setup
+  steps first if you like), using the runbook's **test values** (inputs and
+  extra variables; secret inputs stay in the browser). Test runs aren't
+  recorded. The panes are resizable. The structured view saves by
+  regenerating the YAML, so YAML comments are dropped (it asks first).
+- **Collections** group runbooks in the sidebar, with what they're for.
 - History, versions, notes.
 
 Steps that need a terminal (`tty`) and "open shell" get a
@@ -167,8 +174,14 @@ an API token (`--token` or `RUNNR_TOKEN`), since it can run commands. See
 ## Runbook format
 
 ```yaml
-name: deploy-service            # lowercase identifier; also the filename
-description: Deploy a service
+name: deploy-service            # lowercase identifier
+description: |                  # what it's for and what it does (first line shows in lists)
+  Deploy a service with a short confirmation gate.
+expect: The new version serves traffic and dashboards are green.   # how things stand at the end
+sections:                       # what each group of steps does, and how things stand after it
+  - name: Deploy
+    description: Roll the new version out.
+    expect: All pods run the new version.
 tags: [deploy]
 shell: bash                     # default: sh
 profile: [~/.zshrc]             # sourced before every step: your aliases/functions work (slower)
@@ -201,6 +214,8 @@ steps:
     secret_outputs: [db_pass]   # same, but masked everywhere and never stored
     expect: Prints nothing; fails if the password can't be fetched.
   - name: Resolve version
+    description: Work out which version we're deploying.   # what we're doing (and why)
+    expect: The version tag is known.                       # by the end of this step
     run: git describe --tags
     capture: version            # trimmed stdout → {{.version}} for later steps
   - name: Terraform apply

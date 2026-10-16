@@ -35,6 +35,8 @@ type Terminal struct {
 	interrupts *atomic.Bool
 	// bg holds background steps' terminals, by step index.
 	bg map[int]*bgView
+	// sections maps section names to their descriptions.
+	sections map[string]string
 }
 
 // header prints the step title, preceded by its section when that changes.
@@ -43,6 +45,11 @@ func (t *Terminal) header(i int, r *engine.StepResult, dim bool) string {
 	if r.Section != "" && r.Section != t.section {
 		t.section = r.Section
 		fmt.Fprintf(&b, "\n%s\n", t.c("35;1", "══ "+r.Section))
+		if t.sections != nil {
+			if d := strings.TrimSpace(t.sections[r.Section]); d != "" {
+				fmt.Fprintf(&b, "%s\n", t.c("35", "   "+strings.ReplaceAll(d, "\n", "\n   ")))
+			}
+		}
 	}
 	n := fmt.Sprintf("[%d/%d]", i+1, t.total)
 	title := r.Name
@@ -87,6 +94,11 @@ func (t *Terminal) Notify(e engine.Event) {
 		fmt.Fprintf(t.out, "%s %s  %s\n", t.c("1", "runnr"), e.Run.Runbook, t.c("2", e.Run.ID))
 	case engine.EventStepStarted:
 		fmt.Fprintln(t.out, t.header(e.Step, e.Result, false))
+		if t.session != nil {
+			if d := strings.TrimSpace(t.session.View(e.Step).Description); d != "" {
+				fmt.Fprintln(t.out, t.c("2", "  "+strings.ReplaceAll(d, "\n", "\n  ")))
+			}
+		}
 	case engine.EventOutput:
 		if t.quiet {
 			return
@@ -300,6 +312,9 @@ func (t *Terminal) viewText(v engine.StepView, in string) string {
 	}
 	if len(meta) > 0 {
 		fmt.Fprintf(&b, "%s%s\n", in, t.c("2", strings.Join(meta, " · ")))
+	}
+	if v.Description != "" {
+		fmt.Fprintf(&b, "%s%s\n", in, strings.ReplaceAll(strings.TrimSpace(v.Description), "\n", "\n"+in))
 	}
 	if v.Dir != "" {
 		fmt.Fprintf(&b, "%s%s %s\n", in, t.c("2", "dir:"), v.Dir)

@@ -312,3 +312,42 @@ table.kv td:first-child { white-space: nowrap; vertical-align: top; }
 .term-fns table.kv tr:hover { background: none; }
 .term-fns code { color: #8fb4ff; }
 textarea.editor { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+
+.section-desc { font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--muted); margin-top: 2px; }
+.doing { margin: 0 0 8px; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--bg); border-radius: 4px; white-space: pre-wrap; }
+
+#runbook-list .col-head { margin: 12px 0 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+#runbook-list .col-head a { color: var(--muted); padding: 0 8px; }
+#runbook-list .col-head a:hover { color: var(--accent); }
+.rb-desc { white-space: pre-wrap; max-width: 860px; margin: 4px 0; }
+.col-card h3 { cursor: pointer; margin-top: 0; }
+#cols-link.active { font-weight: 600; }
+
+/* Editor: details | command | run this */
+.step-edit { display: flex; gap: 0; align-items: stretch; }
+.se-details { flex-shrink: 0; min-width: 220px; overflow: auto; padding-right: 8px; }
+.se-command { flex: 1; min-width: 240px; padding: 0 8px; }
+.se-command textarea.code { width: 100%; min-height: 200px; }
+.se-run { flex-shrink: 0; min-width: 220px; padding-left: 8px; }
+.split { width: 6px; cursor: col-resize; background: var(--border); border-radius: 3px; flex-shrink: 0; opacity: .5; }
+.split:hover, body.dragging .split { opacity: 1; background: var(--accent); }
+body.dragging { user-select: none; cursor: col-resize; }
+.se-details .fgroup-rows { grid-template-columns: max-content minmax(0, 1fr); }
+.more-fields { margin-top: 10px; width: 100%; }
+.with-x { display: flex; gap: 4px; align-items: center; min-width: 0; }
+.with-x > *:first-child { flex: 1; min-width: 0; }
+.icon-btn.small-x { padding: 0 6px; font-size: 11px; color: var(--muted); }
+.row.tight { gap: 4px; flex-wrap: nowrap; }
+.row.tight input { width: 50%; }
+.run-pane { display: flex; flex-direction: column; height: 100%; }
+.run-pane-head { margin-bottom: 6px; }
+.run-log { min-height: 200px; max-height: 60vh; margin: 6px 0 0 !important; }
+.test-values summary { cursor: pointer; }
+.test-values .fgroup-rows { margin: 10px 0; max-width: 720px; }
+.sec-edit { margin-bottom: 8px; }
+
+.step-edit { max-width: 100%; overflow: hidden; }
+.se-details, .se-run { min-width: 200px; max-width: 60%; }
+.se-command { min-width: 0; }
+.se-command .kind-seg { flex-wrap: wrap; }
+.se-command .kind-seg button { font-size: 12px; padding: 4px 10px; }

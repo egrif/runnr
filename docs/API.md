@@ -38,6 +38,23 @@ proxy) off-host.
 Send `If-Match: <version>` with `PUT` to get `409 Conflict` instead of
 overwriting a newer save.
 
+## Collections
+
+`GET /api/collections`, `POST /api/collections` (YAML), `GET / PUT / DELETE /api/collections/{name}`
+(PUT takes `If-Match`), `POST /api/collections/validate`. A collection is
+`{name, description, expect, runbooks: [...]}`.
+
+## Trying steps out ("Run this")
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/api/test-run` | `{raw, step, vars, extra, setup, unattended?}` | `202 {id}`: a live run (events, answers, terminals as usual) that isn't recorded |
+| GET / PUT | `/api/runbooks/{name}/test-values` | `{vars, extra, setup}` | the runbook's saved test values (secret inputs are never stored) |
+
+`raw` is the runbook YAML as edited (it needn't be saved); `step` is 1-based;
+`extra` seeds state variables an earlier step would publish; `setup` runs the
+`always` steps first.
+
 ## Libraries
 
 | Method | Path | Body | Returns |

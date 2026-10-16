@@ -49,7 +49,13 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	if !s.cfg.NoUI {
 		static, _ := fs.Sub(webFS, "web")
-		mux.Handle("GET /", http.FileServerFS(static))
+		files := http.FileServerFS(static)
+		// The app's files change with every build; never let a browser run
+		// stale ones against a newer server.
+		mux.Handle("GET /", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			files.ServeHTTP(w, r)
+		}))
 	}
 	mux.HandleFunc("POST /api/login", s.login)
 
@@ -61,6 +67,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runbooks/{name}/versions", s.listVersions)
 	mux.HandleFunc("GET /api/runbooks/{name}/versions/{version}", s.getVersion)
 	mux.HandleFunc("POST /api/validate", s.validate)
+	mux.HandleFunc("POST /api/test-run", s.testRun)
+	mux.HandleFunc("GET /api/runbooks/{name}/test-values", s.getTestValues)
+	mux.HandleFunc("PUT /api/runbooks/{name}/test-values", s.putTestValues)
+	mux.HandleFunc("GET /api/collections", s.listCollections)
+	mux.HandleFunc("POST /api/collections", s.createCollection)
+	mux.HandleFunc("GET /api/collections/{name}", s.getCollection)
+	mux.HandleFunc("PUT /api/collections/{name}", s.updateCollection)
+	mux.HandleFunc("DELETE /api/collections/{name}", s.deleteCollection)
+	mux.HandleFunc("POST /api/collections/validate", s.validateCollection)
 	mux.HandleFunc("GET /api/libraries", s.listLibraries)
 	mux.HandleFunc("POST /api/libraries", s.createLibrary)
 	mux.HandleFunc("GET /api/libraries/{name}", s.getLibrary)
@@ -292,6 +307,9 @@ func (s *Server) validate(w http.ResponseWriter, r *http.Request) {
 }
 
 type startReq struct {
+	// test: a "Run this" from the editor; not recorded in history.
+	test bool
+
 	Runbook    string            `json:"runbook"`
 	Vars       map[string]string `json:"vars"`
 	Unattended bool              `json:"unattended"`
@@ -466,6 +484,9 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 			Resumes:        resumes,
 			RunbookVersion: ver,
 			Save: func(run *engine.Run) {
+				if req.test {
+					return
+				}
 				if err := s.st.SaveRun(run); err != nil {
 					log.Printf("saving run %s: %v", run.ID, err)
 				}
@@ -493,6 +514,9 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 // previousRun loads the run to compare against: id if given, else the
 // runbook's latest run (nil if none).
 func (s *Server) previousRun(runbookName, id string) (*engine.Run, error) {
+	if id == "-" {
+		return nil, nil
+	}
 	if id == "" {
 		runs, err := s.st.ListRuns(runbookName, 1)
 		if err != nil || len(runs) == 0 {
@@ -876,6 +900,157 @@ func (s *Server) validateLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := runbook.ParseLibrary(raw); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ---------- "Run this" from the editor ----------
+
+type testRunReq struct {
+	Raw   string            `json:"raw"`  // the runbook as being edited (unsaved)
+	Step  int               `json:"step"` // 1-based
+	Vars  map[string]string `json:"vars"` // inputs
+	Extra map[string]string `json:"extra"`
+	// Setup runs the always steps first, to build the environment.
+	Setup      bool `json:"setup"`
+	Unattended bool `json:"unattended"`
+}
+
+// testRun runs one step of a runbook being edited, optionally after its
+// setup steps, with test values. It's live like any run but not recorded.
+func (s *Server) testRun(w http.ResponseWriter, r *http.Request) {
+	var req testRunReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	rb, err := runbook.Parse([]byte(req.Raw))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if req.Step < 1 || req.Step > len(rb.Steps) {
+		writeErr(w, fmt.Errorf("no step %d", req.Step))
+		return
+	}
+	var skip []int
+	for i, st := range rb.Steps {
+		if i+1 != req.Step && !(req.Setup && st.Always) {
+			skip = append(skip, i+1)
+		}
+	}
+	vars := map[string]string{}
+	for _, in := range rb.Inputs {
+		if v, ok := req.Vars[in.Name]; ok {
+			vars[in.Name] = v
+		}
+	}
+	state := map[string]string{}
+	for k, v := range req.Extra {
+		state[k] = v
+	}
+	sr := startReq{Vars: vars, Unattended: req.Unattended, Skip: skip, test: true, Previous: "-"}
+	s.launch(w, r, rb, 0, sr, 0, "", state)
+}
+
+func (s *Server) getTestValues(w http.ResponseWriter, r *http.Request) {
+	tv, err := s.st.GetTestValues(r.PathValue("name"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tv)
+}
+
+func (s *Server) putTestValues(w http.ResponseWriter, r *http.Request) {
+	var tv store.TestValues
+	if err := decode(r, &tv); err != nil {
+		writeErr(w, err)
+		return
+	}
+	// Never store secret inputs.
+	if d, err := s.st.Load(r.PathValue("name")); err == nil && d.Runbook != nil {
+		for _, in := range d.Runbook.Inputs {
+			if in.Secret {
+				delete(tv.Vars, in.Name)
+			}
+		}
+	}
+	if err := s.st.SetTestValues(r.PathValue("name"), tv); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tv)
+}
+
+// ---------- collections ----------
+
+func (s *Server) listCollections(w http.ResponseWriter, _ *http.Request) {
+	cs, err := s.st.ListCollections()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, cs)
+}
+
+func (s *Server) getCollection(w http.ResponseWriter, r *http.Request) {
+	d, err := s.st.LoadCollection(r.PathValue("name"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) saveCollection(w http.ResponseWriter, r *http.Request, o store.SaveOpts, code int) {
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	name, ver, err := s.st.SaveCollection(raw, o)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, code, map[string]any{"name": name, "version": ver})
+}
+
+func (s *Server) createCollection(w http.ResponseWriter, r *http.Request) {
+	s.saveCollection(w, r, store.SaveOpts{}, http.StatusCreated)
+}
+
+func (s *Server) updateCollection(w http.ResponseWriter, r *http.Request) {
+	o := store.SaveOpts{OldName: r.PathValue("name")}
+	if m := strings.Trim(r.Header.Get("If-Match"), `" `); m != "" {
+		v, err := strconv.Atoi(m)
+		if err != nil {
+			writeErr(w, fmt.Errorf("If-Match must be a version number"))
+			return
+		}
+		o.BaseVersion = v
+	}
+	s.saveCollection(w, r, o, http.StatusOK)
+}
+
+func (s *Server) deleteCollection(w http.ResponseWriter, r *http.Request) {
+	if err := s.st.DeleteCollection(r.PathValue("name")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) validateCollection(w http.ResponseWriter, r *http.Request) {
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if _, err := runbook.ParseCollection(raw); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}

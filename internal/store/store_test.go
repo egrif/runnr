@@ -201,3 +201,35 @@ func TestLibraries(t *testing.T) {
 		})
 	}
 }
+
+func TestCollectionsAndTestValues(t *testing.T) {
+	for name, s := range stores(t) {
+		t.Run(name, func(t *testing.T) {
+			s.db.Exec("DELETE FROM collections")
+			s.db.Exec("DELETE FROM collection_versions")
+			s.db.Exec("DELETE FROM runbook_test_values")
+			if _, v, err := s.SaveCollection([]byte("name: mig\ndescription: d\nrunbooks: [a, b]\n"), SaveOpts{}); err != nil || v != 1 {
+				t.Fatalf("v%d %v", v, err)
+			}
+			if _, _, err := s.SaveCollection([]byte("name: mig\nrunbooks: [a, a]\n"), SaveOpts{OldName: "mig"}); err == nil {
+				t.Fatal("duplicate runbook should be rejected")
+			}
+			cs, _ := s.ListCollections()
+			if len(cs) != 1 || cs[0].Collection == nil || len(cs[0].Collection.Runbooks) != 2 {
+				t.Fatalf("%+v", cs)
+			}
+			tv, _ := s.GetTestValues("x")
+			if !tv.Setup {
+				t.Fatal("setup should default to on")
+			}
+			tv.Vars["env"] = "staging"
+			tv.Setup = false
+			if err := s.SetTestValues("x", tv); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.GetTestValues("x"); got.Vars["env"] != "staging" || got.Setup {
+				t.Fatalf("%+v", got)
+			}
+		})
+	}
+}

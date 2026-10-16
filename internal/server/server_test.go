@@ -295,3 +295,52 @@ steps:
 		t.Fatalf("terminal %q ended %v recorded %q", termOut.String(), termEnded, run.Steps[0].Output)
 	}
 }
+
+func TestRunThis(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+
+	raw := `name: edited
+inputs: [{name: env, required: true}]
+steps:
+  - {name: setup, always: true, run: 'region=use1', outputs: [region]}
+  - {name: other, run: 'exit 1'}
+  - {name: target, run: 'echo "env=$env region=$region extra=$extra"'}
+`
+	body, _ := json.Marshal(map[string]any{"raw": raw, "step": 3, "vars": map[string]string{"env": "staging"}, "extra": map[string]string{"extra": "x1"}, "setup": true, "unattended": true})
+	res := do(t, "POST", ts.URL+"/api/test-run", string(body), nil)
+	var started struct{ ID string }
+	json.NewDecoder(res.Body).Decode(&started)
+	if started.ID == "" {
+		t.Fatalf("start: %d", res.StatusCode)
+	}
+	evs, err := http.Get(ts.URL + "/api/runs/" + started.ID + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evs.Body.Close()
+	sc := bufio.NewScanner(evs.Body)
+	var output []string
+	var final *engine.Run
+	for final == nil && sc.Scan() {
+		line, ok := strings.CutPrefix(sc.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var e WireEvent
+		json.Unmarshal([]byte(line), &e)
+		if e.Kind == engine.EventOutput {
+			output = append(output, e.Text)
+		}
+		if e.Kind == engine.EventRunFinished {
+			final = e.Run
+		}
+	}
+	if final == nil || final.Status != engine.StatusSucceeded || !slices.Contains(output, "env=staging region=use1 extra=x1") {
+		t.Fatalf("%+v %q", final, output)
+	}
+	if runs, _ := st.ListRuns("", 10); len(runs) != 0 {
+		t.Fatalf("test runs must not be recorded: %d", len(runs))
+	}
+}

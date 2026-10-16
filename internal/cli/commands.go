@@ -75,7 +75,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -426,6 +426,10 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 
 	term := NewTerminal(len(rb.Steps))
 	term.quiet = f.quiet
+	term.sections = map[string]string{}
+	for _, sec := range rb.Sections {
+		term.sections[sec.Name] = sec.Description
+	}
 	var ui engine.Interactor = term
 	if !interactive {
 		onEvent := term.Notify
@@ -640,12 +644,25 @@ would publish show as <name>.`,
 				}
 				return nil
 			}
-			fmt.Printf("%s — %s\n", t.c("1", rb.Name), rb.Description)
+			fmt.Println(t.c("1", rb.Name))
+			if rb.Description != "" {
+				fmt.Println(indent(strings.TrimSpace(rb.Description)))
+			}
+			if rb.Expect != "" {
+				fmt.Println(t.c("32", "  By the end: ") + strings.TrimSpace(rb.Expect))
+			}
+			sections := map[string]runbook.Section{}
+			for _, sec := range rb.Sections {
+				sections[sec.Name] = sec
+			}
 			section := ""
 			for _, v := range plan {
 				if v.Section != "" && v.Section != section {
 					section = v.Section
 					fmt.Println(t.c("35;1", "══ "+section))
+					if d := sections[section].Description; d != "" {
+						fmt.Println(t.c("2", "   "+firstLine(d)))
+					}
 				}
 				flags := []string{v.Kind}
 				if v.Always {
@@ -1184,13 +1201,10 @@ shells opened from runnr. To use them in any other terminal:
 	return cmd
 }
 
-// editLibrary edits a temp copy and only saves it once valid.
-func editLibrary(st *store.Store, name string) error {
-	doc, err := st.LoadLibrary(name)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp("", "runnr-lib-"+name+"-*.yaml")
+// editDoc edits a temp copy of a stored YAML document and only saves it
+// once valid.
+func editDoc(noun, name string, raw []byte, save func([]byte) (string, int, error)) error {
+	tmp, err := os.CreateTemp("", "runnr-"+noun+"-"+name+"-*.yaml")
 	if err != nil {
 		return err
 	}
@@ -1200,7 +1214,7 @@ func editLibrary(st *store.Store, name string) error {
 			os.Remove(tmp.Name())
 		}
 	}()
-	if _, err := tmp.Write(doc.Raw); err != nil {
+	if _, err := tmp.Write(raw); err != nil {
 		return err
 	}
 	tmp.Close()
@@ -1215,16 +1229,16 @@ func editLibrary(st *store.Store, name string) error {
 		if err != nil {
 			return err
 		}
-		lib, ver, err := st.SaveLibrary(edited, store.SaveOpts{OldName: name, BaseVersion: doc.Version})
+		saved, ver, err := save(edited)
 		if err == nil {
-			fmt.Printf("saved library %s (version %d)\n", lib.Name, ver)
+			fmt.Printf("saved %s %s (version %d)\n", noun, saved, ver)
 			return nil
 		}
 		if errors.Is(err, store.ErrConflict) {
 			keep = true
 			return fmt.Errorf("%w\nyour edits are in %s", err, tmp.Name())
 		}
-		fmt.Fprintln(os.Stderr, "invalid library:\n"+indent(err.Error()))
+		fmt.Fprintf(os.Stderr, "invalid %s:\n%s\n", noun, indent(err.Error()))
 		fmt.Fprint(os.Stderr, "  ? [e]dit again / [d]iscard changes: ")
 		var a string
 		_, _ = fmt.Fscanln(os.Stdin, &a)
@@ -1232,6 +1246,133 @@ func editLibrary(st *store.Store, name string) error {
 			return errors.New("changes discarded")
 		}
 	}
+}
+
+func editLibrary(st *store.Store, name string) error {
+	doc, err := st.LoadLibrary(name)
+	if err != nil {
+		return err
+	}
+	return editDoc("library", name, doc.Raw, func(raw []byte) (string, int, error) {
+		lib, ver, err := st.SaveLibrary(raw, store.SaveOpts{OldName: name, BaseVersion: doc.Version})
+		if err != nil {
+			return "", 0, err
+		}
+		return lib.Name, ver, nil
+	})
+}
+
+func collectionCmd(s func() *store.Store) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "collection",
+		Aliases: []string{"collections"},
+		Short:   "Group runbooks that belong together, with what they're for",
+	}
+	var noEdit, force bool
+	newC := &cobra.Command{
+		Use: "new <name>", Short: "Create a collection and open it in $EDITOR", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, _, err := s().SaveCollection([]byte(runbook.CollectionScaffold(args[0])), store.SaveOpts{}); err != nil {
+				return err
+			}
+			fmt.Println("created collection", args[0])
+			if noEdit || !isTTY(os.Stdin) {
+				return nil
+			}
+			d, err := s().LoadCollection(args[0])
+			if err != nil {
+				return err
+			}
+			return editDoc("collection", args[0], []byte(d.Raw), func(raw []byte) (string, int, error) {
+				return s().SaveCollection(raw, store.SaveOpts{OldName: args[0], BaseVersion: d.Version})
+			})
+		},
+	}
+	newC.Flags().BoolVar(&noEdit, "no-edit", false, "don't open an editor")
+	importC := &cobra.Command{
+		Use: "import <file>...", Short: "Add collection files (- reads stdin)", Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, f := range args {
+				var raw []byte
+				var err error
+				if f == "-" {
+					raw, err = io.ReadAll(os.Stdin)
+				} else {
+					raw, err = os.ReadFile(f)
+				}
+				if err != nil {
+					return err
+				}
+				name, ver, err := s().SaveCollection(raw, store.SaveOpts{Overwrite: force})
+				if err != nil {
+					return fmt.Errorf("%s: %w", f, err)
+				}
+				fmt.Printf("imported %s → collection %s (version %d)\n", f, name, ver)
+			}
+			return nil
+		},
+	}
+	importC.Flags().BoolVarP(&force, "force", "f", false, "overwrite existing collections")
+	cmd.AddCommand(
+		&cobra.Command{
+			Use: "list", Aliases: []string{"ls"}, Short: "List collections and their runbooks", Args: cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				cs, err := s().ListCollections()
+				if err != nil {
+					return err
+				}
+				if len(cs) == 0 {
+					fmt.Println("No collections yet. Create one with: runnr collection new <name>")
+					return nil
+				}
+				for _, c := range cs {
+					if c.Collection == nil {
+						fmt.Printf("%s  INVALID: %s\n", c.Name, firstLine(c.Err))
+						continue
+					}
+					fmt.Printf("%s — %s\n", c.Name, firstLine(c.Collection.Description))
+					for n, r := range c.Collection.Runbooks {
+						fmt.Printf("  %d. %s\n", n+1, r)
+					}
+				}
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use: "show <name>", Short: "Print a collection's YAML", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				d, err := s().LoadCollection(args[0])
+				if err == nil {
+					fmt.Print(d.Raw)
+				}
+				return err
+			},
+		},
+		newC, importC,
+		&cobra.Command{
+			Use: "edit <name>", Short: "Edit a collection in $EDITOR", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				d, err := s().LoadCollection(args[0])
+				if err != nil {
+					return err
+				}
+				return editDoc("collection", args[0], []byte(d.Raw), func(raw []byte) (string, int, error) {
+					return s().SaveCollection(raw, store.SaveOpts{OldName: args[0], BaseVersion: d.Version})
+				})
+			},
+		},
+		&cobra.Command{
+			Use: "delete <name>", Aliases: []string{"rm"}, Short: "Delete a collection (its runbooks stay)", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				if err := s().DeleteCollection(args[0]); err != nil {
+					return err
+				}
+				fmt.Println("deleted collection", args[0])
+				return nil
+			},
+		},
+	)
+	return cmd
 }
 
 func nonEmptyEnv(key, def string) string {

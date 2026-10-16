@@ -118,3 +118,19 @@ func TestValidateNewKinds(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDescriptionsAndSections(t *testing.T) {
+	good := "name: a\ndescription: |\n  What it's for.\nexpect: Done.\nsections: [{name: S1, description: first, expect: ok}]\nsteps: [{name: a, section: S1, run: x, description: 'doing {{.v}}'}]\n"
+	if _, err := Parse([]byte(good)); err != nil {
+		t.Fatal(err)
+	}
+	for name, y := range map[string]string{
+		"unknown section": "name: a\nsections: [{name: Nope}]\nsteps: [{name: a, section: S1, run: x}]",
+		"twice":           "name: a\nsections: [{name: S1}, {name: S1}]\nsteps: [{name: a, section: S1, run: x}]",
+		"bad template":    "name: a\nsteps: [{name: a, run: x, description: '{{.x'}]",
+	} {
+		if _, err := Parse([]byte(y)); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+}
