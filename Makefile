@@ -6,7 +6,7 @@ LDFLAGS := -s -w -X github.com/egrif/runnr/internal/cli.version=$(VERSION)
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/runnr ./cmd/runnr
 
-install:
+install: build
 	go install -ldflags "$(LDFLAGS)" ./cmd/runnr
 
 test:
