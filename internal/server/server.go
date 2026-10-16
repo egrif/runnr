@@ -523,7 +523,7 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, err)
 			return
 		}
-		state = prev.State
+		state = engine.ResumeState(prev)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"steps": engine.Preview(rb, req.Vars, state)})
 }
@@ -541,7 +541,7 @@ func (s *Server) runPreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"steps": engine.Preview(rb, run.Inputs, run.State)})
+	writeJSON(w, http.StatusOK, map[string]any{"steps": engine.Preview(rb, engine.ResumeInputs(run), engine.ResumeState(run))})
 }
 
 // controls reads or changes a live run's skip/pause settings; changes

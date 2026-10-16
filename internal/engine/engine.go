@@ -78,8 +78,11 @@ type Run struct {
 	Steps    []StepResult      `json:"steps"`
 	Notes    []Note            `json:"notes,omitempty"`
 	// State is every variable the run has (inputs and published values)
-	// as of the last finished step; secrets are "****".
+	// as of the last finished step, with credentials masked.
 	State map[string]string `json:"state,omitempty"`
+	// Secrets names the secret variables in State and Inputs; their
+	// values can't be restored from the record.
+	Secrets []string `json:"secrets,omitempty"`
 }
 
 type EventKind string
@@ -257,7 +260,8 @@ type executor struct {
 	opts       Options
 	run        *Run
 	vars       map[string]string
-	secrets    []string
+	secrets    []secretValue
+	masker     *runbook.Masker
 	secretVars map[string]bool
 	ctl        *Controls
 	mu         sync.Mutex
@@ -273,7 +277,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	if opts.Interactive {
 		mode = "interactive"
 	}
-	x := &executor{rb: rb, ui: ui, opts: opts, vars: map[string]string{}, secretVars: map[string]bool{}}
+	x := &executor{rb: rb, ui: ui, opts: opts, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
 	for i, s := range rb.Steps {
 		kind := "run"
@@ -309,7 +313,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	err := x.resolveInputs(ctx)
 	if err == nil {
 		x.restoreState()
-		x.run.State = x.State()
+		x.refreshState()
 		if r, ok := ui.(Reviewer); ok && opts.Review && !opts.ShellOnly {
 			err = r.Review(ctx, x.Plan(), x.ctl)
 		}
@@ -383,8 +387,8 @@ func (x *executor) resolveInputs(ctx context.Context) error {
 		x.vars[in.Name] = v
 		if in.Secret && v != "" {
 			x.secretVars[in.Name] = true
-			x.secrets = append(x.secrets, v)
-			x.run.Inputs[in.Name] = "****"
+			x.addSecret(v, true)
+			x.run.Inputs[in.Name] = x.maskedValue(v)
 		} else {
 			x.run.Inputs[in.Name] = v
 		}
@@ -603,7 +607,7 @@ func (x *executor) apply(step runbook.Step, out cmdResult) {
 	for k, v := range out.secrets {
 		x.vars[k] = v
 		x.secretVars[k] = true
-		x.addSecret(v)
+		x.addSecret(v, false)
 	}
 }
 
@@ -663,7 +667,7 @@ func (x *executor) fail(i int, err error) error {
 
 func (x *executor) stepDone(i int) {
 	x.run.Steps[i].Ended = time.Now()
-	x.run.State = x.State()
+	x.refreshState()
 	x.notify(Event{Kind: EventStepFinished, Step: i, Result: x.result(i), State: x.run.State})
 	x.save()
 }
@@ -692,18 +696,52 @@ func (x *executor) notify(e Event) {
 	x.ui.Notify(e)
 }
 
+// secretValue is a known secret and how it's shown.
+type secretValue struct{ value, shown string }
+
+// mask hides credentials: known secret values (only their sensitive part,
+// when a sensitive pattern recognises them), then anything matching a
+// sensitive pattern.
 func (x *executor) mask(s string) string {
 	for _, sec := range x.secrets {
-		s = strings.ReplaceAll(s, sec, "****")
+		s = strings.ReplaceAll(s, sec.value, sec.shown)
+	}
+	if x.masker != nil {
+		s = x.masker.Mask(s)
 	}
 	return s
 }
 
-func (x *executor) addSecret(v string) {
-	// Very short values would mask unrelated text.
-	if len(v) >= 4 && !slices.Contains(x.secrets, v) {
-		x.secrets = append(x.secrets, v)
+// maskedValue is how a secret value is shown: with just its credential
+// part hidden if a sensitive pattern finds one, else entirely.
+func (x *executor) maskedValue(v string) string {
+	if x.masker != nil {
+		if m := x.masker.Mask(v); m != v {
+			return m
+		}
 	}
+	return "****"
+}
+
+// addSecret starts hiding v. Very short published values would mask
+// unrelated text, so they're only hidden when force is set (secret inputs).
+func (x *executor) addSecret(v string, force bool) {
+	if v == "" || (len(v) < 4 && !force) || slices.ContainsFunc(x.secrets, func(s secretValue) bool { return s.value == v }) {
+		return
+	}
+	x.secrets = append(x.secrets, secretValue{v, x.maskedValue(v)})
+	// Longest first, so a URL is replaced before the password inside it.
+	slices.SortFunc(x.secrets, func(a, b secretValue) int { return len(b.value) - len(a.value) })
+}
+
+// refreshState records the run's current variables (masked) and which are secret.
+func (x *executor) refreshState() {
+	x.run.State = x.State()
+	x.run.Secrets = x.run.Secrets[:0]
+	for k := range x.secretVars {
+		x.run.Secrets = append(x.run.Secrets, k)
+	}
+	slices.Sort(x.run.Secrets)
 }
 
 // env layers: process env, runnr vars (inputs and outputs), runbook env, step env.
@@ -745,12 +783,12 @@ func ResumePoint(r *Run) int {
 	return -1
 }
 
-// ResumeInputs returns a previous run's inputs, minus masked secrets
-// (which must be supplied again).
+// ResumeInputs returns a previous run's inputs, minus secrets (which must
+// be supplied again).
 func ResumeInputs(r *Run) map[string]string {
 	vars := map[string]string{}
 	for k, v := range r.Inputs {
-		if v != "****" {
+		if v != "****" && !slices.Contains(r.Secrets, k) {
 			vars[k] = v
 		}
 	}
@@ -775,5 +813,14 @@ func nonEmpty(s, def string) string {
 	return s
 }
 
-// ResumeState returns a previous run's state for Options.State.
-func ResumeState(r *Run) map[string]string { return maps.Clone(r.State) }
+// ResumeState returns a previous run's state for Options.State, with
+// secrets (which the record doesn't hold) as "****".
+func ResumeState(r *Run) map[string]string {
+	st := maps.Clone(r.State)
+	for _, k := range r.Secrets {
+		if _, ok := st[k]; ok {
+			st[k] = "****"
+		}
+	}
+	return st
+}

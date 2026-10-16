@@ -70,3 +70,26 @@ func TestFormatRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestSensitive(t *testing.T) {
+	if _, err := Parse([]byte("name: a\nsensitive: {x: 'no placeholder'}\nsteps: [{name: a, run: x}]")); err == nil {
+		t.Fatal("pattern without placeholder should be rejected")
+	}
+	if _, err := Parse([]byte("name: a\nsensitive: {x: '(unclosed {{SENSITIVE}}'}\nsteps: [{name: a, run: x}]")); err == nil {
+		t.Fatal("bad regex should be rejected")
+	}
+	m := NewMasker(&Runbook{Sensitive: map[string]string{"api": "X-Api-Key: {{SENSITIVE}}", "pair": "user={{SENSITIVE}} pass={{SENSITIVE}};"}})
+	cases := map[string]string{
+		"postgres://app:pw-123@db.example.com:5432/app": "postgres://app:****@db.example.com:5432/app",
+		"curl -H 'Authorization: Bearer abc.def' x":     "curl -H 'Authorization: Bearer ****' x",
+		"aws_secret_access_key = wJalrXUtn":             "aws_secret_access_key = ****",
+		"X-Api-Key: k123 rest":                          "X-Api-Key: **** rest",
+		"user=bob pass=hunter2; ok":                     "user=**** pass=****; ok",
+		"nothing to see https://example.com/path":       "nothing to see https://example.com/path",
+	}
+	for in, want := range cases {
+		if got := m.Mask(in); got != want {
+			t.Errorf("Mask(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -48,7 +48,7 @@ func (x *executor) State() map[string]string {
 	m := make(map[string]string, len(x.vars))
 	for k, v := range x.vars {
 		if x.secretVars[k] {
-			v = "****"
+			v = x.maskedValue(v)
 		}
 		m[k] = v
 	}
@@ -117,7 +117,7 @@ func (x *executor) openShell(ctx context.Context, idx int) error {
 	if len(names) > 0 {
 		slices.Sort(names)
 		x.notify(Event{Kind: EventOutput, Step: idx, Stream: "info", Text: "shell published: " + strings.Join(names, ", ")})
-		x.run.State = x.State()
+		x.refreshState()
 	}
 	return nil
 }
@@ -162,7 +162,7 @@ func (x *executor) lenient(text string) string {
 // input defaults) and, optionally, an earlier run's state (as for a
 // resume); values not known yet show as <name>.
 func Preview(rb *runbook.Runbook, vars, state map[string]string) []StepView {
-	x := &executor{rb: rb, ui: Unattended{}, vars: map[string]string{}, secretVars: map[string]bool{}, run: &Run{}}
+	x := &executor{rb: rb, ui: Unattended{}, vars: map[string]string{}, secretVars: map[string]bool{}, run: &Run{}, masker: runbook.NewMasker(rb)}
 	for k, v := range state {
 		if v != "****" {
 			x.vars[k] = v
@@ -177,7 +177,7 @@ func Preview(rb *runbook.Runbook, vars, state map[string]string) []StepView {
 			x.vars[in.Name] = v
 		}
 		if in.Secret && v != "" {
-			x.secrets = append(x.secrets, v)
+			x.addSecret(v, true)
 		}
 	}
 	for _, s := range rb.Steps {

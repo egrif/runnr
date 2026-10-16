@@ -614,3 +614,39 @@ steps:
 		t.Fatalf("output %q", ui.output)
 	}
 }
+
+func TestPartialMasking(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+sensitive:
+  ticket: 'ticket {{SENSITIVE}}'
+inputs: [{name: pw, secret: true, default: hunter22}]
+steps:
+  - name: setup
+    shell: bash
+    run: |
+      db="postgres://app:s3cretpw@db.internal:5432/app"
+      key="justasecret"
+    secret_outputs: [db, key]
+  - {name: use, run: 'echo "db=$db key=$key pw=$pw"; echo "opened ticket T-42"'}
+`)
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{})
+	if run.Status != StatusSucceeded {
+		t.Fatal(run.Error)
+	}
+	if got := strings.Join(ui.output, "|"); got != "db=postgres://app:****@db.internal:5432/app key=**** pw=****|opened ticket ****" {
+		t.Fatalf("output %q", got)
+	}
+	if run.State["db"] != "postgres://app:****@db.internal:5432/app" || run.State["key"] != "****" || run.Inputs["pw"] != "****" {
+		t.Fatalf("state %v inputs %v", run.State, run.Inputs)
+	}
+	if !slices.Equal(run.Secrets, []string{"db", "key", "pw"}) {
+		t.Fatalf("secrets %v", run.Secrets)
+	}
+	// A partly-masked secret must not come back as a value on resume.
+	st := ResumeState(run)
+	if st["db"] != "****" || len(ResumeInputs(run)) != 0 {
+		t.Fatalf("resume state %v inputs %v", st, ResumeInputs(run))
+	}
+}

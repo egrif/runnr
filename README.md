@@ -112,7 +112,7 @@ At any step prompt you can also:
 - **`v`**: view the step as it will run: commands with current values filled
   in, expected outcome, directory, what it publishes.
 - **`l`**: what this step did last time (status, command, output, notes).
-- **`e`**: show the run's state: every variable so far, secrets as `****`.
+- **`e`**: show the run's state: every variable so far, credentials masked.
 - **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
 - **`!`**: open your `$SHELL` with the run's environment (inputs, values
   published so far, `env:`), in the step's `dir`, with the step's commands
@@ -169,6 +169,9 @@ description: Deploy a service
 tags: [deploy]
 shell: bash                     # default: sh
 profile: [~/.zshrc]             # sourced before every step: your aliases/functions work (slower)
+sensitive:                      # credentials to hide wherever they appear; {{SENSITIVE}} = the hidden part
+  api_key: 'X-Api-Key: {{SENSITIVE}}'
+  ticket_token: 'token={{SENSITIVE}}&' 
 env:                            # exported to every step; values are templates
   DEPLOY_ENV: "{{.env}}"
 inputs:
@@ -227,7 +230,7 @@ environment.
 `capture`, or `name=value` lines written to `$RUNNR_OUTPUT`/`$RUNNR_SECRET`)
 form the run's state. Every later step gets all of it as environment variables
 and template values, whichever step published it. The state is saved with the
-run after each step (secrets as `****`), shown in history, the GUI and at
+run after each step (credentials masked), shown in history, the GUI and at
 prompts (`e`), and restored on resume.
 
 `expect` describes what success looks like; it's shown when reviewing,
@@ -258,8 +261,19 @@ unless the runbook sets `profile` (e.g. `[~/.zshrc]`), which sources those
 files before every step; that can add a few seconds per step. Shells opened
 with `!` are interactive and load your config as usual.
 
-Secrets published via `$RUNNR_SECRET` are masked from the moment they're
-published; don't echo them in the step that creates them.
+**Masking.** runnr hides credentials, not whole values. Secret inputs and
+`secret_outputs` are hidden wherever they appear, but only their sensitive
+part when a pattern recognises it: a secret database URL shows as
+`postgres://app:****@db.internal:5432/app`, while a bare password shows as
+`****`. Patterns also catch credentials that were never declared secret.
+Built in: URL passwords (only the password in `scheme://u:****@`), `Bearer` tokens, and AWS
+secret keys and session tokens. Add your own with `sensitive`: name →
+regular expression, with `{{SENSITIVE}}` where the credential is (it matches
+a run of non-space, non-quote characters). Masking applies to output,
+commands, errors, state, history and terminal sessions in the GUI. Secrets
+are never stored, so resume re-derives them (steps marked `always`). Values
+published via `$RUNNR_SECRET` are masked from the moment they're published;
+don't echo them in the step that creates them.
 
 ## Layout
 

@@ -445,6 +445,8 @@ description: What it does
 tags: [ops]
 shell: bash                  # default: sh
 profile: [~/.zshrc]          # sourced before every step: aliases/functions work (slower)
+sensitive:                   # extra credential patterns to hide; {{SENSITIVE}} is the hidden part
+  api_key: 'X-Api-Key: {{SENSITIVE}}' 
 env: { REGION: us-east-1 }   # values may use {{.input}} templates
 inputs:
   - name: target

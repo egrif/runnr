@@ -191,6 +191,7 @@ function renderStruct(ed) {
       </div>
       ${fieldHTML("description", "Description", "area", d.description)}
       ${fieldHTML("env", "Environment for every step", "kv", d.env, "KEY=value per line; values may use {{.input}}")}
+      ${fieldHTML("sensitive", "Sensitive patterns", "kv", d.sensitive, "name=regex per line; {{SENSITIVE}} marks the part to hide, e.g. api=X-Api-Key: {{SENSITIVE}}")}
     </div>
     <div class="card">
       <h3>Inputs</h3>

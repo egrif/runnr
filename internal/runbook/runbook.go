@@ -30,7 +30,11 @@ type Runbook struct {
 	// Profile lists files sourced before every step (e.g. ~/.zshrc), so
 	// aliases, functions and settings from your shell config work in steps.
 	Profile []string `yaml:"profile,omitempty" json:"profile,omitempty"`
-	Steps   []Step   `yaml:"steps" json:"steps"`
+	// Sensitive maps names to patterns of credentials to hide in output,
+	// state and history. {{SENSITIVE}} marks the part to hide, e.g.
+	// "postgres://[^:/@]+:{{SENSITIVE}}@" hides just a URL's password.
+	Sensitive map[string]string `yaml:"sensitive,omitempty" json:"sensitive,omitempty"`
+	Steps     []Step            `yaml:"steps" json:"steps"`
 }
 
 type Input struct {
@@ -169,6 +173,11 @@ func (rb *Runbook) Validate() error {
 	}
 	if len(rb.Steps) == 0 {
 		add("runbook has no steps")
+	}
+	for name, p := range rb.Sensitive {
+		if _, err := CompileSensitive(p); err != nil {
+			add("sensitive %q: %v", name, err)
+		}
 	}
 	for i, f := range rb.Profile {
 		if strings.TrimSpace(f) == "" {

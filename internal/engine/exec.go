@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -169,12 +170,18 @@ func (x *executor) readOutputs(i int, res *cmdResult, outFile, secFile string) {
 		return m
 	}
 	res.outputs, res.secrets = parse(outFile), parse(secFile)
-	// Mask secrets in what this step already produced.
+	// Mask secrets in what this step already produced (longest first).
+	vals := make([]string, 0, len(res.secrets))
 	for _, v := range res.secrets {
 		if len(v) >= 4 {
-			res.stdout = strings.ReplaceAll(res.stdout, v, "****")
-			res.combined = strings.ReplaceAll(res.combined, v, "****")
+			vals = append(vals, v)
 		}
+	}
+	slices.SortFunc(vals, func(a, b string) int { return len(b) - len(a) })
+	for _, v := range vals {
+		shown := x.maskedValue(v)
+		res.stdout = strings.ReplaceAll(res.stdout, v, shown)
+		res.combined = strings.ReplaceAll(res.combined, v, shown)
 	}
 }
 
