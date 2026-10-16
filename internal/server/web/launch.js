@@ -17,8 +17,9 @@ async function viewLaunch(el, name, mode, runId) {
     const latest = await api("GET", `/api/runs?runbook=${enc(name)}&limit=1`);
     if (latest.length) prev = (await api("GET", `/api/runs/${enc(latest[0].id)}`)).run;
   }
+  const history = await api("GET", `/api/runs?runbook=${enc(name)}&limit=30`).catch(() => []);
   const st = {
-    rb, prev, mode, runId, preview: null, open: new Set(),
+    rb, prev, history, mode, runId, preview: null, open: new Set(),
     include: rb.steps.map(() => true), before: new Set(), after: new Set(),
   };
   if (mode === "resume" && prev) {
@@ -67,7 +68,7 @@ async function viewLaunch(el, name, mode, runId) {
         ${prev ? `<button type="button" data-bulk="unfinished" title="Steps that didn't finish last time, plus always steps">Not done last time</button>` : ""}
         <button type="button" data-bulk="nopause">Clear pauses</button>
       </div>
-      <p class="muted small">Click a step to see what it will do${prev ? " and what it did last time" : ""}. Untick to skip it; ⏸ before / after stops there so you can check.</p>
+      <p class="muted small">Click a step to see what it will do, what it did in earlier runs (History) and how it's set up (Details). Untick to skip it; ⏸ before / after stops there so you can check.</p>
       <ol class="steps" id="launch-steps"></ol>
       <div class="row start-bar"><button class="primary" type="submit" id="start"></button></div>
     </form>`;
@@ -132,6 +133,7 @@ async function viewLaunch(el, name, mode, runId) {
       location.hash = `#/runs/${id}`;
     } catch (e) { toast(e.message); }
   });
+  bindSide($("#launch-steps"), draw);
   draw();
   refreshPreview();
 }
@@ -170,6 +172,8 @@ function lastTime(r, run) {
     ${r.command ? `<pre class="cmd">${esc(r.command)}</pre>` : ""}
     ${r.output ? `<pre class="log">${lines.length > shown.length ? `<span class="info">… ${lines.length - shown.length} earlier lines</span>\n` : ""}${shown.map(esc).join("\n")}</pre>` : ""}
     ${r.error && r.status !== "succeeded" ? `<div class="error-text">${esc(r.error)}</div>` : ""}
+    ${renderChecks(r.checks)}${renderSub(r)}
+    ${(r.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
     ${renderNotes(r.notes)}`;
 }
 
@@ -190,7 +194,7 @@ function renderLaunchSteps(st) {
         </div>
         ${st.open.has(i) ? `<div class="step-body two-col">
           <div><h4>Will do</h4>${stepDetails(view)}</div>
-          ${prev ? `<div><h4>Last time</h4>${lastTime(r, prev)}</div>` : ""}
+          <div>${sidePanel(`launch:${i}`, i, s, st.history, prev)}</div>
         </div>` : ""}
       </li>`;
   }).join("");

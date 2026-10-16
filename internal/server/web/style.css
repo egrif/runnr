@@ -288,3 +288,13 @@ table.help-fields tbody tr:hover { background: none; cursor: default; }
 .se-left > .flabel { display: flex; margin: 4px 0; }
 .info { margin-left: 3px; }
 table.inputs { overflow: visible; }
+
+/* Step side panel: History | Details */
+.side-tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.side-tabs button { border: none; border-radius: 0; font-size: 12px; padding: 3px 12px; }
+.side-tabs button.on { background: var(--accent); color: var(--accent-text); }
+.side-pick { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.side-pick select { max-width: 100%; font-size: 12px; }
+table.config td { vertical-align: top; padding: 3px 8px 3px 0; }
+table.config td.flabel { white-space: nowrap; }
+table.config code { white-space: pre-wrap; word-break: break-word; }

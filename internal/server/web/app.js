@@ -120,6 +120,7 @@ $("#new-btn").addEventListener("click", () => (location.hash = "#/new"));
 async function route() {
   if (stream) { stream.close(); stream = null; }
   resetTerm();
+  resetSide();
   const h = location.hash || "#/";
   renderSidebar();
   let m;
@@ -193,6 +194,10 @@ async function viewRun(id) {
   };
   loadPreview();
   if (run.previous) api("GET", `/api/runs/${enc(run.previous)}`).then((r) => { state.prev = r.run; renderRun(state); }).catch(() => {});
+  // Earlier runs (for History) and the runbook's configuration (for Details).
+  state.history = [];
+  api("GET", `/api/runs?runbook=${enc(run.runbook)}&limit=30`).then((rs) => { state.history = rs.filter((r) => r.id !== run.id); renderRun(state); }).catch(() => {});
+  api("GET", `/api/runbooks/${enc(run.runbook)}`).then((d) => { state.cfg = d.runbook?.steps; renderRun(state); }).catch(() => {});
   let pt;
   state.onState = () => { clearTimeout(pt); pt = setTimeout(loadPreview, 300); };
   // Past runs: show stored output; expand failures.
@@ -323,7 +328,7 @@ function renderRun(state) {
         ${state.question?.step === i ? `<div class="step-body">${renderQuestion(state.question, run.id)}</div>` : ""}
         ${state.termStep === i ? `<div class="step-body"><p class="term-note">⌨ A terminal is open for this step below${state.termShell ? " (shell): type exit or End session to come back to the run" : ": type there when it asks"}. <button class="link" data-show-term>Show terminal</button></p></div>` : ""}
         ${s.notes?.length ? `<div class="step-body">${renderNotes(s.notes)}</div>` : ""}
-        ${state.open.has(i) ? `<div class="step-body ${state.prev ? "two-col" : ""}"><div>
+        ${state.open.has(i) ? `<div class="step-body two-col"><div>
           ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i])}` : `
             ${state.preview?.[i]?.expect ? `<div class="expect"><b>Expect:</b> ${esc(state.preview[i].expect)}</div>` : ""}
             ${s.command || state.preview?.[i]?.command ? `<pre class="cmd">${esc(s.command || state.preview[i].command)}</pre>` : ""}
@@ -332,7 +337,7 @@ function renderRun(state) {
           ${renderChecks(s.checks)}${renderSub(s)}
           ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
           <button class="link" data-note="${i + 1}">✎ Add note</button></div>
-          ${state.prev ? `<div><h4>Last time</h4>${lastTime(state.prev.steps[i], state.prev)}</div>` : ""}
+          <div>${sidePanel(`run:${i}`, i, state.cfg?.[i], state.history || [], state.prev)}</div>
         </div>` : ""}
       </li>`).join("")}
     </ol>`;
@@ -357,6 +362,7 @@ function renderRun(state) {
     setControls(run.id, next, state);
   }));
   $("#step-all") && ($("#step-all").onchange = (e) => setControls(run.id, { ...ctl, step_mode: e.target.checked }, state));
+  bindSide(main, () => renderRun(state));
   main.querySelectorAll("[data-show-bg]").forEach((b) => (b.onclick = () => showTerm(b.dataset.showBg)));
   main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
   $("#cancel") && ($("#cancel").onclick = () => api("POST", `/api/runs/${run.id}/cancel`).catch((e) => toast(e.message)));
