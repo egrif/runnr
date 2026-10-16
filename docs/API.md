@@ -94,9 +94,20 @@ Start without `unattended`, then read `/events`. Each event is
 | `after` | `continue`, `retry` (run again), `fail` (`note` = what's wrong; then a `failure` question), `abort` |
 
 Questions carry `text` (the rendered command or instructions) and `expect`.
-When the server is local, `confirm`/`manual`/`failure`/`before` questions also
-offer `shell`, which opens a Terminal window with the run's environment and
-then asks the same question again; `manual` (run it myself) opens one too.
+`confirm`/`manual`/`failure`/`before`/`after` questions also offer `shell`,
+which opens a terminal session with the run's environment and then asks the
+same question again; `manual` (run it myself) and `tty` steps open one too.
+
+**Terminal sessions** stream as events: `term_start` (`term: {id, title}`),
+`term` (`term.data`: base64 output, secrets masked), and `term_end`. Send
+keystrokes and the viewer's size with:
+
+| Method | Path | Body |
+|---|---|---|
+| POST | `/api/runs/{id}/term` | `{id, data?, rows?, cols?}` (`data` is what was typed, as UTF-8) |
+
+What a session printed is recorded as the step's `output`, cleaned of
+terminal control codes.
 
 `step_finished` events carry `state`: the run's variables, secrets masked.
 `controls` events carry the live run's new `controls` after a PUT.

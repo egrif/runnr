@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"os"
 	"regexp"
@@ -183,19 +182,6 @@ type Options struct {
 	ShellOnly bool
 }
 
-// Attacher is implemented by interactors that own a real terminal: tty
-// steps, shells and by-hand steps run attached to it.
-type Attacher interface {
-	AttachedIO() (stdin io.Reader, stdout, stderr io.Writer)
-}
-
-// WindowLauncher is implemented by interactors without a terminal of their
-// own that can open terminal windows on the operator's machine (the GUI
-// server running locally).
-type WindowLauncher interface {
-	LaunchWindows() bool
-}
-
 // StepView is a step as it would run now: templates rendered against the
 // run's current state (values not known yet show as <name>).
 type StepView struct {
@@ -226,6 +212,8 @@ type Session interface {
 	Controls() *Controls
 	// Previous is the run being resumed or rerun, or the last run (may be nil).
 	Previous() *Run
+	// Mask hides the run's secrets in text.
+	Mask(string) string
 	// State returns the run's variables with secrets masked.
 	State() map[string]string
 	// CanShell reports whether Shell can work here.
@@ -273,7 +261,9 @@ type executor struct {
 	secrets    []string
 	secretVars map[string]bool
 	ctl        *Controls
-	mu         sync.Mutex
+	// lastTranscript is what the operator's most recent shell showed.
+	lastTranscript string
+	mu             sync.Mutex
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -645,8 +635,12 @@ func (x *executor) byHand(ctx context.Context, i int, step runbook.Step, cmd str
 	if v := x.View(i); len(v.Outputs)+len(v.SecretOutputs) > 0 {
 		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "then publish: " + strings.Join(append(v.Outputs, v.SecretOutputs...), ", ") + ` (echo name=value >> "$RUNNR_OUTPUT")`})
 	}
+	x.lastTranscript = ""
 	if err := x.shellViaUI(ctx, i); err != nil {
 		return "", "", err
+	}
+	if t := strings.TrimSpace(x.lastTranscript); t != "" {
+		x.run.Steps[i].Output = "── run by hand ──\n" + t + "\n"
 	}
 	msg := "How did running it by hand go?"
 	if v := x.View(i); v.Expect != "" {

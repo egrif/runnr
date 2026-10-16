@@ -89,8 +89,8 @@ func (x *executor) exec(ctx context.Context, i int, step runbook.Step, command s
 		// isn't recorded.
 		extra, _ := x.runnrEnv(step)
 		extra = append(extra, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile)
-		code, err := x.inTerminal(ctx, fmt.Sprintf("%s · step %d: %s", x.rb.Name, i+1, step.Name), shell, command, extra, dir)
-		res := cmdResult{exitCode: code, combined: "(ran in a terminal; output not recorded)\n"}
+		code, transcript, err := x.inTerminal(ctx, i, fmt.Sprintf("step %d: %s", i+1, step.Name), shell, command, extra, dir)
+		res := cmdResult{exitCode: code, combined: transcript, stdout: transcript}
 		switch {
 		case errors.Is(ctx.Err(), context.DeadlineExceeded):
 			res.err = fmt.Errorf("timed out after %s", step.Timeout)

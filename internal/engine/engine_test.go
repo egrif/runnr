@@ -377,10 +377,21 @@ func (s *stepper) Review(_ context.Context, plan []StepView, c *Controls) error 
 	c.Toggle("skip", 0)
 	return nil
 }
-func (s *stepper) AttachedIO() (io.Reader, io.Writer, io.Writer) {
-	return strings.NewReader(s.keys), io.Discard, io.Discard
+func (s *stepper) StartTerm(int, string) (TermConn, error) {
+	return &scriptConn{Reader: strings.NewReader(s.keys)}, nil
 }
-func (s *stepper) Bind(se Session) { s.session = se }
+
+// scriptConn is a terminal whose keyboard is a script.
+type scriptConn struct {
+	io.Reader
+	out strings.Builder
+}
+
+func (c *scriptConn) Write(b []byte) (int, error) { return c.out.Write(b) }
+func (c *scriptConn) Close() error                { return nil }
+func (c *scriptConn) Size() (uint16, uint16)      { return 24, 80 }
+func (c *scriptConn) Resized() <-chan struct{}    { return nil }
+func (s *stepper) Bind(se Session)                { s.session = se }
 
 func TestStepModeByHandAndReview(t *testing.T) {
 	t.Setenv("SHELL", "/bin/sh")
@@ -483,4 +494,46 @@ func (h *hookUI) Notify(e Event) {
 		h.onStart(e.Step)
 	}
 	h.stepper.Notify(e)
+}
+
+func TestTTYStepRecordsOutput(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - name: asks
+    tty: true
+    shell: bash
+    outputs: [answer]
+    run: |
+      printf '\033[1mbold\033[0m progress 10%%\rprogress 100%%\n'
+      read -p "Proceed? " answer
+      echo "you said $answer"
+      [ -t 0 ] && echo "stdin is a terminal"
+  - {name: after, run: 'echo "answer=$answer"'}
+`)
+	ui := &stepper{keys: "yes\n"}
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded {
+		t.Fatalf("%s %s", run.Status, run.Error)
+	}
+	out := run.Steps[0].Output
+	// Keys typed ahead are echoed when typed; the progress line keeps only its final redraw.
+	for _, want := range []string{"progress 100%", "Proceed?", "you said yes", "stdin is a terminal"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("transcript missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "\x1b") || strings.Contains(out, "10%") {
+		t.Fatalf("transcript not cleaned:\n%q", out)
+	}
+	if !slices.Contains(ui.output, "answer=yes") {
+		t.Fatalf("output %q", ui.output)
+	}
+}
+
+func TestCleanTranscript(t *testing.T) {
+	got := CleanTranscript("\x1b]0;title\x07\x1b[32mok\x1b[0m\r\nloading 1\rloading 2\r\nab\bc\r\n")
+	if got != "ok\nloading 2\nac\n" {
+		t.Fatalf("%q", got)
+	}
 }

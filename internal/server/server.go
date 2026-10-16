@@ -39,9 +39,6 @@ type Config struct {
 	Token string
 	// NoUI serves only the API.
 	NoUI bool
-	// Local: the server runs on the operator's machine, so terminal steps
-	// and shells may open Terminal windows there.
-	Local bool
 }
 
 func New(st *store.Store, cfg Config) *Server {
@@ -77,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
 	mux.HandleFunc("POST /api/runs/{id}/notes", s.addNote)
 	mux.HandleFunc("GET /api/runs/{id}/preview", s.runPreview)
+	mux.HandleFunc("POST /api/runs/{id}/term", s.termInput)
 	mux.HandleFunc("GET /api/runs/{id}/controls", s.getControls)
 	mux.HandleFunc("PUT /api/runs/{id}/controls", s.setControls)
 	mux.HandleFunc("POST /api/preview", s.preview)
@@ -430,7 +428,6 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	id := engine.NewRunID()
 	ctx, cancel := context.WithCancel(context.Background())
 	l := newLiveRun(id, cancel)
-	l.windows = s.cfg.Local
 	l.ctl = engine.NewControls(cv)
 	var ui engine.Interactor = l
 	if req.Unattended {
@@ -584,6 +581,35 @@ func (s *Server) setControls(w http.ResponseWriter, r *http.Request) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// termInput delivers keystrokes and size changes to a live run's terminal.
+func (s *Server) termInput(w http.ResponseWriter, r *http.Request) {
+	l := s.getLive(r.PathValue("id"))
+	if l == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	var req struct {
+		ID   string `json:"id"`
+		Data string `json:"data"`
+		Rows uint16 `json:"rows"`
+		Cols uint16 `json:"cols"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	c := l.term(req.ID)
+	if c == nil {
+		writeErr(w, fmt.Errorf("terminal %q has ended: %w", req.ID, store.ErrNotFound))
+		return
+	}
+	c.SetSize(req.Rows, req.Cols)
+	if req.Data != "" {
+		c.Input([]byte(req.Data))
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
 // parse turns YAML into the structured form the editor uses.
 func (s *Server) parse(w http.ResponseWriter, r *http.Request) {

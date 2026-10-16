@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -21,7 +20,6 @@ import (
 
 // Terminal is an interactive engine.Interactor on stdin/stdout.
 type Terminal struct {
-	in      *bufio.Reader
 	out     io.Writer
 	color   bool
 	total   int
@@ -35,11 +33,6 @@ type Terminal struct {
 	session engine.Session
 	// interrupts, when set, makes runnr ignore Ctrl-C while a shell runs.
 	interrupts *atomic.Bool
-}
-
-// AttachedIO lets tty steps take over the terminal.
-func (t *Terminal) AttachedIO() (io.Reader, io.Writer, io.Writer) {
-	return os.Stdin, os.Stdout, os.Stderr
 }
 
 // header prints the step title, preceded by its section when that changes.
@@ -63,7 +56,7 @@ func (t *Terminal) header(i int, r *engine.StepResult, dim bool) string {
 }
 
 func NewTerminal(total int) *Terminal {
-	return &Terminal{in: bufio.NewReader(os.Stdin), out: os.Stdout, color: isTTY(os.Stdout), total: total}
+	return &Terminal{out: os.Stdout, color: isTTY(os.Stdout), total: total}
 }
 
 func isTTY(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
@@ -91,9 +84,6 @@ func (t *Terminal) Notify(e engine.Event) {
 		fmt.Fprintf(t.out, "%s %s  %s\n", t.c("1", "runnr"), e.Run.Runbook, t.c("2", e.Run.ID))
 	case engine.EventStepStarted:
 		fmt.Fprintln(t.out, t.header(e.Step, e.Result, false))
-		if e.Result.Kind == "tty" {
-			fmt.Fprintln(t.out, t.c("2", "  (attached to terminal)"))
-		}
 	case engine.EventOutput:
 		if t.quiet {
 			return
@@ -134,27 +124,6 @@ func (t *Terminal) Notify(e engine.Event) {
 	}
 }
 
-func (t *Terminal) readLine(ctx context.Context) (string, error) {
-	type res struct {
-		s   string
-		err error
-	}
-	ch := make(chan res, 1)
-	go func() {
-		s, err := t.in.ReadString('\n')
-		ch <- res{strings.TrimSpace(s), err}
-	}()
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case r := <-ch:
-		if r.err == io.EOF && r.s == "" {
-			return "", engine.ErrAborted
-		}
-		return r.s, nil
-	}
-}
-
 func (t *Terminal) AskInput(ctx context.Context, in runbook.Input) (string, error) {
 	for {
 		label := t.c("1", in.Name)
@@ -171,10 +140,7 @@ func (t *Terminal) AskInput(ctx context.Context, in runbook.Input) (string, erro
 		var v string
 		var err error
 		if in.Secret && isTTY(os.Stdin) {
-			var b []byte
-			b, err = term.ReadPassword(int(os.Stdin.Fd()))
-			fmt.Fprintln(t.out)
-			v = string(b)
+			v, err = t.readSecret(ctx)
 		} else {
 			v, err = t.readLine(ctx)
 		}
@@ -629,13 +595,12 @@ func (t *Terminal) OpenShell(ctx context.Context, idx int) error {
 	fmt.Fprintln(t.out, t.c("2", "  ── runnr shell: the run's variables are in the environment (try `env`).\n"+
 		"     Publish values back with: echo name=value >> \"$RUNNR_OUTPUT\" (or $RUNNR_SECRET).\n"+
 		"     Type `exit` to return."))
+	defer fmt.Fprintln(t.out, t.c("2", "  ── back in runnr"))
 	if t.interrupts != nil {
 		t.interrupts.Store(true)
 		defer t.interrupts.Store(false)
 	}
-	err := t.session.Shell(ctx, idx)
-	fmt.Fprintln(t.out, t.c("2", "  ── back in runnr"))
-	return err
+	return t.session.Shell(ctx, idx)
 }
 
 func (t *Terminal) Confirm(ctx context.Context, idx int, _ runbook.Step, command string) (bool, error) {

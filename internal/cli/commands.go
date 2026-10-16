@@ -248,8 +248,12 @@ func editLoop(st *store.Store, name string) error {
 			return fmt.Errorf("%w\nyour edits are in %s; merge them into `runnr edit %s` again", err, tmp.Name(), name)
 		}
 		fmt.Fprintln(os.Stderr, "invalid runbook:\n"+indent(err.Error()))
-		a, err := t.choose(context.Background(), "[e]dit again / [d]iscard changes:", map[string]string{"e": "e", "d": "d", "": "e"}, "e")
-		if err != nil || a == "d" {
+		// Read directly (not via the shared keyboard reader), since the
+		// editor needs stdin to itself next.
+		fmt.Fprint(os.Stderr, t.c("33;1", "  ? ")+"[e]dit again / [d]iscard changes: ")
+		var a string
+		_, _ = fmt.Fscanln(os.Stdin, &a)
+		if strings.HasPrefix(strings.ToLower(a), "d") {
 			return errors.New("changes discarded")
 		}
 	}
@@ -949,7 +953,7 @@ interfaces, set --token (or RUNNR_TOKEN); API clients then send
 			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			srv := server.New(s(), server.Config{Token: token, NoUI: noUI, Local: isLoopback(addr)})
+			srv := server.New(s(), server.Config{Token: token, NoUI: noUI})
 			url := "http://" + addr
 			what := "GUI and API"
 			if noUI {

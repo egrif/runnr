@@ -32,8 +32,9 @@ func (x *executor) View(i int) StepView {
 	return v
 }
 
-func (x *executor) Controls() *Controls { return x.ctl }
-func (x *executor) Previous() *Run      { return x.opts.Previous }
+func (x *executor) Controls() *Controls  { return x.ctl }
+func (x *executor) Previous() *Run       { return x.opts.Previous }
+func (x *executor) Mask(s string) string { return x.mask(s) }
 
 func (x *executor) Plan() []StepView {
 	out := make([]StepView, len(x.rb.Steps))
@@ -55,11 +56,8 @@ func (x *executor) State() map[string]string {
 }
 
 func (x *executor) CanShell() bool {
-	if _, ok := x.ui.(Attacher); ok {
-		return true
-	}
-	w, ok := x.ui.(WindowLauncher)
-	return ok && w.LaunchWindows()
+	_, ok := x.ui.(TermHost)
+	return ok
 }
 
 func (x *executor) Shell(ctx context.Context, idx int) error { return x.openShell(ctx, idx) }
@@ -77,10 +75,10 @@ func (x *executor) shellViaUI(ctx context.Context, idx int) error {
 // published to $RUNNR_OUTPUT/$RUNNR_SECRET.
 func (x *executor) openShell(ctx context.Context, idx int) error {
 	var step runbook.Step
-	title := x.rb.Name
+	title := "shell"
 	if idx >= 0 && idx < len(x.rb.Steps) {
 		step = x.rb.Steps[idx]
-		title = fmt.Sprintf("%s · step %d: %s", x.rb.Name, idx+1, step.Name)
+		title = fmt.Sprintf("shell · step %d: %s", idx+1, step.Name)
 	}
 	extra, err := x.runnrEnv(step)
 	if err != nil {
@@ -98,7 +96,9 @@ func (x *executor) openShell(ctx context.Context, idx int) error {
 	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
 	extra = append(extra, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile, "RUNNR_SHELL=1")
 
-	if _, err := x.inTerminal(ctx, title, "", "", extra, dir); err != nil {
+	_, transcript, err := x.inTerminal(ctx, idx, title, "", "", extra, dir)
+	x.lastTranscript = x.mask(transcript)
+	if err != nil {
 		return err
 	}
 	var res cmdResult

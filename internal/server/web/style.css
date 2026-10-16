@@ -204,3 +204,17 @@ table.inputs input:not([type=checkbox]) { width: 100%; }
 table.inputs tbody tr:hover { background: none; cursor: default; }
 .icon-btn { padding: 2px 8px; }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
+
+#term-drawer { position: fixed; left: 260px; right: 0; bottom: 0; height: 42vh; background: #15171c; border-top: 2px solid var(--accent); display: flex; flex-direction: column; z-index: 10; box-shadow: 0 -6px 20px rgba(0,0,0,.2); }
+#term-drawer.ended { border-top-color: var(--muted); }
+#term-drawer[hidden] { display: none; }
+.term-head { display: flex; gap: 10px; align-items: center; padding: 6px 12px; color: #e4e6eb; font-size: 13px; border-bottom: 1px solid #2c2e35; }
+.term-head .muted { color: #9a9ba3; }
+.term-head .link { color: #8fb4ff; }
+.term-title { font-weight: 600; }
+.term-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+#term-drawer.ended .term-dot { background: var(--muted); }
+.term-body { flex: 1; min-height: 0; padding: 4px 8px; }
+body.term-open main { padding-bottom: calc(42vh + 24px); }
+.term-note { margin: 4px 0; color: var(--accent); font-weight: 600; }
+@media (max-width: 760px) { #term-drawer { left: 0; } }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -214,16 +215,14 @@ func TestForceAndNotesOverHTTP(t *testing.T) {
 	}
 }
 
-func TestStepModeSkipAndTerminalWindow(t *testing.T) {
-	// Stand-in for opening a Terminal window: run the script directly.
-	t.Setenv("RUNNR_TERMINAL", "sh")
+func TestStepModeSkipAndBrowserTerminal(t *testing.T) {
 	st, _ := store.Open(t.TempDir(), "")
-	ts := httptest.NewServer(New(st, Config{Local: true}).Handler())
+	ts := httptest.NewServer(New(st, Config{}).Handler())
 	defer ts.Close()
 
 	do(t, "POST", ts.URL+"/api/runbooks", `name: w
 steps:
-  - {name: tty, run: 'answer=42', tty: true, outputs: [answer]}
+  - {name: tty, run: 'read x; echo "got $x"; answer=42', tty: true, outputs: [answer]}
   - {name: left-out, run: 'exit 1'}
   - {name: skipped-live, run: 'exit 1'}
   - {name: last, run: 'echo "answer=$answer"', expect: 'prints 42'}
@@ -242,6 +241,8 @@ steps:
 	defer deadline.Stop()
 	var output []string
 	var sawExpect bool
+	var termOut strings.Builder
+	termEnded := false
 	for sc.Scan() {
 		line, ok := strings.CutPrefix(sc.Text(), "data: ")
 		if !ok {
@@ -263,6 +264,14 @@ steps:
 			do(t, "POST", ts.URL+"/api/runs/"+started.ID+"/answer", string(body), nil)
 		case engine.EventOutput:
 			output = append(output, e.Text)
+		case "term_start":
+			// Type into the browser terminal.
+			do(t, "POST", ts.URL+"/api/runs/"+started.ID+"/term", `{"id":"`+e.Term.ID+`","data":"hello\r","rows":40,"cols":100}`, nil)
+		case "term":
+			b, _ := base64.StdEncoding.DecodeString(e.Term.Data)
+			termOut.Write(b)
+		case "term_end":
+			termEnded = true
 		}
 		if e.Kind == engine.EventRunFinished {
 			break
@@ -281,5 +290,8 @@ steps:
 	}
 	if !slices.Contains(output, "answer=42") || run.State["answer"] != "42" || !sawExpect {
 		t.Fatalf("output %q state %v expect %v", output, run.State, sawExpect)
+	}
+	if !strings.Contains(termOut.String(), "got hello") || !termEnded || !strings.Contains(run.Steps[0].Output, "got hello") {
+		t.Fatalf("terminal %q ended %v recorded %q", termOut.String(), termEnded, run.Steps[0].Output)
 	}
 }

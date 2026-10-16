@@ -153,13 +153,10 @@ multi-day procedures, abort at a "wait" step and resume later.
   are dropped (it asks first).
 - History, versions, notes.
 
-When the server runs on your own machine, steps that need a terminal (`tty`),
-"run it myself", and "open shell" open a **Terminal window** with the run's
-variables loaded, and the run waits for it to finish. On macOS that's
-Terminal.app (`RUNNR_TERMINAL_APP=iTerm` for iTerm); elsewhere
-`x-terminal-emulator`, or set `RUNNR_TERMINAL` to a command that runs a script
-in a new window. On a remote server those steps fall back to manual
-instructions.
+Steps that need a terminal (`tty`), "run it myself" and "open shell" get a
+**terminal in the page**: you type into it as in any terminal, everyone
+watching the run sees it, and what it printed is recorded with the step.
+This works whether the server is local or remote.
 
 It binds to `127.0.0.1` by default and refuses other addresses unless you set
 an API token (`--token` or `RUNNR_TOKEN`), since it can run commands. See
@@ -236,11 +233,17 @@ prompts (`e`), and restored on resume.
 `expect` describes what success looks like; it's shown when reviewing,
 inspecting, and running a step yourself.
 
-`tty` steps run attached to your terminal under `runnr run`, or in a Terminal
-window from a local GUI; their output isn't recorded. Without a terminal
-(remote GUI, unattended) they become manual steps ("run this in a terminal"),
-following their `unattended` policy. Shell aliases aren't loaded in
-steps, so call real binaries (`terraform`, not `tf`).
+**Terminal steps.** A normal step has no keyboard: its output is captured,
+but anything that stops to ask (like `terraform apply`'s approval) fails.
+`tty: true` runs the step on a pseudo-terminal connected to you: your
+terminal under `runnr run`, or a terminal in the page in the GUI. The command
+sees a real terminal (prompts, colours, progress bars), you type as usual
+(Ctrl-C goes to the command, not runnr), and the output is shown live *and*
+recorded with the step, cleaned of colour and cursor codes, secrets masked.
+Shells (`!`) and "run it myself" work the same way, so what you did by hand
+is recorded too. Unattended runs have no one to type, so `tty` steps follow
+their `unattended` policy. Shell aliases aren't loaded in steps, so call real
+binaries (`terraform`, not `tf`).
 
 Secrets published via `$RUNNR_SECRET` are masked from the moment they're
 published; don't echo them in the step that creates them.

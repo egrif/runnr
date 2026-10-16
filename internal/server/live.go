@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -36,18 +37,18 @@ type WireEvent struct {
 	Answered string        `json:"answered,omitempty"`
 	Note     *engine.Note  `json:"note,omitempty"`
 	Controls *controlsJSON `json:"controls,omitempty"`
+	Term     *TermEvent    `json:"term,omitempty"`
 }
 
 // liveRun is an in-progress (or recently finished) run driven by the GUI.
 // It implements engine.Interactor.
 type liveRun struct {
-	id     string
-	cancel context.CancelFunc
-	// windows: this server runs on the operator's machine, so terminal
-	// steps and shells can open Terminal windows.
-	windows bool
+	id      string
+	cancel  context.CancelFunc
 	session engine.Session
 	ctl     *engine.Controls
+	terms   map[string]*engine.PipeConn
+	tseq    int
 
 	mu      sync.Mutex
 	events  []WireEvent
@@ -141,9 +142,54 @@ func (l *liveRun) ask(ctx context.Context, q Question) (Answer, error) {
 
 func (l *liveRun) Notify(e engine.Event) { l.publish(WireEvent{Event: e}) }
 
-func (l *liveRun) LaunchWindows() bool    { return l.windows }
 func (l *liveRun) Bind(se engine.Session) { l.session = se }
-func (l *liveRun) canShell() bool         { return l.session != nil && l.session.CanShell() }
+
+// TermEvent carries an in-browser terminal session: term_start (ID,
+// Title), term (Data: base64 output), term_end.
+type TermEvent struct {
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+	Data  string `json:"data,omitempty"`
+}
+
+// StartTerm implements engine.TermHost with a terminal in the browser:
+// output is streamed to everyone watching the run (secrets masked), and
+// keystrokes come back through POST /api/runs/{id}/term.
+func (l *liveRun) StartTerm(idx int, title string) (engine.TermConn, error) {
+	l.mu.Lock()
+	l.tseq++
+	id := fmt.Sprintf("t%d", l.tseq)
+	l.mu.Unlock()
+	conn := engine.NewPipeConn(func(b []byte) {
+		text := string(b)
+		if l.session != nil {
+			text = l.session.Mask(text)
+		}
+		l.publish(WireEvent{Event: engine.Event{Kind: "term", Step: idx}, Term: &TermEvent{ID: id, Data: base64.StdEncoding.EncodeToString([]byte(text))}})
+	}, 30, 120)
+	l.mu.Lock()
+	if l.terms == nil {
+		l.terms = map[string]*engine.PipeConn{}
+	}
+	l.terms[id] = conn
+	l.mu.Unlock()
+	l.publish(WireEvent{Event: engine.Event{Kind: "term_start", Step: idx}, Term: &TermEvent{ID: id, Title: title}})
+	go func() {
+		<-conn.Done()
+		l.mu.Lock()
+		delete(l.terms, id)
+		l.mu.Unlock()
+		l.publish(WireEvent{Event: engine.Event{Kind: "term_end", Step: idx}, Term: &TermEvent{ID: id}})
+	}()
+	return conn, nil
+}
+
+func (l *liveRun) term(id string) *engine.PipeConn {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.terms[id]
+}
+func (l *liveRun) canShell() bool { return l.session != nil && l.session.CanShell() }
 
 // askStep asks q, handling "shell" answers (open a shell window, then ask
 // again) itself. Other answers are returned.

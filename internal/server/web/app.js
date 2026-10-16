@@ -118,6 +118,7 @@ $("#new-btn").addEventListener("click", () => (location.hash = "#/new"));
 
 async function route() {
   if (stream) { stream.close(); stream = null; }
+  resetTerm();
   const h = location.hash || "#/";
   renderSidebar();
   let m;
@@ -208,6 +209,11 @@ async function viewRun(id) {
       state.steps.forEach((s) => (s.log = []));
     }
     first = false;
+    if (e.kind.startsWith("term")) {
+      termEvent(id, e);
+      if (e.kind === "term") return; // terminal output doesn't change the page
+      state.termStep = e.kind === "term_start" ? e.step : null;
+    }
     applyEvent(state, e);
     renderRun(state);
   };
@@ -237,6 +243,10 @@ function applyEvent(state, e) {
     case "step_finished":
       Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes });
       if (e.state) { state.run.state = e.state; state.onState?.(); }
+      // Terminal sessions aren't streamed into the log; show the recorded transcript.
+      if (!state.steps[e.step].log.length && e.result.output) {
+        state.steps[e.step].log = e.result.output.replace(/\n$/, "").split("\n").map((t) => ({ stream: "stdout", text: t }));
+      }
       if (e.result.status === "succeeded" && !e.result.output) state.open.delete(e.step);
       break;
     case "question":
@@ -302,6 +312,7 @@ function renderRun(state) {
             <button class="pill ${has(ctl.pause_after, i) ? "on" : ""}" data-ctl="pause_after" data-i="${i}" title="Stop after this step to check it">⏸ after</button>` : ""}
         </div>
         ${state.question?.step === i ? `<div class="step-body">${renderQuestion(state.question, run.id)}</div>` : ""}
+        ${state.termStep === i ? `<div class="step-body"><p class="term-note">⌨ Connected to the terminal below — type there.</p></div>` : ""}
         ${s.notes?.length ? `<div class="step-body">${renderNotes(s.notes)}</div>` : ""}
         ${state.open.has(i) ? `<div class="step-body ${state.prev ? "two-col" : ""}"><div>
           ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i])}` : `
@@ -375,7 +386,7 @@ function renderQuestion(q, runId) {
   }
   let text = ["confirm", "before"].includes(q.type) ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
   if (q.expect) text += `<div class="expect"><b>Expect:</b> ${esc(q.expect)}</div>`;
-  if (q.options?.includes("shell") || q.options?.includes("manual")) text += `<div class="muted">“Run it myself” and “Open shell” open a Terminal window with this run's variables loaded.</div>`;
+  if (q.options?.includes("shell") || q.options?.includes("manual")) text += `<div class="muted">“Run it myself” and “Open shell” open a terminal at the bottom of the page with this run's variables loaded.</div>`;
   return `<div class="question"><h3>${esc(q.title)}</h3>${text}<div class="actions">${body}</div></div>`;
 }
 
@@ -460,7 +471,7 @@ steps:
     expect: what success looks like (shown when reviewing / running by hand)
   - name: Needs a terminal
     run: terraform apply
-    tty: true                # CLI: attached; GUI/unattended: becomes a manual step
+    tty: true                # needs a keyboard: runs on a terminal you type into; output still recorded
     continue_on_error: true
     dir: /tmp
     env: { FOO: bar }
