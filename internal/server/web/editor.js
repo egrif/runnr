@@ -250,51 +250,48 @@ const MORE_FIELDS = [
 const isSet = (v) => v !== undefined && v !== "" && v !== false && !(Array.isArray(v) && !v.length) && !(v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
 
 // checkRow puts checkboxes side by side, in columns that line up.
-function checkRow(boxes, cls = "") {
-  return `<div class="check-grid">${boxes.map(([label, help, ctl, set]) =>
-    `<label class="check ${cls} ${set ? "" : "unset"}">${ctl}<span>${esc(label)}</span>${helpIcon(help)}</label>`).join("")}</div>`;
+function checkRow(boxes) {
+  return `<div class="check-grid">${boxes.map(([label, help, ctl]) =>
+    `<label class="check">${ctl}<span>${esc(label)}</span>${helpIcon(help)}</label>`).join("")}</div>`;
 }
 
-// detailsPane: the common fields, then Advanced. Collapsed, Advanced still
-// shows the fields that are set; open, it shows them all.
+// detailsPane: the common fields and any advanced ones that are set, then
+// Advanced, which opens to offer the rest.
 function detailsPane(ed, d, s, i) {
   const kind = kindOf(s);
   const P = `steps.${i}`;
   const later = d.steps.slice(i + 1).map((o, k) => [o.id || o.name, `${i + k + 2}. ${o.name}`]);
-  const main = [
-    row("Name", H.step.name, control(`${P}.name`, "text", s.name)),
-    row("What we're doing", H.step.description, control(`${P}.description`, "area", s.description, { placeholder: "what this step does, and why" })),
-    row("By the end", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "how things should stand when it's done" })),
-    row("Section", H.step.section, control(`${P}.section`, "text", s.section)),
-    row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner)),
-  ];
-  const fields = MORE_FIELDS.filter(([, , , , applies]) => applies(kind));
-  const open = ed.adv.has(i);
-  const nSet = fields.filter(([k]) => isSet(s[k])).length;
-  const groups = [...new Set(fields.map((f) => f[5]))].map((g) => {
-    const fs = fields.filter((f) => f[5] === g);
+  const fieldRow = ([k, label, fkind, help]) => {
+    let ctl;
+    if (fkind === "repeat") ctl = `<div class="row tight">${control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "every, e.g. 20s" })}${control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "give up after, e.g. 10m" })}</div>`;
+    else if (fkind === "select") ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "fail (default)"], ["skip", "skip"], ["pass", "pass"]] });
+    else ctl = control(`${P}.${k}`, fkind, s[k]);
+    return row(label, help, ctl);
+  };
+  const box = ([k, label, , help]) => [label, help, control(`${P}.${k}`, "bool", s[k])];
+  // fields renders a set of fields: checkboxes together, then the rest.
+  const fields = (fs) => {
     const bools = fs.filter((f) => f[2] === "bool");
-    const others = fs.filter((f) => f[2] !== "bool");
-    const rows = others.map(([k, label, fkind, help]) => {
-      let ctl;
-      if (fkind === "repeat") ctl = `<div class="row tight">${control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "every, e.g. 20s" })}${control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "give up after, e.g. 10m" })}</div>`;
-      else if (fkind === "select") ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "fail (default)"], ["skip", "skip"], ["pass", "pass"]] });
-      else ctl = control(`${P}.${k}`, fkind, s[k]);
-      return `<label class="frow ${isSet(s[k]) ? "" : "unset"}"><span class="flabel">${esc(label)}${helpIcon(help)}</span>${ctl}</label>`;
-    });
-    if (g === "Behaviour" && s.background) {
-      rows.push(`<label class="frow">${`<span class="flabel">Stop after${helpIcon(H.step.stop_after)}</span>`}${control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })}</label>`);
-    }
-    const anySet = fs.some(([k]) => isSet(s[k]));
-    return `<div class="adv-title ${anySet ? "" : "unset"}">${esc(g)}</div>
-      ${bools.length ? checkRow(bools.map(([k, label, , help]) => [label, help, control(`${P}.${k}`, "bool", s[k]), isSet(s[k])])) : ""}
-      ${rows.join("")}`;
-  });
-  // One grid, so every input lines up, Advanced included.
-  return `<div class="fgroup-rows ${open ? "" : "adv-closed"}">${main.join("")}
-    ${checkRow([["Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm), true]])}
-    <button class="link adv-toggle" data-act="adv" data-i="${i}">${open ? "▾" : "▸"} Advanced${!open && nSet ? ` <span class="muted">(${nSet} set)</span>` : ""}</button>
-    ${groups.join("")}</div>`;
+    return (bools.length ? checkRow(bools.map(box)) : "") + fs.filter((f) => f[2] !== "bool").map(fieldRow).join("");
+  };
+  const all = MORE_FIELDS.filter(([, , , , applies]) => applies(kind));
+  const set = all.filter(([k]) => isSet(s[k]));
+  const unset = all.filter(([k]) => !isSet(s[k]));
+  const open = ed.adv.has(i);
+  const rest = open ? [...new Set(unset.map((f) => f[5]))].map((g) =>
+    `<div class="adv-title">${esc(g)}</div>${fields(unset.filter((f) => f[5] === g))}`).join("") : "";
+  // One grid, so every input lines up.
+  return `<div class="fgroup-rows">
+    ${row("Name", H.step.name, control(`${P}.name`, "text", s.name))}
+    ${row("What we're doing", H.step.description, control(`${P}.description`, "area", s.description, { placeholder: "what this step does, and why" }))}
+    ${row("By the end", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "how things should stand when it's done" }))}
+    ${row("Section", H.step.section, control(`${P}.section`, "text", s.section))}
+    ${row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner))}
+    ${checkRow([["Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)], ...set.filter((f) => f[2] === "bool").map(box)])}
+    ${s.background ? row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })) : ""}
+    ${set.filter((f) => f[2] !== "bool").map(fieldRow).join("")}
+    ${unset.length ? `<button class="link adv-toggle" data-act="adv" data-i="${i}">${open ? "▾" : "▸"} Advanced <span class="muted">(${unset.length} more)</span></button>` : ""}
+    <div class="adv-rest">${rest}</div></div>`;
 }
 
 // The Run this pane: runs just this step (with the edits as they are now),
@@ -540,8 +537,15 @@ function renderStruct(ed) {
     const el = t.closest("[data-path]");
     if (!el) return;
     setPath(d, el.dataset.path, readField(el));
-    // Structure-changing fields redraw the form.
-    if (e.type === "change" && /\.(name|background|section|confirm|always|continue_on_error|tty)$/.test(el.dataset.path)) renderStruct(ed);
+    // Structure-changing fields redraw the form. So does an advanced field
+    // that's now set (or cleared): it moves above the fold (or back).
+    const m = el.dataset.path.match(/^steps\.(\d+)\.([a-z_]+)/);
+    const moved = m && MORE_FIELDS.some(([k]) => k === m[2]) && !!el.closest(".adv-rest") === isSet(d.steps[+m[1]][m[2]]);
+    if (e.type === "change" && (moved || /\.(name|section|confirm|background)$/.test(el.dataset.path))) {
+      const focus = document.activeElement?.dataset?.path;
+      renderStruct(ed);
+      if (focus) pane.querySelector(`[data-path="${CSS.escape(focus)}"]`)?.focus();
+    }
   };
   pane.onclick = (e) => {
     const b = e.target.closest("[data-act]");

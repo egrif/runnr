@@ -353,7 +353,7 @@ body.dragging { user-select: none; cursor: col-resize; }
 /* Checkboxes several to a line, in columns that line up */
 .check-grid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 12px; margin: 2px 0; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; min-width: 0; }
-/* Advanced: collapsed, only what's set shows */
+/* Advanced: the fields that aren't set */
+.adv-rest { display: contents; }
 .adv-toggle { grid-column: 1 / -1; justify-self: start; font-weight: 600; padding: 6px 0 0; margin-top: 4px; border-top: 1px dashed var(--border); width: 100%; text-align: left; }
 .adv-title { grid-column: 1 / -1; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 6px; }
-.adv-closed .unset { display: none; }

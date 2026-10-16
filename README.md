@@ -153,7 +153,7 @@ multi-day procedures, abort at a "wait" step and resume later.
 - **Editing**: YAML with live validation, or a **structured view** (switch
   any time). Each step opens as **details | command | run**: the common
   details (what we're doing, by the end, section, owner, confirm) with an
-  **Advanced** section for the rest (collapsed, it still shows what's set),
+  **Advanced** section for the rest (any that are set show above it),
   then the command or procedure. **Run this** runs just that step with your
   unsaved edits in a third pane (the earlier `always` steps first if you
   like; nothing after it runs), using the runbook's **test values** (inputs and
