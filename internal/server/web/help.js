@@ -92,6 +92,29 @@ function helpIcon(text) {
   return text ? `<span class="info" tabindex="0" data-tip="${esc(text)}" aria-label="${esc(text)}">ⓘ</span>` : "";
 }
 
+// The tip floats on the page (position: fixed), kept inside the viewport.
+(() => {
+  let tip;
+  const show = (el) => {
+    tip ||= Object.assign(document.createElement("div"), { id: "tip" });
+    tip.textContent = el.dataset.tip;
+    tip.style.left = tip.style.top = "0px";
+    document.body.append(tip);
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    const left = Math.max(8, Math.min(r.left + r.width / 2 - 40, innerWidth - t.width - 8));
+    const below = r.bottom + 6 + t.height <= innerHeight - 8;
+    tip.style.left = left + "px";
+    tip.style.top = (below ? r.bottom + 6 : Math.max(8, r.top - 6 - t.height)) + "px";
+  };
+  const hide = () => tip?.remove();
+  const at = (e) => e.target.closest?.(".info[data-tip]");
+  document.addEventListener("mouseover", (e) => { const el = at(e); if (el) show(el); });
+  document.addEventListener("mouseout", (e) => { if (at(e)) hide(); });
+  document.addEventListener("focusin", (e) => { const el = at(e); if (el) show(el); });
+  document.addEventListener("focusout", (e) => { if (at(e)) hide(); });
+  document.addEventListener("scroll", hide, true);
+})();
+
 function helpTable(group, keys) {
   return `<table class="help-fields"><tbody>${keys.map(([k, label]) =>
     `<tr><td><code>${esc(label || k)}</code></td><td>${esc(FIELD_HELP[group][k])}</td></tr>`).join("")}</tbody></table>`;

@@ -269,11 +269,9 @@ label.small { font-size: 12px; display: inline-flex; gap: 4px; align-items: cent
 .kind-seg { margin-bottom: 10px; align-items: center; }
 /* ⓘ help */
 .info { position: relative; display: inline-block; color: var(--accent); font-weight: 400; font-size: 12px; cursor: help; text-transform: none; letter-spacing: 0; }
-.info:hover::after, .info:focus::after {
-  content: attr(data-tip); position: absolute; left: 50%; top: 130%; transform: translateX(-30%); z-index: 20;
-  width: max-content; max-width: 320px; white-space: normal; background: var(--text); color: var(--bg);
-  padding: 8px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; font-weight: 400; box-shadow: 0 4px 12px rgba(0,0,0,.2);
-}
+/* One floating tip for every ⓘ, placed by help.js so containers can't clip it. */
+#tip { position: fixed; z-index: 1000; max-width: 340px; background: var(--text); color: var(--bg); padding: 8px 10px; border-radius: 6px;
+  font-size: 12px; line-height: 1.4; font-weight: 400; white-space: normal; box-shadow: 0 4px 12px rgba(0,0,0,.2); pointer-events: none; }
 /* Help page */
 .help { max-width: 900px; }
 .help h2 { margin-top: 32px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
@@ -351,3 +349,11 @@ body.dragging { user-select: none; cursor: col-resize; }
 .se-command { min-width: 0; }
 .se-command .kind-seg { flex-wrap: wrap; }
 .se-command .kind-seg button { font-size: 12px; padding: 4px 10px; }
+
+/* Checkboxes several to a line, in columns that line up */
+.check-grid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 12px; margin: 2px 0; }
+.check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; min-width: 0; }
+/* Advanced: collapsed, only what's set shows */
+.adv-toggle { grid-column: 1 / -1; justify-self: start; font-weight: 600; padding: 6px 0 0; margin-top: 4px; border-top: 1px dashed var(--border); width: 100%; text-align: left; }
+.adv-title { grid-column: 1 / -1; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 6px; }
+.adv-closed .unset { display: none; }

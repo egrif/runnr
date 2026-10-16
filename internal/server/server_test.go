@@ -307,6 +307,7 @@ steps:
   - {name: setup, always: true, run: 'region=use1', outputs: [region]}
   - {name: other, run: 'exit 1'}
   - {name: target, run: 'echo "env=$env region=$region extra=$extra"'}
+  - {name: later, always: true, run: 'echo later-ran'}
 `
 	body, _ := json.Marshal(map[string]any{"raw": raw, "step": 3, "vars": map[string]string{"env": "staging"}, "extra": map[string]string{"extra": "x1"}, "setup": true, "unattended": true})
 	res := do(t, "POST", ts.URL+"/api/test-run", string(body), nil)
@@ -337,7 +338,7 @@ steps:
 			final = e.Run
 		}
 	}
-	if final == nil || final.Status != engine.StatusSucceeded || !slices.Contains(output, "env=staging region=use1 extra=x1") {
+	if final == nil || final.Status != engine.StatusSucceeded || !slices.Contains(output, "env=staging region=use1 extra=x1") || slices.Contains(output, "later-ran") {
 		t.Fatalf("%+v %q", final, output)
 	}
 	if runs, _ := st.ListRuns("", 10); len(runs) != 0 {

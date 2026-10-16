@@ -937,7 +937,8 @@ func (s *Server) testRun(w http.ResponseWriter, r *http.Request) {
 	}
 	var skip []int
 	for i, st := range rb.Steps {
-		if i+1 != req.Step && !(req.Setup && st.Always) {
+		// Setup is the always steps before it; nothing after it runs.
+		if i+1 != req.Step && !(req.Setup && st.Always && i+1 < req.Step) {
 			skip = append(skip, i+1)
 		}
 	}

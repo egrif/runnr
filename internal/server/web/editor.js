@@ -226,7 +226,7 @@ function stepLeft(s, i) {
   return seg + body;
 }
 
-// Optional step fields, offered under "More fields". [key, label, kind, help, applies(step kind), group]
+// Less-used step fields, under Advanced. [key, label, kind, help, applies(step kind), group]
 const MORE_FIELDS = [
   ["always", "Always run", "bool", H.step.always, () => true, "Behaviour"],
   ["continue_on_error", "Keep going if it fails", "bool", H.step.continue_on_error, () => true, "Behaviour"],
@@ -249,44 +249,52 @@ const MORE_FIELDS = [
 
 const isSet = (v) => v !== undefined && v !== "" && v !== false && !(Array.isArray(v) && !v.length) && !(v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
 
-// detailsPane: the common fields, any others that are set or were added,
-// and a menu to add the rest.
+// checkRow puts checkboxes side by side, in columns that line up.
+function checkRow(boxes, cls = "") {
+  return `<div class="check-grid">${boxes.map(([label, help, ctl, set]) =>
+    `<label class="check ${cls} ${set ? "" : "unset"}">${ctl}<span>${esc(label)}</span>${helpIcon(help)}</label>`).join("")}</div>`;
+}
+
+// detailsPane: the common fields, then Advanced. Collapsed, Advanced still
+// shows the fields that are set; open, it shows them all.
 function detailsPane(ed, d, s, i) {
   const kind = kindOf(s);
   const P = `steps.${i}`;
-  const shown = ed.more.get(i) || new Set();
   const later = d.steps.slice(i + 1).map((o, k) => [o.id || o.name, `${i + k + 2}. ${o.name}`]);
-  const rows = [
+  const main = [
     row("Name", H.step.name, control(`${P}.name`, "text", s.name)),
     row("What we're doing", H.step.description, control(`${P}.description`, "area", s.description, { placeholder: "what this step does, and why" })),
     row("By the end", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "how things should stand when it's done" })),
     row("Section", H.step.section, control(`${P}.section`, "text", s.section)),
     row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner)),
-    row("Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)),
   ];
-  const extra = MORE_FIELDS.filter(([k, , , , applies]) => applies(kind) && (isSet(s[k]) || shown.has(k)));
-  for (const [k, label, fkind, help] of extra) {
-    const remove = `<button class="icon-btn small-x" data-act="less" data-i="${i}" data-field="${k}" title="Remove this setting">✕</button>`;
-    let ctl;
-    if (fkind === "repeat") {
-      ctl = `<div class="row tight">${control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "every, e.g. 20s" })}${control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "give up after, e.g. 10m" })}</div>`;
-    } else if (fkind === "select") {
-      ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "fail (default)"], ["skip", "skip"], ["pass", "pass"]] });
-    } else {
-      ctl = control(`${P}.${k}`, fkind, s[k]);
+  const fields = MORE_FIELDS.filter(([, , , , applies]) => applies(kind));
+  const open = ed.adv.has(i);
+  const nSet = fields.filter(([k]) => isSet(s[k])).length;
+  const groups = [...new Set(fields.map((f) => f[5]))].map((g) => {
+    const fs = fields.filter((f) => f[5] === g);
+    const bools = fs.filter((f) => f[2] === "bool");
+    const others = fs.filter((f) => f[2] !== "bool");
+    const rows = others.map(([k, label, fkind, help]) => {
+      let ctl;
+      if (fkind === "repeat") ctl = `<div class="row tight">${control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "every, e.g. 20s" })}${control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "give up after, e.g. 10m" })}</div>`;
+      else if (fkind === "select") ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "fail (default)"], ["skip", "skip"], ["pass", "pass"]] });
+      else ctl = control(`${P}.${k}`, fkind, s[k]);
+      return `<label class="frow ${isSet(s[k]) ? "" : "unset"}"><span class="flabel">${esc(label)}${helpIcon(help)}</span>${ctl}</label>`;
+    });
+    if (g === "Behaviour" && s.background) {
+      rows.push(`<label class="frow">${`<span class="flabel">Stop after${helpIcon(H.step.stop_after)}</span>`}${control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })}</label>`);
     }
-    rows.push(`<label class="frow"><span class="flabel">${esc(label)}${helpIcon(help)}</span><span class="with-x">${ctl}${remove}</span></label>`);
-    if (k === "background" && s.background) {
-      rows.push(row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })));
-    }
-  }
-  const available = MORE_FIELDS.filter(([k, , , , applies]) => applies(kind) && !extra.some(([e]) => e === k));
-  const groups = [...new Set(available.map((f) => f[5]))];
-  const menu = available.length ? `<select class="more-fields" data-more="${i}">
-      <option value="">+ More fields…</option>
-      ${groups.map((g) => `<optgroup label="${esc(g)}">${available.filter((f) => f[5] === g).map(([k, label]) => `<option value="${k}">${esc(label)}</option>`).join("")}</optgroup>`).join("")}
-    </select>` : "";
-  return `<div class="fgroup-rows">${rows.join("")}</div>${menu}`;
+    const anySet = fs.some(([k]) => isSet(s[k]));
+    return `<div class="adv-title ${anySet ? "" : "unset"}">${esc(g)}</div>
+      ${bools.length ? checkRow(bools.map(([k, label, , help]) => [label, help, control(`${P}.${k}`, "bool", s[k]), isSet(s[k])])) : ""}
+      ${rows.join("")}`;
+  });
+  // One grid, so every input lines up, Advanced included.
+  return `<div class="fgroup-rows ${open ? "" : "adv-closed"}">${main.join("")}
+    ${checkRow([["Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm), true]])}
+    <button class="link adv-toggle" data-act="adv" data-i="${i}">${open ? "▾" : "▸"} Advanced${!open && nSet ? ` <span class="muted">(${nSet} set)</span>` : ""}</button>
+    ${groups.join("")}</div>`;
 }
 
 // The Run this pane: runs just this step (with the edits as they are now),
@@ -394,7 +402,7 @@ function renderStruct(ed) {
   const d = ed.doc;
   d.inputs ||= [];
   d.steps ||= [];
-  ed.more ||= new Map();
+  ed.adv ||= new Set();
   ed.runs ||= new Map();
   ed.widths ||= [null, null]; // px once dragged; proportional until then
   const pane = $("#struct-pane");
@@ -512,13 +520,6 @@ function renderStruct(ed) {
       d.sections = d.sections.filter((x) => x.description || x.expect);
       return;
     }
-    if (t.matches("[data-more]") && e.type === "change") {
-      if (!t.value) return;
-      const i = +t.dataset.more;
-      if (!ed.more.has(i)) ed.more.set(i, new Set());
-      ed.more.get(i).add(t.value);
-      return renderStruct(ed);
-    }
     const rn = t.closest("[data-fn-rename]");
     if (rn) {
       if (e.type !== "change") return;
@@ -540,7 +541,7 @@ function renderStruct(ed) {
     if (!el) return;
     setPath(d, el.dataset.path, readField(el));
     // Structure-changing fields redraw the form.
-    if (e.type === "change" && /\.(name|background|section)$/.test(el.dataset.path)) renderStruct(ed);
+    if (e.type === "change" && /\.(name|background|section|confirm|always|continue_on_error|tty)$/.test(el.dataset.path)) renderStruct(ed);
   };
   pane.onclick = (e) => {
     const b = e.target.closest("[data-act]");
@@ -551,30 +552,26 @@ function renderStruct(ed) {
     const s = d.steps[i];
     const swap = (a, c) => {
       [d.steps[a], d.steps[c]] = [d.steps[c], d.steps[a]];
-      for (const m of [ed.more, ed.runs]) {
+      for (const m of [ed.runs]) {
         const va = m.get(a), vc = m.get(c);
         m.delete(a); m.delete(c);
         if (va) m.set(c, va);
         if (vc) m.set(a, vc);
       }
-      const oa = ed.open.has(a), oc = ed.open.has(c);
-      ed.open.delete(a); ed.open.delete(c);
-      if (oa) ed.open.add(c);
-      if (oc) ed.open.add(a);
+      for (const set of [ed.open, ed.adv]) {
+        const oa = set.has(a), oc = set.has(c);
+        set.delete(a); set.delete(c);
+        if (oa) set.add(c);
+        if (oc) set.add(a);
+      }
     };
     switch (b.dataset.act) {
       case "open": toggle(ed.open, i); break;
       case "up": swap(i, i - 1); break;
       case "down": swap(i, i + 1); break;
       case "dup": d.steps.splice(i + 1, 0, structuredClone({ ...s, id: undefined, name: `${s.name} (copy)` })); break;
-      case "del": if (!confirm(`Delete step ${i + 1} (${s.name})?`)) return; d.steps.splice(i, 1); ed.open.clear(); ed.runs.clear(); ed.more.clear(); break;
-      case "less": {
-        const f = b.dataset.field;
-        delete s[f];
-        if (f === "background") delete s.stop_after;
-        ed.more.get(i)?.delete(f);
-        break;
-      }
+      case "del": if (!confirm(`Delete step ${i + 1} (${s.name})?`)) return; d.steps.splice(i, 1); ed.open.clear(); ed.runs.clear(); ed.adv.clear(); break;
+      case "adv": toggle(ed.adv, i); break;
       case "run-this": ed.open.add(i); return runThis(ed, i);
       case "stop-run": { const r = ed.runs.get(i); if (r?.id) api("POST", `/api/runs/${enc(r.id)}/cancel`).catch(() => {}); return; }
       case "close-run": ed.runs.get(i)?.es?.close(); ed.runs.delete(i); break;
