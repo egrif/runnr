@@ -150,6 +150,11 @@ type TermEvent struct {
 	ID    string `json:"id"`
 	Title string `json:"title,omitempty"`
 	Data  string `json:"data,omitempty"`
+	// Shell is set for shells opened at a step, with that step's commands
+	// and expected outcome, to show beside the terminal.
+	Shell   bool   `json:"shell,omitempty"`
+	Command string `json:"command,omitempty"`
+	Expect  string `json:"expect,omitempty"`
 }
 
 // StartTerm implements engine.TermHost with a terminal in the browser:
@@ -173,7 +178,12 @@ func (l *liveRun) StartTerm(idx int, title string) (engine.TermConn, error) {
 	}
 	l.terms[id] = conn
 	l.mu.Unlock()
-	l.publish(WireEvent{Event: engine.Event{Kind: "term_start", Step: idx}, Term: &TermEvent{ID: id, Title: title}})
+	start := &TermEvent{ID: id, Title: title, Shell: strings.HasPrefix(title, "shell")}
+	if idx >= 0 && l.session != nil {
+		v := l.session.View(idx)
+		start.Command, start.Expect = v.Command, v.Expect
+	}
+	l.publish(WireEvent{Event: engine.Event{Kind: "term_start", Step: idx}, Term: start})
 	go func() {
 		<-conn.Done()
 		l.mu.Lock()
@@ -223,11 +233,7 @@ func (l *liveRun) AfterStep(ctx context.Context, v engine.StepView, res engine.S
 
 // BeforeStep implements engine.Stepper for step mode.
 func (l *liveRun) BeforeStep(ctx context.Context, v engine.StepView) (engine.StepDecision, error) {
-	opts := []string{"run"}
-	if v.Kind != "manual" && l.canShell() {
-		opts = append(opts, "manual")
-	}
-	opts = append(opts, "skip", "continue", "abort")
+	opts := []string{"run", "skip", "continue", "abort"}
 	a, err := l.askStep(ctx, Question{Type: "before", Step: v.Index, Title: "Next: " + v.Name, Text: v.Command, Expect: v.Expect, Options: opts})
 	if err != nil {
 		return "", err
@@ -260,11 +266,7 @@ func (l *liveRun) Manual(ctx context.Context, idx int, step runbook.Step, text s
 }
 
 func (l *liveRun) OnFailure(ctx context.Context, idx int, step runbook.Step, res engine.StepResult) (engine.FailureAction, string, error) {
-	opts := []string{"retry"}
-	if l.canShell() {
-		opts = append(opts, "manual")
-	}
-	opts = append(opts, "skip", "force", "abort")
+	opts := []string{"retry", "skip", "force", "abort"}
 	for {
 		a, err := l.askStep(ctx, Question{Type: "failure", Step: idx, Title: "“" + step.Name + "” failed", Text: res.Error, Options: opts})
 		if err != nil {
@@ -273,8 +275,6 @@ func (l *liveRun) OnFailure(ctx context.Context, idx int, step runbook.Step, res
 		switch a.Value {
 		case "retry":
 			return engine.FailRetry, "", nil
-		case "manual":
-			return engine.FailByHand, "", nil
 		case "skip":
 			return engine.FailSkip, "", nil
 		case "force":

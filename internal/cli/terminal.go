@@ -343,10 +343,6 @@ func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.St
 	fmt.Fprintln(t.out, t.viewText(v, "  "))
 	opts := map[string]string{"r": "r", "run": "r", "s": "s", "skip": "s", "c": "c", "continue": "c", "a": "a", "abort": "a"}
 	prompt := "[r]un"
-	if v.Kind != "manual" {
-		opts["m"] = "m"
-		prompt += " / [m] run it myself"
-	}
 	if r := t.previousStep(v.Index); r != nil && r.Status != engine.StatusPending {
 		fmt.Fprintln(t.out, t.c("2", fmt.Sprintf("  last time: %s %s %s (l to see)", statusIcon[r.Status], r.Status, r.Note)))
 	}
@@ -355,7 +351,7 @@ func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.St
 	if err != nil {
 		return "", err
 	}
-	return map[string]engine.StepDecision{"r": engine.StepRun, "m": engine.StepByHand, "s": engine.StepSkip, "c": engine.StepContinue, "a": engine.StepAbort}[a], nil
+	return map[string]engine.StepDecision{"r": engine.StepRun, "s": engine.StepSkip, "c": engine.StepContinue, "a": engine.StepAbort}[a], nil
 }
 
 var statusIcon = map[engine.Status]string{
@@ -592,6 +588,10 @@ func (t *Terminal) OpenShell(ctx context.Context, idx int) error {
 	if !t.canShell() {
 		return errors.New("no terminal to open a shell in")
 	}
+	if idx >= 0 && t.session != nil {
+		fmt.Fprintln(t.out, t.c("2", "  ── this step's commands, to run or adapt in the shell:"))
+		t.printView(t.session.View(idx))
+	}
 	fmt.Fprintln(t.out, t.c("2", "  ── runnr shell: the run's variables are in the environment (try `env`).\n"+
 		"     Publish values back with: echo name=value >> \"$RUNNR_OUTPUT\" (or $RUNNR_SECRET).\n"+
 		"     Type `exit` to return."))
@@ -643,12 +643,7 @@ func (t *Terminal) Manual(ctx context.Context, idx int, _ runbook.Step, text str
 
 func (t *Terminal) OnFailure(ctx context.Context, idx int, _ runbook.Step, _ engine.StepResult) (engine.FailureAction, string, error) {
 	opts := map[string]string{"r": "r", "retry": "r", "s": "s", "skip": "s", "f": "f", "force": "f", "a": "a", "abort": "a"}
-	prompt := "Step failed. [r]etry"
-	if t.canShell() {
-		opts["m"] = "m"
-		prompt += " / [m] run it myself"
-	}
-	prompt += " / [s]kip / [f]orce success / [a]bort"
+	prompt := "Step failed. [r]etry / [s]kip / [f]orce success / [a]bort"
 	a, err := t.stepPrompt(ctx, idx, prompt, opts, "a")
 	if err != nil {
 		return "", "", err
@@ -665,5 +660,5 @@ func (t *Terminal) OnFailure(ctx context.Context, idx int, _ runbook.Step, _ eng
 			}
 		}
 	}
-	return map[string]engine.FailureAction{"r": engine.FailRetry, "m": engine.FailByHand, "s": engine.FailSkip, "a": engine.FailAbort}[a], "", nil
+	return map[string]engine.FailureAction{"r": engine.FailRetry, "s": engine.FailSkip, "a": engine.FailAbort}[a], "", nil
 }

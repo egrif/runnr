@@ -41,21 +41,23 @@ type Note struct {
 }
 
 type StepResult struct {
-	Index    int       `json:"index"`
-	Name     string    `json:"name"`
-	Section  string    `json:"section,omitempty"`
-	Owner    string    `json:"owner,omitempty"`
-	Kind     string    `json:"kind"`
-	Status   Status    `json:"status"`
-	Command  string    `json:"command,omitempty"`
-	ExitCode *int      `json:"exit_code,omitempty"`
-	Output   string    `json:"output,omitempty"`
-	Error    string    `json:"error,omitempty"`
-	Note     string    `json:"note,omitempty"`
-	Attempts int       `json:"attempts,omitempty"`
-	Notes    []Note    `json:"notes,omitempty"`
-	Started  time.Time `json:"started,omitzero"`
-	Ended    time.Time `json:"ended,omitzero"`
+	Index    int    `json:"index"`
+	Name     string `json:"name"`
+	Section  string `json:"section,omitempty"`
+	Owner    string `json:"owner,omitempty"`
+	Kind     string `json:"kind"`
+	Status   Status `json:"status"`
+	Command  string `json:"command,omitempty"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Output   string `json:"output,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Note     string `json:"note,omitempty"`
+	Attempts int    `json:"attempts,omitempty"`
+	Notes    []Note `json:"notes,omitempty"`
+	// Shells are transcripts of shells the operator opened at this step.
+	Shells  []string  `json:"shells,omitempty"`
+	Started time.Time `json:"started,omitzero"`
+	Ended   time.Time `json:"ended,omitzero"`
 }
 
 type Run struct {
@@ -117,8 +119,6 @@ const (
 	FailAbort FailureAction = "abort"
 	// FailForce accepts the failure as success; the reason is required.
 	FailForce FailureAction = "force"
-	// FailByHand lets the operator run the step themselves in a shell.
-	FailByHand FailureAction = "manual"
 )
 
 // StepDecision is the answer to "about to run this step" in step mode.
@@ -126,7 +126,6 @@ type StepDecision string
 
 const (
 	StepRun      StepDecision = "run"
-	StepByHand   StepDecision = "manual"
 	StepSkip     StepDecision = "skip"
 	StepContinue StepDecision = "continue" // run this and all later steps without pausing
 	StepAbort    StepDecision = "abort"
@@ -261,9 +260,7 @@ type executor struct {
 	secrets    []string
 	secretVars map[string]bool
 	ctl        *Controls
-	// lastTranscript is what the operator's most recent shell showed.
-	lastTranscript string
-	mu             sync.Mutex
+	mu         sync.Mutex
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -437,7 +434,7 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	res.Status, res.Started = StatusRunning, time.Now()
 	x.notify(Event{Kind: EventStepStarted, Step: i, Result: x.result(i)})
 
-	byHand, confirmed := false, false
+	confirmed := false
 	if _, before, _ := x.ctl.Get(i); before && x.canPause() {
 		d, err := x.ui.(Stepper).BeforeStep(ctx, x.View(i))
 		if err != nil {
@@ -450,8 +447,6 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 			return nil
 		case StepContinue:
 			x.ctl.SetStepAll(false)
-		case StepByHand:
-			byHand = true
 		case StepAbort:
 			return x.fail(i, errAborted)
 		}
@@ -491,28 +486,6 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 	}
 
 	for {
-		if byHand {
-			outcome, note, err := x.byHand(ctx, i, step, cmd)
-			if err != nil {
-				return x.fail(i, err)
-			}
-			switch outcome {
-			case ManualDone:
-				res.Status, res.Note, res.Error = StatusSucceeded, strings.TrimSpace("run by hand "+note), ""
-				x.stepDone(i)
-				return nil
-			case ManualSkip:
-				res.Status, res.Note = StatusSkipped, strings.TrimSpace("skipped by hand "+note)
-				x.stepDone(i)
-				return nil
-			}
-			res.Error = strings.TrimSpace("failed when run by hand " + note)
-			byHand = false
-			if err := x.onFailure(ctx, i, step, cmdResult{}, &byHand); err != errRetry {
-				return err
-			}
-			continue
-		}
 		attempts := step.Retries + 1
 		var out cmdResult
 		for a := 1; a <= attempts; a++ {
@@ -534,7 +507,7 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 			x.apply(step, out)
 			res.Command = x.mask(res.Command) // in case it contained a just-published secret
 			res.Status, res.Error = StatusSucceeded, ""
-			if err := x.afterStep(ctx, i, step, &byHand); err != errRetry {
+			if err := x.afterStep(ctx, i, step); err != errRetry {
 				return err
 			}
 			continue
@@ -548,7 +521,7 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 			x.stepDone(i)
 			return nil
 		}
-		if err := x.onFailure(ctx, i, step, out, &byHand); err != errRetry {
+		if err := x.onFailure(ctx, i, step, out); err != errRetry {
 			return err
 		}
 	}
@@ -564,7 +537,7 @@ func (x *executor) canPause() bool {
 // afterStep finishes a successful step i, first letting the operator look
 // at the result if it's set to pause afterwards. errRetry means run it
 // again.
-func (x *executor) afterStep(ctx context.Context, i int, step runbook.Step, byHand *bool) error {
+func (x *executor) afterStep(ctx context.Context, i int, step runbook.Step) error {
 	res := &x.run.Steps[i]
 	if _, _, after := x.ctl.Get(i); !after || !x.canPause() {
 		x.stepDone(i)
@@ -581,7 +554,7 @@ func (x *executor) afterStep(ctx context.Context, i int, step runbook.Step, byHa
 		return errRetry
 	case AfterFail:
 		res.Status, res.Error = StatusFailed, strings.TrimSpace("rejected after review "+note)
-		return x.onFailure(ctx, i, step, cmdResult{}, byHand)
+		return x.onFailure(ctx, i, step, cmdResult{})
 	case AfterAbort:
 		return x.fail(i, errAborted)
 	}
@@ -590,9 +563,8 @@ func (x *executor) afterStep(ctx context.Context, i int, step runbook.Step, byHa
 }
 
 // onFailure asks what to do about failed step i. It returns errRetry to
-// run it again (by hand if *byHand is set), nil if the step is settled,
-// or the error that ends the run.
-func (x *executor) onFailure(ctx context.Context, i int, step runbook.Step, out cmdResult, byHand *bool) error {
+// run it again, nil if the step is settled, or the error that ends the run.
+func (x *executor) onFailure(ctx context.Context, i int, step runbook.Step, out cmdResult) error {
 	res := &x.run.Steps[i]
 	action, reason, err := x.ui.OnFailure(ctx, i, step, *x.result(i))
 	if err != nil {
@@ -611,42 +583,12 @@ func (x *executor) onFailure(ctx context.Context, i int, step runbook.Step, out 
 	case FailRetry:
 		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "retrying…"})
 		return errRetry
-	case FailByHand:
-		*byHand = true
-		return errRetry
 	case FailSkip:
 		res.Status, res.Note = StatusSkipped, "skipped after failure"
 		x.stepDone(i)
 		return nil
 	}
 	return x.fail(i, fmt.Errorf("step %d (%s) failed: %s", i+1, step.Name, res.Error))
-}
-
-// byHand shows the operator the step's commands, opens a shell with its
-// environment for them to run it, then asks how it went.
-func (x *executor) byHand(ctx context.Context, i int, step runbook.Step, cmd string) (ManualOutcome, string, error) {
-	if !x.CanShell() {
-		return x.ui.Manual(ctx, i, step, "Run this yourself, then report how it went:\n\n"+x.mask(cmd))
-	}
-	x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "run this yourself in the shell:"})
-	for _, l := range strings.Split(strings.TrimRight(x.mask(cmd), "\n"), "\n") {
-		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "  " + l})
-	}
-	if v := x.View(i); len(v.Outputs)+len(v.SecretOutputs) > 0 {
-		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "then publish: " + strings.Join(append(v.Outputs, v.SecretOutputs...), ", ") + ` (echo name=value >> "$RUNNR_OUTPUT")`})
-	}
-	x.lastTranscript = ""
-	if err := x.shellViaUI(ctx, i); err != nil {
-		return "", "", err
-	}
-	if t := strings.TrimSpace(x.lastTranscript); t != "" {
-		x.run.Steps[i].Output = "── run by hand ──\n" + t + "\n"
-	}
-	msg := "How did running it by hand go?"
-	if v := x.View(i); v.Expect != "" {
-		msg += "\nExpected: " + v.Expect
-	}
-	return x.ui.Manual(ctx, i, step, msg)
 }
 
 // apply records what a successful (or forced) step produced.

@@ -97,7 +97,10 @@ func (x *executor) openShell(ctx context.Context, idx int) error {
 	extra = append(extra, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile, "RUNNR_SHELL=1")
 
 	_, transcript, err := x.inTerminal(ctx, idx, title, "", "", extra, dir)
-	x.lastTranscript = x.mask(transcript)
+	if t := strings.TrimSpace(x.mask(transcript)); t != "" && idx >= 0 {
+		x.run.Steps[idx].Shells = append(x.run.Steps[idx].Shells, t)
+		x.save()
+	}
 	if err != nil {
 		return err
 	}

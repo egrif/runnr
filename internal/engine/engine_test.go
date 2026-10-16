@@ -5,6 +5,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -357,11 +358,18 @@ type stepper struct {
 	afters    []AfterDecision
 	afterSeen []StepResult
 	keys      string
+	shellAt   string
 	reviewed  []StepView
 	session   Session
 }
 
-func (s *stepper) BeforeStep(_ context.Context, v StepView) (StepDecision, error) {
+func (s *stepper) BeforeStep(ctx context.Context, v StepView) (StepDecision, error) {
+	if v.Name == s.shellAt {
+		// The operator opens a shell at this prompt before deciding.
+		if err := s.session.Shell(ctx, v.Index); err != nil {
+			return "", err
+		}
+	}
 	d := s.decisions[0]
 	s.decisions = s.decisions[1:]
 	return d, nil
@@ -378,22 +386,32 @@ func (s *stepper) Review(_ context.Context, plan []StepView, c *Controls) error 
 	return nil
 }
 func (s *stepper) StartTerm(int, string) (TermConn, error) {
-	return &scriptConn{Reader: strings.NewReader(s.keys)}, nil
+	return &scriptConn{keys: strings.NewReader(s.keys), closed: make(chan struct{})}, nil
 }
 
-// scriptConn is a terminal whose keyboard is a script.
+// scriptConn is a terminal whose keyboard is a script. Once the script is
+// typed it waits, like an operator who hasn't closed the window.
 type scriptConn struct {
-	io.Reader
-	out strings.Builder
+	keys   *strings.Reader
+	out    strings.Builder
+	closed chan struct{}
+	once   sync.Once
 }
 
+func (c *scriptConn) Read(b []byte) (int, error) {
+	if c.keys.Len() > 0 {
+		return c.keys.Read(b)
+	}
+	<-c.closed
+	return 0, io.EOF
+}
 func (c *scriptConn) Write(b []byte) (int, error) { return c.out.Write(b) }
-func (c *scriptConn) Close() error                { return nil }
+func (c *scriptConn) Close() error                { c.once.Do(func() { close(c.closed) }); return nil }
 func (c *scriptConn) Size() (uint16, uint16)      { return 24, 80 }
 func (c *scriptConn) Resized() <-chan struct{}    { return nil }
 func (s *stepper) Bind(se Session)                { s.session = se }
 
-func TestStepModeByHandAndReview(t *testing.T) {
+func TestStepModeShellAndReview(t *testing.T) {
 	t.Setenv("SHELL", "/bin/sh")
 	rb := mustParse(t, `
 name: t
@@ -401,25 +419,25 @@ inputs: [{name: who, default: eric}]
 steps:
   - {name: deselected, run: 'exit 1'}
   - {name: auto, run: 'echo auto', expect: 'prints auto for {{.who}}'}
-  - {name: mine, run: 'echo "fixed=yes" >> "$RUNNR_OUTPUT"'}
+  - {name: mine, run: 'echo "fixed=yes" >> "$RUNNR_OUTPUT"'}  # skipped: fixed in the shell instead
   - {name: skipme, run: 'exit 1'}
   - {name: rest, run: 'echo "fixed=$fixed"'}
   - {name: rest2, run: 'echo more'}
 `)
 	ui := &stepper{
-		decisions: []StepDecision{StepRun, StepByHand, StepSkip, StepContinue},
+		decisions: []StepDecision{StepRun, StepSkip, StepSkip, StepContinue},
 		keys:      "echo fixed=by-hand >> \"$RUNNR_OUTPUT\"\nexit\n",
+		shellAt:   "mine",
 	}
-	ui.manuals = []ManualOutcome{ManualDone}
 	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Controls: NewControls(ControlsView{StepAll: true}), Review: true})
 	if run.Status != StatusSucceeded {
 		t.Fatalf("%s %s", run.Status, run.Error)
 	}
-	if got := statuses(run); got != "skipped,succeeded,succeeded,skipped,succeeded,succeeded" {
+	if got := statuses(run); got != "skipped,succeeded,skipped,skipped,succeeded,succeeded" {
 		t.Fatalf("statuses %s", got)
 	}
-	if run.Steps[2].Note != "run by hand" {
-		t.Fatalf("note %q", run.Steps[2].Note)
+	if len(run.Steps[2].Shells) != 1 || !strings.Contains(run.Steps[2].Shells[0], "fixed=by-hand") {
+		t.Fatalf("shell transcript %q", run.Steps[2].Shells)
 	}
 	if !slices.Contains(ui.output, "fixed=by-hand") {
 		t.Fatalf("by-hand shell output not published: %q", ui.output)
@@ -537,3 +555,33 @@ func TestCleanTranscript(t *testing.T) {
 		t.Fatalf("%q", got)
 	}
 }
+
+func TestOperatorEndsSession(t *testing.T) {
+	// A shell nobody exits; ending the session must hang it up.
+	t.Setenv("SHELL", "/bin/sh")
+	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n")
+	ui := &stepper{decisions: []StepDecision{StepRun}, shellAt: "a"}
+	conn := &scriptConn{keys: strings.NewReader("echo started\n"), closed: make(chan struct{})}
+	host := &connHost{stepper: ui, conn: conn}
+	time.AfterFunc(500*time.Millisecond, func() { conn.Close() })
+	done := make(chan *Run, 1)
+	go func() {
+		done <- Execute(context.Background(), rb, host, "", Options{Interactive: true, Controls: NewControls(ControlsView{StepAll: true})})
+	}()
+	select {
+	case run := <-done:
+		if run.Status != StatusSucceeded || len(run.Steps[0].Shells) != 1 || !strings.Contains(run.Steps[0].Shells[0], "started") {
+			t.Fatalf("%s %q", run.Status, run.Steps[0].Shells)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("ending the session didn't end the shell")
+	}
+}
+
+type connHost struct {
+	*stepper
+	conn TermConn
+}
+
+func (h *connHost) StartTerm(int, string) (TermConn, error) { return h.conn, nil }
+func (h *connHost) Bind(se Session)                         { h.stepper.session = se }

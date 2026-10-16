@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/creack/pty"
@@ -24,8 +25,9 @@ type TermHost interface {
 }
 
 // TermConn connects a pseudo-terminal to the operator: Read returns what
-// they type, Write shows output. Close ends the session; Read must return
-// once it's closed.
+// they type, Write shows output. Read returning EOF means the operator
+// ended the session: the command is hung up on, as when a terminal window
+// is closed. Close ends the session; Read must return once it's closed.
 type TermConn interface {
 	io.ReadWriteCloser
 	// Size returns the operator's terminal size.
@@ -64,8 +66,14 @@ func (x *executor) inTerminal(ctx context.Context, idx int, title, shell, comman
 	}
 	defer f.Close()
 
-	// Keystrokes in; stops when the session closes.
-	go func() { _, _ = io.Copy(f, conn) }()
+	// Keystrokes in. When the operator ends the session, hang up.
+	var exited atomic.Bool
+	go func() {
+		_, _ = io.Copy(f, conn)
+		if !exited.Load() {
+			hangup(cmd.Process)
+		}
+	}()
 	ended := make(chan struct{})
 	defer close(ended)
 	if ch := conn.Resized(); ch != nil {
@@ -93,6 +101,7 @@ func (x *executor) inTerminal(ctx context.Context, idx int, title, shell, comman
 	rec := &ringBuffer{}
 	_, _ = io.Copy(io.MultiWriter(conn, rec), f) // ends when the terminal closes (EIO)
 	err = cmd.Wait()
+	exited.Store(true)
 	transcript := CleanTranscript(rec.String())
 	if cmd.ProcessState == nil {
 		return nil, transcript, err

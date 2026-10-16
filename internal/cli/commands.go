@@ -375,10 +375,10 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.BoolVar(&f.js, "json", false, "unattended; print the run record as JSON instead of progress")
 	fl.BoolVarP(&f.quiet, "quiet", "q", false, "hide command output")
 	fl.BoolVar(&f.noHistory, "no-history", false, "don't record this run")
-	fl.BoolVar(&f.stepMode, "step", false, "pause before every step (run / run it myself / skip / view / …)")
+	fl.BoolVar(&f.stepMode, "step", false, "pause before every step (run / skip / view / shell / …)")
 	fl.BoolVar(&f.noReview, "no-review", false, "start without reviewing the plan")
 	fl.StringVar(&f.skip, "skip", "", "steps to leave out, e.g. 3,5-7")
-	fl.StringVar(&f.before, "pause-before", "", "steps to stop before (run / run it myself / skip), e.g. 4,9")
+	fl.StringVar(&f.before, "pause-before", "", "steps to stop before (run / skip / view / shell), e.g. 4,9")
 	fl.StringVar(&f.after, "pause-after", "", "steps to stop after, to check the result before going on")
 }
 

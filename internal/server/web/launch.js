@@ -53,7 +53,7 @@ async function viewLaunch(el, name, mode, runId) {
         <div class="options">
           <label><input type="radio" name="mode" value="interactive" checked> Interactive</label>
           <label><input type="radio" name="mode" value="unattended"> Unattended</label>
-          <label title="Stop before every step to choose: run, run it myself, skip, or carry on"><input type="checkbox" name="stepmode"> Step through every step</label>
+          <label title="Stop before every step to choose: run, skip, open a shell, or carry on"><input type="checkbox" name="stepmode"> Step through every step</label>
           <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
           <label><input type="checkbox" name="dry"> Dry run</label>
         </div>
@@ -175,7 +175,7 @@ function renderLaunchSteps(st) {
           <span class="n">${i + 1}</span>
           <span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""} ${stepBadges(s)}</span>
           ${r && r.status !== "pending" ? `<span class="last s-${esc(r.status)}" title="Last time: ${esc(r.status)}">${ICONS[r.status]}</span>` : ""}
-          <button type="button" class="pill ${st.before.has(i) ? "on" : ""}" data-before="${i}" title="Stop before this step (run / run it myself / skip)">⏸ before</button>
+          <button type="button" class="pill ${st.before.has(i) ? "on" : ""}" data-before="${i}" title="Stop before this step (run / skip / open a shell)">⏸ before</button>
           <button type="button" class="pill ${st.after.has(i) ? "on" : ""}" data-after="${i}" title="Stop after this step to check the result">⏸ after</button>
         </div>
         ${st.open.has(i) ? `<div class="step-body two-col">

@@ -594,6 +594,8 @@ func (s *Server) termInput(w http.ResponseWriter, r *http.Request) {
 		Data string `json:"data"`
 		Rows uint16 `json:"rows"`
 		Cols uint16 `json:"cols"`
+		// End hangs up the session (like closing a terminal window).
+		End bool `json:"end"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, err)
@@ -602,6 +604,11 @@ func (s *Server) termInput(w http.ResponseWriter, r *http.Request) {
 	c := l.term(req.ID)
 	if c == nil {
 		writeErr(w, fmt.Errorf("terminal %q has ended: %w", req.ID, store.ErrNotFound))
+		return
+	}
+	if req.End {
+		c.Close()
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	c.SetSize(req.Rows, req.Cols)

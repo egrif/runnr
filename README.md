@@ -89,8 +89,8 @@ runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--pause-before 
 
 | Mode | Behaviour |
 |---|---|
-| **Interactive** (default on a TTY) | Asks for missing inputs, shows the plan for review, then runs. It stops on its own for confirm-gated steps, manual steps and failures (retry / run it myself / skip / force / abort). |
-| **Step by step** (`--step`) | Interactive, but pauses before *every* step: run / run it myself / skip / continue without pausing / abort. |
+| **Interactive** (default on a TTY) | Asks for missing inputs, shows the plan for review, then runs. It stops on its own for confirm-gated steps, manual steps and failures (retry / skip / force / abort). |
+| **Step by step** (`--step`) | Interactive, but pauses before *every* step: run / skip / continue without pausing / abort. |
 | **Unattended** (`-u`, or stdin isn't a TTY) | Never prompts. Inputs from `-v` or defaults. Confirm-gated steps fail unless `-y`. Manual steps follow their `unattended` policy. Any failure aborts. |
 
 `--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted.
@@ -102,7 +102,7 @@ run). From there: type step numbers to skip/include them, `b 4` / `a 4` to
 pause before/after a step, `v 4` to see what it will do, `l 4` to see what it
 did last time, `step` to step through everything, Enter to start.
 
-**Pausing.** *Before* a step: run / run it myself / skip / continue without
+**Pausing.** *Before* a step: run / skip / continue without
 pausing / abort. *After* a step: look at the result (and its `expect`), then
 continue / run it again / mark it failed (then the usual failure choices) /
 abort. Steps with `confirm: true` always ask before running.
@@ -115,13 +115,12 @@ At any step prompt you can also:
 - **`e`**: show the run's state: every variable so far, secrets as `****`.
 - **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
 - **`!`**: open your `$SHELL` with the run's environment (inputs, values
-  published so far, `env:`), in the step's `dir`. Investigate, fix things,
-  `exit` to come back to the same prompt. `echo name=value >> "$RUNNR_OUTPUT"`
+  published so far, `env:`), in the step's `dir`, with the step's commands
+  shown beside it (above it in the CLI) to run or adapt. Investigate, fix
+  things, `exit` to come back to the same prompt; the session is recorded
+  with the step. `echo name=value >> "$RUNNR_OUTPUT"`
   in that shell publishes a value to later steps. Ctrl-C in the shell doesn't
   touch the run.
-- **`m`** (before a step, or after it fails): run it yourself. runnr prints the
-  commands and opens a shell with the run's environment; paste or adapt them,
-  `exit`, then say how it went. Values you publish in that shell are kept.
 - **`f`** (failed steps): force the step to count as success. A reason is
   required; the step is recorded as `forced` with it, and whatever it
   published is kept.
@@ -153,7 +152,7 @@ multi-day procedures, abort at a "wait" step and resume later.
   are dropped (it asks first).
 - History, versions, notes.
 
-Steps that need a terminal (`tty`), "run it myself" and "open shell" get a
+Steps that need a terminal (`tty`) and "open shell" get a
 **terminal in the page**: you type into it as in any terminal, everyone
 watching the run sees it, and what it printed is recorded with the step.
 This works whether the server is local or remote.
@@ -240,8 +239,8 @@ terminal under `runnr run`, or a terminal in the page in the GUI. The command
 sees a real terminal (prompts, colours, progress bars), you type as usual
 (Ctrl-C goes to the command, not runnr), and the output is shown live *and*
 recorded with the step, cleaned of colour and cursor codes, secrets masked.
-Shells (`!`) and "run it myself" work the same way, so what you did by hand
-is recorded too. Unattended runs have no one to type, so `tty` steps follow
+Shells (`!`) work the same way, so what you did by hand is recorded too.
+**End session** (GUI) hangs up a terminal like closing its window. Unattended runs have no one to type, so `tty` steps follow
 their `unattended` policy. Shell aliases aren't loaded in steps, so call real
 binaries (`terraform`, not `tf`).
 

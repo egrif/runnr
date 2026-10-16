@@ -2,6 +2,11 @@
 
 package engine
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+)
 
 func setProcessGroup(cmd *exec.Cmd) {}
+
+func hangup(p *os.Process) { _ = p.Kill() }

@@ -213,6 +213,7 @@ async function viewRun(id) {
       termEvent(id, e);
       if (e.kind === "term") return; // terminal output doesn't change the page
       state.termStep = e.kind === "term_start" ? e.step : null;
+      state.termShell = e.kind === "term_start" && !!e.term.shell;
     }
     applyEvent(state, e);
     renderRun(state);
@@ -312,7 +313,7 @@ function renderRun(state) {
             <button class="pill ${has(ctl.pause_after, i) ? "on" : ""}" data-ctl="pause_after" data-i="${i}" title="Stop after this step to check it">⏸ after</button>` : ""}
         </div>
         ${state.question?.step === i ? `<div class="step-body">${renderQuestion(state.question, run.id)}</div>` : ""}
-        ${state.termStep === i ? `<div class="step-body"><p class="term-note">⌨ Connected to the terminal below — type there.</p></div>` : ""}
+        ${state.termStep === i ? `<div class="step-body"><p class="term-note">⌨ A terminal is open for this step below${state.termShell ? " (shell): type exit or End session to come back to the run" : ": type there when it asks"}. <button class="link" data-show-term>Show terminal</button></p></div>` : ""}
         ${s.notes?.length ? `<div class="step-body">${renderNotes(s.notes)}</div>` : ""}
         ${state.open.has(i) ? `<div class="step-body ${state.prev ? "two-col" : ""}"><div>
           ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i])}` : `
@@ -320,6 +321,7 @@ function renderRun(state) {
             ${s.command || state.preview?.[i]?.command ? `<pre class="cmd">${esc(s.command || state.preview[i].command)}</pre>` : ""}
             ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : ""}
             ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}`}
+          ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
           <button class="link" data-note="${i + 1}">✎ Add note</button></div>
           ${state.prev ? `<div><h4>Last time</h4>${lastTime(state.prev.steps[i], state.prev)}</div>` : ""}
         </div>` : ""}
@@ -346,6 +348,7 @@ function renderRun(state) {
     setControls(run.id, next, state);
   }));
   $("#step-all") && ($("#step-all").onchange = (e) => setControls(run.id, { ...ctl, step_mode: e.target.checked }, state));
+  main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
   $("#cancel") && ($("#cancel").onclick = () => api("POST", `/api/runs/${run.id}/cancel`).catch((e) => toast(e.message)));
   $("#resume") && ($("#resume").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?resume=${enc(run.id)}`));
   $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?rerun=${enc(run.id)}`));
@@ -369,7 +372,7 @@ const QLABELS_BY_TYPE = {
 
 const QLABELS = {
   run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…",
-  manual: "✋ Run it myself", shell: "⌨ Open shell", continue: "Run the rest without pausing",
+  shell: "⌨ Open shell", continue: "Run the rest without pausing",
 };
 
 function renderQuestion(q, runId) {
@@ -386,7 +389,7 @@ function renderQuestion(q, runId) {
   }
   let text = ["confirm", "before"].includes(q.type) ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
   if (q.expect) text += `<div class="expect"><b>Expect:</b> ${esc(q.expect)}</div>`;
-  if (q.options?.includes("shell") || q.options?.includes("manual")) text += `<div class="muted">“Run it myself” and “Open shell” open a terminal at the bottom of the page with this run's variables loaded.</div>`;
+  if (q.options?.includes("shell")) text += `<div class="muted">“Open shell” opens a terminal below, with this run's variables loaded and this step's commands beside it. The question stays here for when you're back.</div>`;
   return `<div class="question"><h3>${esc(q.title)}</h3>${text}<div class="actions">${body}</div></div>`;
 }
 

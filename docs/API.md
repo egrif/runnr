@@ -89,25 +89,26 @@ Start without `unattended`, then read `/events`. Each event is
 | `input` | the input's value |
 | `confirm` | `run`, `skip`, `abort` |
 | `manual` | `done`, `skip`, `fail`, `abort` (optional `note`) |
-| `failure` | `retry`, `manual` (run it myself), `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
-| `before` | `run`, `manual`, `skip`, `continue` (stop stepping through), `abort` |
+| `failure` | `retry`, `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
+| `before` | `run`, `skip`, `continue` (stop stepping through), `abort` |
 | `after` | `continue`, `retry` (run again), `fail` (`note` = what's wrong; then a `failure` question), `abort` |
 
 Questions carry `text` (the rendered command or instructions) and `expect`.
 `confirm`/`manual`/`failure`/`before`/`after` questions also offer `shell`,
 which opens a terminal session with the run's environment and then asks the
-same question again; `manual` (run it myself) and `tty` steps open one too.
+same question again; `tty` steps open one too.
 
-**Terminal sessions** stream as events: `term_start` (`term: {id, title}`),
+**Terminal sessions** stream as events: `term_start` (`term: {id, title,
+shell, command, expect}`: for shells, the step's commands to show beside it),
 `term` (`term.data`: base64 output, secrets masked), and `term_end`. Send
 keystrokes and the viewer's size with:
 
 | Method | Path | Body |
 |---|---|---|
-| POST | `/api/runs/{id}/term` | `{id, data?, rows?, cols?}` (`data` is what was typed, as UTF-8) |
+| POST | `/api/runs/{id}/term` | `{id, data?, rows?, cols?, end?}` (`data` is what was typed, as UTF-8; `end: true` hangs up) |
 
-What a session printed is recorded as the step's `output`, cleaned of
-terminal control codes.
+What a `tty` step printed is recorded as the step's `output`, and shell
+sessions as its `shells`, cleaned of terminal control codes.
 
 `step_finished` events carry `state`: the run's variables, secrets masked.
 `controls` events carry the live run's new `controls` after a PUT.

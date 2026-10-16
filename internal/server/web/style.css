@@ -214,7 +214,14 @@ table.inputs tbody tr:hover { background: none; cursor: default; }
 .term-title { font-weight: 600; }
 .term-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
 #term-drawer.ended .term-dot { background: var(--muted); }
-.term-body { flex: 1; min-height: 0; padding: 4px 8px; }
+.term-main { flex: 1; min-height: 0; display: flex; }
+.term-side { width: 38%; min-width: 260px; max-width: 560px; overflow: auto; padding: 8px 12px; border-right: 1px solid #2c2e35; color: #e4e6eb; font-size: 13px; }
+.term-side[hidden] { display: none; }
+.term-side .link { color: #8fb4ff; }
+.term-cmd { white-space: pre-wrap; word-break: break-word; background: #0b0c0f; border: 1px solid #2c2e35; border-radius: 6px; padding: 8px 10px; margin: 6px 0; user-select: text; }
+.term-side .expect { background: #0b0c0f; color: #e4e6eb; }
+.term-body { flex: 1; min-width: 0; min-height: 0; padding: 4px 8px; }
+.shell-log summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 6px; }
 body.term-open main { padding-bottom: calc(42vh + 24px); }
 .term-note { margin: 4px 0; color: var(--accent); font-weight: 600; }
 @media (max-width: 760px) { #term-drawer { left: 0; } }
