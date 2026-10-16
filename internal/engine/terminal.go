@@ -64,7 +64,6 @@ func (x *executor) inTerminal(ctx context.Context, idx int, title, shell, comman
 	if err != nil {
 		return nil, "", err
 	}
-	defer f.Close()
 
 	// Keystrokes in. When the operator ends the session, hang up.
 	var exited atomic.Bool
@@ -74,10 +73,19 @@ func (x *executor) inTerminal(ctx context.Context, idx int, title, shell, comman
 			hangup(cmd.Process)
 		}
 	}()
+	// Resizes go to the pty until the session ends; the resize goroutine
+	// must be done before the pty is closed.
 	ended := make(chan struct{})
-	defer close(ended)
+	var resizing sync.WaitGroup
+	defer func() {
+		close(ended)
+		resizing.Wait()
+		f.Close()
+	}()
 	if ch := conn.Resized(); ch != nil {
+		resizing.Add(1)
 		go func() {
+			defer resizing.Done()
 			for {
 				select {
 				case <-ch:
