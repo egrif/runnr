@@ -18,6 +18,8 @@ function termDrawer() {
       <span class="term-dot"></span><span class="term-title"></span>
       <span class="spacer"></span>
       <span class="muted small term-hint"></span>
+      <button class="link term-copy-out" title="Copy the selection, or the whole session if nothing is selected (or select and press ⌘C / Ctrl+Shift+C)">Copy</button>
+      <button class="link term-grow">Expand</button>
       <button class="link term-end" title="Hang up, like closing a terminal window">End session</button>
       <button class="link term-close">Hide</button>
     </div>
@@ -31,6 +33,13 @@ function termDrawer() {
     </div>`;
   document.body.append(d);
   d.querySelector(".term-close").onclick = () => closeTermDrawer();
+  d.querySelector(".term-copy-out").onclick = () => copyTerm();
+  d.querySelector(".term-grow").onclick = (e) => {
+    const big = d.classList.toggle("big");
+    document.body.classList.toggle("term-big", big);
+    e.target.textContent = big ? "Shrink" : "Expand";
+    term.fit?.fit();
+  };
   d.querySelector(".term-end").onclick = () => {
     if (!term.ended && confirm("End this terminal session? Anything still running in it is hung up.")) sendTerm({ end: true });
   };
@@ -40,6 +49,21 @@ function termDrawer() {
   };
   window.addEventListener("resize", () => { if (term.fit && !d.hidden) term.fit.fit(); });
   return d;
+}
+
+// copyTerm copies the selection, or everything the session showed.
+async function copyTerm() {
+  if (!term.xt) return;
+  let text = term.xt.getSelection();
+  if (!text) {
+    const buf = term.xt.buffer.active, lines = [];
+    for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+    text = lines.join("\n").replace(/\n+$/, "\n");
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(term.xt.hasSelection() ? "Copied selection" : "Copied the whole session");
+  } catch { toast("Couldn't reach the clipboard; select the text and press ⌘C"); }
 }
 
 // showTermDrawer brings a hidden session back.
@@ -76,6 +100,9 @@ function termEvent(runId, e) {
     term.xt.write("\r\n\x1b[2m── session ended ──\x1b[0m\r\n");
     $("#term-drawer").classList.add("ended");
     $("#term-drawer .term-hint").textContent = "session ended · recorded with the step";
+    // It's recorded with the step, so get out of the way (unless another session started).
+    const ended = t.id;
+    setTimeout(() => { if (term.id === ended) closeTermDrawer(); }, 1500);
   }
 }
 
@@ -105,6 +132,15 @@ function openTerm(runId, t, step) {
   });
   term.fit = new FitAddon.FitAddon();
   term.xt.loadAddon(term.fit);
+  // ⌘C / Ctrl+Shift+C copy the selection; plain Ctrl+C still interrupts.
+  term.xt.attachCustomKeyEventHandler((ev) => {
+    const copyKey = ev.key.toLowerCase() === "c" && (ev.metaKey || (ev.ctrlKey && ev.shiftKey));
+    if (ev.type === "keydown" && copyKey && term.xt.hasSelection()) {
+      copyTerm();
+      return false;
+    }
+    return true;
+  });
   term.xt.open(body);
   term.fit.fit();
   term.xt.focus();

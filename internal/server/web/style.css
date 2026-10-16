@@ -225,3 +225,9 @@ table.inputs tbody tr:hover { background: none; cursor: default; }
 body.term-open main { padding-bottom: calc(42vh + 24px); }
 .term-note { margin: 4px 0; color: var(--accent); font-weight: 600; }
 @media (max-width: 760px) { #term-drawer { left: 0; } }
+
+#term-drawer.big { height: 80vh; }
+body.term-big main { padding-bottom: calc(80vh + 24px); }
+.term-head .link { white-space: nowrap; }
+.term-head .term-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.term-title { white-space: nowrap; }
