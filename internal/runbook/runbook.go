@@ -27,7 +27,10 @@ type Runbook struct {
 	Inputs      []Input           `yaml:"inputs,omitempty" json:"inputs,omitempty"`
 	Env         map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 	Shell       string            `yaml:"shell,omitempty" json:"shell,omitempty"`
-	Steps       []Step            `yaml:"steps" json:"steps"`
+	// Profile lists files sourced before every step (e.g. ~/.zshrc), so
+	// aliases, functions and settings from your shell config work in steps.
+	Profile []string `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Steps   []Step   `yaml:"steps" json:"steps"`
 }
 
 type Input struct {
@@ -166,6 +169,11 @@ func (rb *Runbook) Validate() error {
 	}
 	if len(rb.Steps) == 0 {
 		add("runbook has no steps")
+	}
+	for i, f := range rb.Profile {
+		if strings.TrimSpace(f) == "" {
+			add("profile[%d]: empty path", i)
+		}
 	}
 	ids := map[string]bool{}
 	for i, s := range rb.Steps {

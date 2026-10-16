@@ -168,6 +168,7 @@ name: deploy-service            # lowercase identifier; also the filename
 description: Deploy a service
 tags: [deploy]
 shell: bash                     # default: sh
+profile: [~/.zshrc]             # sourced before every step: your aliases/functions work (slower)
 env:                            # exported to every step; values are templates
   DEPLOY_ENV: "{{.env}}"
 inputs:
@@ -241,8 +242,21 @@ sees a real terminal (prompts, colours, progress bars), you type as usual
 recorded with the step, cleaned of colour and cursor codes, secrets masked.
 Shells (`!`) work the same way, so what you did by hand is recorded too.
 **End session** (GUI) hangs up a terminal like closing its window. Unattended runs have no one to type, so `tty` steps follow
-their `unattended` policy. Shell aliases aren't loaded in steps, so call real
-binaries (`terraform`, not `tf`).
+their `unattended` policy.
+
+**What steps can see.** Steps run as you, on the machine runnr runs on: your
+files, home directory and permissions, and the environment runnr was started
+with (so your PATH, asdf shims and exported variables like `AWS_PROFILE`, if
+you start runnr from your terminal). Logins that tools keep in files carry
+across steps and to and from your own terminal: `aws sso login` (in
+`~/.aws/sso/cache`), kubectl contexts (`~/.kube/config`), `argocd login`
+(`~/.config/argocd/config`). What a step's shell only holds in memory ends
+with the step: shell variables (publish them with `outputs`), credentials
+exported as environment variables (publish with `secret_outputs`), and `cd`
+(use `dir`). Aliases and functions from your shell config aren't loaded
+unless the runbook sets `profile` (e.g. `[~/.zshrc]`), which sources those
+files before every step; that can add a few seconds per step. Shells opened
+with `!` are interactive and load your config as usual.
 
 Secrets published via `$RUNNR_SECRET` are masked from the moment they're
 published; don't echo them in the step that creates them.

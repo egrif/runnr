@@ -444,6 +444,7 @@ const REFERENCE = `name: my-runbook            # lowercase id, used as the filen
 description: What it does
 tags: [ops]
 shell: bash                  # default: sh
+profile: [~/.zshrc]          # sourced before every step: aliases/functions work (slower)
 env: { REGION: us-east-1 }   # values may use {{.input}} templates
 inputs:
   - name: target

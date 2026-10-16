@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -585,3 +586,31 @@ type connHost struct {
 
 func (h *connHost) StartTerm(int, string) (TermConn, error) { return h.conn, nil }
 func (h *connHost) Bind(se Session)                         { h.stepper.session = se }
+
+func TestProfile(t *testing.T) {
+	dir := t.TempDir()
+	prof := dir + "/profile.zsh"
+	os.WriteFile(prof, []byte("echo noisy profile output\nalias greet='echo hello from alias'\nmyfn() { echo \"fn $1\" }\nexport FROM_PROFILE=yes\n"), 0o644)
+	rb := mustParse(t, `
+name: t
+shell: zsh
+profile: [`+prof+`, /nonexistent/file]
+steps:
+  - name: uses profile
+    outputs: [x]
+    run: |
+      greet
+      myfn arg
+      echo "env=$FROM_PROFILE"
+      x=1
+  - {name: next, run: 'echo "x=$x"'}
+`)
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{})
+	if run.Status != StatusSucceeded {
+		t.Fatalf("%s %s %q", run.Status, run.Error, ui.output)
+	}
+	if strings.Join(ui.output, "|") != "hello from alias|fn arg|env=yes|x=1" {
+		t.Fatalf("output %q", ui.output)
+	}
+}

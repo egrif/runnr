@@ -187,6 +187,7 @@ function renderStruct(ed) {
         ${fieldHTML("name", "Name", "text", d.name, "Lowercase identifier")}
         ${fieldHTML("shell", "Shell", "text", d.shell, "Default: sh")}
         ${fieldHTML("tags", "Tags", "list", d.tags)}
+        ${fieldHTML("profile", "Profile", "list", d.profile, "Files sourced before every step, e.g. ~/.zshrc (aliases, functions)")}
       </div>
       ${fieldHTML("description", "Description", "area", d.description)}
       ${fieldHTML("env", "Environment for every step", "kv", d.env, "KEY=value per line; values may use {{.input}}")}

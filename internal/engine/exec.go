@@ -82,6 +82,9 @@ func (x *executor) exec(ctx context.Context, i int, step runbook.Step, command s
 	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
 	env = append(env, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile)
 
+	if command, err = x.withProfile(command, tmp); err != nil {
+		return cmdResult{err: err}
+	}
 	command = withOutputs(step, command)
 
 	if step.TTY {
@@ -197,6 +200,30 @@ func (x *executor) finishCmd(ctx context.Context, step runbook.Step, cmd *exec.C
 	return res
 }
 
+// withProfile sources the runbook's profile files before the step. The
+// step is then read from a file, so it's parsed after the profile has
+// defined its aliases and functions.
+func (x *executor) withProfile(command, tmp string) (string, error) {
+	if len(x.rb.Profile) == 0 {
+		return command, nil
+	}
+	script := filepath.Join(tmp, "step.sh")
+	if err := os.WriteFile(script, []byte(command), 0o600); err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	home, _ := os.UserHomeDir()
+	for _, f := range x.rb.Profile {
+		if rest, ok := strings.CutPrefix(f, "~/"); ok {
+			f = filepath.Join(home, rest)
+		}
+		// Quiet: shell configs often print things meant for interactive use.
+		fmt.Fprintf(&b, "[ -r %[1]s ] && source %[1]s >/dev/null 2>&1\n", shQuote(f))
+	}
+	fmt.Fprintf(&b, "source %s\n", shQuote(script))
+	return b.String(), nil
+}
+
 // withOutputs makes the shell write the step's declared outputs to
 // $RUNNR_OUTPUT / $RUNNR_SECRET when it exits (only set variables).
 func withOutputs(step runbook.Step, command string) string {
@@ -213,3 +240,5 @@ func withOutputs(step runbook.Step, command string) string {
 	b.WriteString("  return 0\n}\ntrap __runnr_outputs EXIT\n")
 	return b.String() + command
 }
+
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
