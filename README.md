@@ -110,6 +110,13 @@ pausing / abort. *After* a step: look at the result (and its `expect`), then
 continue / run it again / mark it failed (then the usual failure choices) /
 abort. Steps with `confirm: true` always ask before running.
 
+**Dangerous steps.** A step with `dangerous: true` runs like any other when
+it's in sequence in a recorded run of the saved runbook: every earlier step
+ran, was forced, or was left out by its own `when` (a resume counts what the
+earlier run finished). Otherwise (a later start, skipped steps, Run this, a
+runbook file) it lists what didn't run and waits for you to type the step
+number. Unattended runs refuse it then, even with `--yes`.
+
 At any step prompt you can also:
 
 - **`v`**: view the step as it will run: commands with current values filled
@@ -231,6 +238,7 @@ steps:
   - name: Deploy
     run: ./deploy.sh {{quote .version}}
     confirm: true               # ask first; unattended needs --yes
+    dangerous: true             # out of sequence, type the step number to run it
     timeout: 10m
     retries: 2
     retry_delay: 30s

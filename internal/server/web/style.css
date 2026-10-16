@@ -357,3 +357,7 @@ body.dragging { user-select: none; cursor: col-resize; }
 .adv-rest { display: contents; }
 .adv-toggle { grid-column: 1 / -1; justify-self: start; font-weight: 600; padding: 6px 0 0; margin-top: 4px; border-top: 1px dashed var(--border); width: 100%; text-align: left; }
 .adv-title { grid-column: 1 / -1; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-top: 6px; }
+.badge-k.fail { color: var(--fail); border-color: currentColor; }
+.question.q-danger { border-color: var(--fail); }
+.question.q-danger h3 { color: var(--fail); }
+.danger-why { margin: 4px 0; }

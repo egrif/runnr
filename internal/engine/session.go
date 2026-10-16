@@ -19,7 +19,7 @@ func (x *executor) View(i int) StepView {
 	s := x.rb.Steps[i]
 	v := StepView{
 		Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: x.run.Steps[i].Kind,
-		When: s.When, Confirm: s.Confirm, Always: s.Always, Timeout: s.Timeout, Retries: s.Retries,
+		When: s.When, Confirm: s.Confirm, Dangerous: s.Dangerous, Always: s.Always, Timeout: s.Timeout, Retries: s.Retries,
 		Outputs: s.Outputs, SecretOutputs: s.SecretOutputs,
 	}
 	v.Background, v.StopAfter = s.Background, s.StopAfter

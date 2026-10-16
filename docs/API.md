@@ -119,6 +119,7 @@ Start without `unattended`, then read `/events`. Each event is
 |---|---|
 | `input` | the input's value |
 | `confirm` | `run`, `skip`, `abort` |
+| `danger` (dangerous step out of sequence) | `run` with `note` = the question's `confirm` (the step number; asked again otherwise), `skip`, `abort` |
 | `manual` | `done`, `skip`, `fail`, `abort` (optional `note`) |
 | `failure` | `retry`, `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
 | `before` | `run`, `skip`, `continue` (stop stepping through), `abort` |
@@ -126,7 +127,7 @@ Start without `unattended`, then read `/events`. Each event is
 | `after` | `continue`, `retry` (run again), `fail` (`note` = what's wrong; then a `failure` question), `abort` |
 
 Questions carry `text` (the rendered command or instructions) and `expect`.
-`confirm`/`manual`/`failure`/`before`/`after` questions also offer `shell`,
+`confirm`/`danger`/`manual`/`failure`/`before`/`after` questions also offer `shell`,
 which opens a terminal session with the run's environment and then asks the
 same question again; `tty` steps open one too.
 

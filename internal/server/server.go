@@ -393,7 +393,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.launch(w, r, rb, ver, req, start, "", nil)
+	s.launch(w, r, rb, ver, req, start, nil, nil)
 }
 
 func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
@@ -432,10 +432,14 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 	if req.Previous == "" {
 		req.Previous = prev.ID
 	}
-	s.launch(w, r, rb, ver, req, start, prev.ID, engine.ResumeState(prev))
+	s.launch(w, r, rb, ver, req, start, prev, engine.ResumeState(prev))
 }
 
-func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, ver int, req startReq, start int, resumes string, state map[string]string) {
+func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, ver int, req startReq, start int, resumed *engine.Run, state map[string]string) {
+	resumes := ""
+	if resumed != nil {
+		resumes = resumed.ID
+	}
 	cv, err := toControls(req, len(rb.Steps))
 	if err != nil {
 		writeErr(w, err)
@@ -482,7 +486,11 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 			Libraries:      libs,
 			State:          state,
 			Resumes:        resumes,
+			Resumed:        resumed,
 			RunbookVersion: ver,
+			// Only a recorded run of a saved runbook can run dangerous
+			// steps without a double check.
+			Sanctioned: !req.test && !req.DryRun && ver > 0,
 			Save: func(run *engine.Run) {
 				if req.test {
 					return
@@ -953,7 +961,7 @@ func (s *Server) testRun(w http.ResponseWriter, r *http.Request) {
 		state[k] = v
 	}
 	sr := startReq{Vars: vars, Unattended: req.Unattended, Skip: skip, test: true, Previous: "-"}
-	s.launch(w, r, rb, 0, sr, 0, "", state)
+	s.launch(w, r, rb, 0, sr, 0, nil, state)
 }
 
 func (s *Server) getTestValues(w http.ResponseWriter, r *http.Request) {

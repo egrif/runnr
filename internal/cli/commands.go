@@ -390,6 +390,7 @@ type launch struct {
 	resumes  string
 	state    map[string]string
 	previous *engine.Run // shown as "last time"
+	resumed  *engine.Run // the run this continues
 }
 
 func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l launch) error {
@@ -456,6 +457,9 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt,
 		Controls: engine.NewControls(cv), Review: interactive && !f.noReview, Previous: l.previous,
 		State: state, Resumes: resumes, RunbookVersion: ver, Libraries: libs,
+		// Only a recorded run of a saved runbook can run dangerous steps
+		// without a double check.
+		Sanctioned: ver > 0 && !f.noHistory && !f.dry, Resumed: l.resumed,
 	}
 	if !f.noHistory {
 		opts.Save = func(r *engine.Run) {
@@ -592,7 +596,7 @@ for again (or pass them with -v). Steps marked 'always' run again.`,
 				return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step>", rb.Name, prev.ID, rb.Name)
 			}
 			fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
-			return f.execute(s(), rb, ver, launch{base: engine.ResumeInputs(prev), startAt: start, resumes: prev.ID, state: engine.ResumeState(prev), previous: prev})
+			return f.execute(s(), rb, ver, launch{base: engine.ResumeInputs(prev), startAt: start, resumes: prev.ID, state: engine.ResumeState(prev), previous: prev, resumed: prev})
 		},
 	}
 	f.register(cmd)
@@ -670,6 +674,9 @@ would publish show as <name>.`,
 				}
 				if v.Confirm {
 					flags = append(flags, "confirm")
+				}
+				if v.Dangerous {
+					flags = append(flags, "dangerous")
 				}
 				if v.When != "" {
 					flags = append(flags, "conditional")

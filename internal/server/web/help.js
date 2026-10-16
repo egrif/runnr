@@ -39,6 +39,7 @@ const FIELD_HELP = {
     owner: "Who does this step (shown, not enforced).",
     expect: "By the end of this step, how things should stand (what success looks like). Shown when reviewing, at prompts, when checking a result, and beside a shell.",
     confirm: "Ask before running, even when not stepping through. Unattended runs need --yes (or Auto-approve).",
+    dangerous: "Needs a double check (typing the step number) unless it runs in sequence in a recorded run of the saved runbook: every earlier step ran, was accepted, or was left out by its own condition. Starting later, skipping steps, Run this and runbook files all count as out of sequence; unattended runs refuse it then.",
     always: "Run even when starting later or resuming: for setup that later steps depend on.",
     tty: "The command needs a keyboard (prompts, live displays): it runs on a terminal you type into. Output is still recorded.",
     background: "Start the command and move on; it keeps running on its own terminal (a tab in the GUI, w in the CLI) until the “stop after” step finishes, or the run ends.",
@@ -169,7 +170,7 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
 
     <h2 id="help-steps">Steps</h2>
     <p>Every step has a <code>name</code> and exactly one of <code>run</code>, <code>manual</code>, <code>checks</code> or <code>alternatives</code>. The rest is optional.</p>
-    ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["expect"], ["confirm"], ["always"], ["when"], ["continue_on_error"],
+    ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["confirm"], ["dangerous"], ["always"], ["when"], ["continue_on_error"],
       ["tty"], ["background"], ["stop_after"], ["timeout"], ["retries"], ["retry_delay"], ["dir"], ["step_shell", "shell"], ["step_env", "env"],
       ["outputs"], ["secret_outputs", "secret_outputs"], ["capture"], ["unattended"]])}
 
@@ -260,6 +261,7 @@ functions:
       <li><b>Step through</b>: stop before every step: run, skip, carry on without stopping, or abort.</li>
       <li><b>Unattended</b>: no questions. Confirmations need auto-approve, manual and terminal steps follow <code>unattended</code>, alternatives use <code>when</code>, and any failure stops the run.</li>
       <li>At any question: open a <b>shell</b> with the run's variables and the step's commands beside it, add a <b>note</b>, see the <b>state</b>, or view a background step.</li>
+      <li><b>Dangerous steps</b> (<code>dangerous: true</code>) run like any other in sequence. Out of sequence (earlier steps skipped, a later start, Run this, a runbook file) they list what didn't run and wait for you to type the step number; a resume counts the steps the earlier run finished.</li>
       <li><b>Resume</b> continues a stopped run at the step that didn't finish, with the same inputs and state; <b>run again</b> repeats it, comparing each step with last time.</li>
     </ul>
 

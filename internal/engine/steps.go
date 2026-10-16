@@ -59,6 +59,15 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 		confirmed = true // choosing to run counts as the confirmation
 	}
 
+	run, checked, err := x.checkDanger(ctx, i, step)
+	if err != nil {
+		return x.fail(i, err)
+	}
+	if !run {
+		return nil
+	}
+	confirmed = confirmed || checked
+
 	if step.Background && !x.opts.DryRun {
 		return x.startBackground(ctx, i, step, confirmed)
 	}

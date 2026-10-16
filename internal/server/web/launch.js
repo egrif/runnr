@@ -155,6 +155,7 @@ function stepBadges(s) {
     s.stop_after && `<span class="badge-k" title="Runs in the background until this step finishes">until ${esc(s.stop_after)}</span>`,
     s.repeat && `<span class="badge-k" title="Re-runs the checks until they all pass">repeats</span>`,
     s.confirm && `<span class="badge-k warn" title="Asks before running, even without pauses">confirms on its own</span>`,
+    s.dangerous && `<span class="badge-k fail" title="Out of sequence, it needs the step number typed to run">⚠ dangerous</span>`,
     s.always && `<span class="badge-k" title="Runs even when starting later or resuming">always</span>`,
     s.when && `<span class="badge-k" title="${esc(s.when)}">conditional</span>`,
     s.continue_on_error && `<span class="badge-k">continue on error</span>`,

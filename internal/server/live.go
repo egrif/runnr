@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -15,13 +16,15 @@ import (
 // Question is a decision the engine is waiting on from a browser.
 type Question struct {
 	ID      string         `json:"id"`
-	Type    string         `json:"type"` // input | confirm | manual | failure | before
+	Type    string         `json:"type"` // input | confirm | danger | manual | failure | before
 	Step    int            `json:"step"`
 	Title   string         `json:"title"`
 	Text    string         `json:"text,omitempty"`
 	Options []string       `json:"options,omitempty"`
 	Expect  string         `json:"expect,omitempty"`
 	Input   *runbook.Input `json:"input,omitempty"`
+	// Confirm is what must be typed to choose "run" (danger questions).
+	Confirm string `json:"confirm,omitempty"`
 }
 
 type Answer struct {
@@ -280,6 +283,28 @@ func (l *liveRun) AskInput(ctx context.Context, in runbook.Input) (string, error
 func (l *liveRun) Confirm(ctx context.Context, idx int, step runbook.Step, command string) (bool, error) {
 	a, err := l.askStep(ctx, Question{Type: "confirm", Step: idx, Title: "Run “" + step.Name + "”?", Text: command, Options: []string{"run", "skip", "abort"}})
 	return a.Value == "run", err
+}
+
+// ConfirmDanger: the GUI makes the operator type the step number to run it.
+func (l *liveRun) ConfirmDanger(ctx context.Context, idx int, step runbook.Step, command, why string) (bool, error) {
+	n := strconv.Itoa(idx + 1)
+	for {
+		a, err := l.askStep(ctx, Question{Type: "danger", Step: idx, Title: "⚠ “" + step.Name + "” is dangerous, and not running in sequence",
+			Text: why + "\n\nWill run:\n" + command, Options: []string{"run", "skip", "abort"}, Confirm: n})
+		if err != nil {
+			return false, err
+		}
+		switch a.Value {
+		case "run":
+			if strings.TrimSpace(a.Note) != n {
+				continue // not double-checked; ask again
+			}
+			return true, nil
+		case "abort":
+			return false, engine.ErrAborted
+		}
+		return false, nil
+	}
 }
 
 func (l *liveRun) Manual(ctx context.Context, idx int, step runbook.Step, text string) (engine.ManualOutcome, string, error) {

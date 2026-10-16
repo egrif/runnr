@@ -64,6 +64,7 @@ function stepConfig(s) {
     ["Kind", H.kind, stepKindName(s)],
     ["Section", H.section, s.section], ["Owner", H.owner, s.owner], ["ID", H.id, s.id],
     ["Confirm first", H.confirm, s.confirm && yes],
+    ["Dangerous", H.dangerous, s.dangerous && yes],
     ["Always run", H.always, s.always && yes],
     ["Keep going if it fails", H.continue_on_error, s.continue_on_error && yes],
     ["Needs a terminal", H.tty, s.tty && yes],

@@ -423,6 +423,7 @@ async function setControls(id, c, state) {
 // Some answers read differently depending on the question.
 const QLABELS_BY_TYPE = {
   after: { continue: "✔ Looks right — continue", retry: "↻ Run it again", fail: "✘ Mark it failed…" },
+  danger: { run: "⚠ Run it anyway" },
 };
 
 const QLABELS = {
@@ -440,12 +441,14 @@ function renderQuestion(q, runId) {
     body += `<button class="primary" data-v="submit">Submit</button>`;
   } else {
     if (q.type === "manual") body += `<input type="text" name="note" placeholder="Note (optional)">`;
-    body += q.options.map((o, idx) => `<button data-v="${esc(o)}" class="${idx === 0 ? "primary" : o === "abort" ? "danger" : ""}">${QLABELS_BY_TYPE[q.type]?.[o] || QLABELS[o] || esc(o)}</button>`).join("");
+    if (q.type === "danger") body += `<input type="text" name="note" class="danger-confirm" placeholder="type ${esc(q.confirm)}" autocomplete="off" size="10">`;
+    body += q.options.map((o, idx) => `<button data-v="${esc(o)}" ${q.type === "danger" && o === "run" ? "disabled" : ""} class="${q.type === "danger" && o === "run" ? "danger" : idx === 0 ? "primary" : o === "abort" ? "danger" : ""}">${QLABELS_BY_TYPE[q.type]?.[o] || QLABELS[o] || esc(o)}</button>`).join("");
   }
-  let text = ["confirm", "before"].includes(q.type) ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
+  let text = q.type === "danger" ? `<p class="danger-why">Type <b>${esc(q.confirm)}</b> (the step number) to run it anyway.</p><pre class="cmd">${esc(q.text)}</pre>`
+    : ["confirm", "before"].includes(q.type) ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
   if (q.expect) text += `<div class="expect"><b>Expect:</b> ${esc(q.expect)}</div>`;
   if (q.options?.includes("shell")) text += `<div class="muted">“Open shell” opens a terminal below, with this run's variables loaded and this step's commands beside it. The question stays here for when you're back.</div>`;
-  return `<div class="question"><h3>${esc(q.title)}</h3>${text}<div class="actions">${body}</div></div>`;
+  return `<div class="question ${q.type === "danger" ? "q-danger" : ""}"><h3>${esc(q.title)}</h3>${text}<div class="actions">${body}</div></div>`;
 }
 
 function bindQuestion(el, q, runId) {
@@ -465,6 +468,13 @@ function bindQuestion(el, q, runId) {
     }
     send(value, note);
   }));
+  const typed = el.querySelector(".danger-confirm");
+  if (typed) {
+    const run = el.querySelector("[data-v=run]");
+    typed.oninput = () => (run.disabled = typed.value.trim() !== q.confirm);
+    typed.onkeydown = (e) => { if (e.key === "Enter" && !run.disabled) run.click(); };
+    typed.focus();
+  }
   const input = el.querySelector("input[name=value]");
   if (input) {
     input.focus();

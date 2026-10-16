@@ -66,25 +66,28 @@ type Input struct {
 
 // Step is either an automated command (Run) or a manual instruction (Manual).
 type Step struct {
-	ID              string            `yaml:"id,omitempty" json:"id,omitempty"`
-	Name            string            `yaml:"name" json:"name"`
-	Section         string            `yaml:"section,omitempty" json:"section,omitempty"`
-	Owner           string            `yaml:"owner,omitempty" json:"owner,omitempty"`
-	Run             string            `yaml:"run,omitempty" json:"run,omitempty"`
-	Manual          string            `yaml:"manual,omitempty" json:"manual,omitempty"`
-	Shell           string            `yaml:"shell,omitempty" json:"shell,omitempty"`
-	Dir             string            `yaml:"dir,omitempty" json:"dir,omitempty"`
-	Env             map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
-	When            string            `yaml:"when,omitempty" json:"when,omitempty"`
-	Confirm         bool              `yaml:"confirm,omitempty" json:"confirm,omitempty"`
-	Timeout         string            `yaml:"timeout,omitempty" json:"timeout,omitempty"`
-	Retries         int               `yaml:"retries,omitempty" json:"retries,omitempty"`
-	RetryDelay      string            `yaml:"retry_delay,omitempty" json:"retry_delay,omitempty"`
-	TTY             bool              `yaml:"tty,omitempty" json:"tty,omitempty"`
-	Always          bool              `yaml:"always,omitempty" json:"always,omitempty"`
-	Capture         string            `yaml:"capture,omitempty" json:"capture,omitempty"`
-	ContinueOnError bool              `yaml:"continue_on_error,omitempty" json:"continue_on_error,omitempty"`
-	Unattended      string            `yaml:"unattended,omitempty" json:"unattended,omitempty"`
+	ID      string            `yaml:"id,omitempty" json:"id,omitempty"`
+	Name    string            `yaml:"name" json:"name"`
+	Section string            `yaml:"section,omitempty" json:"section,omitempty"`
+	Owner   string            `yaml:"owner,omitempty" json:"owner,omitempty"`
+	Run     string            `yaml:"run,omitempty" json:"run,omitempty"`
+	Manual  string            `yaml:"manual,omitempty" json:"manual,omitempty"`
+	Shell   string            `yaml:"shell,omitempty" json:"shell,omitempty"`
+	Dir     string            `yaml:"dir,omitempty" json:"dir,omitempty"`
+	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	When    string            `yaml:"when,omitempty" json:"when,omitempty"`
+	Confirm bool              `yaml:"confirm,omitempty" json:"confirm,omitempty"`
+	// Dangerous steps need a typed double check unless they run in
+	// sequence in a recorded run of the saved runbook.
+	Dangerous       bool   `yaml:"dangerous,omitempty" json:"dangerous,omitempty"`
+	Timeout         string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	Retries         int    `yaml:"retries,omitempty" json:"retries,omitempty"`
+	RetryDelay      string `yaml:"retry_delay,omitempty" json:"retry_delay,omitempty"`
+	TTY             bool   `yaml:"tty,omitempty" json:"tty,omitempty"`
+	Always          bool   `yaml:"always,omitempty" json:"always,omitempty"`
+	Capture         string `yaml:"capture,omitempty" json:"capture,omitempty"`
+	ContinueOnError bool   `yaml:"continue_on_error,omitempty" json:"continue_on_error,omitempty"`
+	Unattended      string `yaml:"unattended,omitempty" json:"unattended,omitempty"`
 	// Description says what this step is doing and why. Template.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// Expect is how things should stand when the step is done (shown when
@@ -409,6 +412,9 @@ func validateStep(where string, s Step, nested bool) []error {
 		}
 	}
 
+	if s.Dangerous && nested {
+		add("dangerous goes on the step, not inside an alternative")
+	}
 	if len(s.Alternatives) > 0 && nested {
 		add("alternatives can't be nested")
 	}

@@ -191,6 +191,12 @@ type Options struct {
 	RunbookVersion int
 	// Save is called with a snapshot after every state change worth keeping.
 	Save func(*Run)
+	// Sanctioned: a recorded run of a saved runbook. Dangerous steps run
+	// without a double check only in a sanctioned run, in sequence.
+	Sanctioned bool
+	// Resumed is the run this one continues; steps that finished there
+	// count as in sequence here.
+	Resumed *Run
 	// ShellOnly runs only the steps marked always (the setup), then opens an
 	// interactive shell with the resulting environment.
 	ShellOnly bool
@@ -210,6 +216,7 @@ type StepView struct {
 	Dir           string   `json:"dir,omitempty"`
 	When          string   `json:"when,omitempty"`
 	Confirm       bool     `json:"confirm,omitempty"`
+	Dangerous     bool     `json:"dangerous,omitempty"`
 	Always        bool     `json:"always,omitempty"`
 	Timeout       string   `json:"timeout,omitempty"`
 	Retries       int      `json:"retries,omitempty"`
@@ -357,6 +364,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 			x.ctl.Toggle("skip", i)
 		}
 	}
+	x.carryResumed()
 	x.save()
 	err := x.setupFunctions()
 	if err == nil {
@@ -462,6 +470,11 @@ func (x *executor) steps(ctx context.Context) error {
 			return err
 		}
 		if skip, _, _ := x.ctl.Get(i); skip {
+			if x.run.Steps[i].Note == NoteCarried {
+				x.stepDone(i)
+				x.tendBackground(i, false)
+				continue
+			}
 			note := NoteDeselected
 			if i < x.opts.StartAt && !step.Always {
 				note = NoteBeforeStart

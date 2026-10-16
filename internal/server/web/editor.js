@@ -287,7 +287,7 @@ function detailsPane(ed, d, s, i) {
     ${row("By the end", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "how things should stand when it's done" }))}
     ${row("Section", H.step.section, control(`${P}.section`, "text", s.section))}
     ${row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner))}
-    ${checkRow([["Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)], ...set.filter((f) => f[2] === "bool").map(box)])}
+    ${checkRow([["Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)], ["Dangerous", H.step.dangerous, control(`${P}.dangerous`, "bool", s.dangerous)], ...set.filter((f) => f[2] === "bool").map(box)])}
     ${s.background ? row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })) : ""}
     ${set.filter((f) => f[2] !== "bool").map(fieldRow).join("")}
     ${unset.length ? `<button class="link adv-toggle" data-act="adv" data-i="${i}">${open ? "▾" : "▸"} Advanced <span class="muted">(${unset.length} more)</span></button>` : ""}
@@ -541,7 +541,7 @@ function renderStruct(ed) {
     // that's now set (or cleared): it moves above the fold (or back).
     const m = el.dataset.path.match(/^steps\.(\d+)\.([a-z_]+)/);
     const moved = m && MORE_FIELDS.some(([k]) => k === m[2]) && !!el.closest(".adv-rest") === isSet(d.steps[+m[1]][m[2]]);
-    if (e.type === "change" && (moved || /\.(name|section|confirm|background)$/.test(el.dataset.path))) {
+    if (e.type === "change" && (moved || /\.(name|section|confirm|dangerous|background)$/.test(el.dataset.path))) {
       const focus = document.activeElement?.dataset?.path;
       renderStruct(ed);
       if (focus) pane.querySelector(`[data-path="${CSS.escape(focus)}"]`)?.focus();

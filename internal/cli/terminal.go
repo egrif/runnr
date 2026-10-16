@@ -296,7 +296,7 @@ func (t *Terminal) viewText(v engine.StepView, in string) string {
 	for _, f := range []struct {
 		on   bool
 		name string
-	}{{true, v.Kind}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.StopAfter != "", "until " + v.StopAfter}, {v.When != "", "when " + v.When},
+	}{{true, v.Kind}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.Dangerous, "⚠ dangerous"}, {v.StopAfter != "", "until " + v.StopAfter}, {v.When != "", "when " + v.When},
 		{v.Timeout != "", "timeout " + v.Timeout}, {v.Retries > 0, fmt.Sprintf("retries %d", v.Retries)}} {
 		if f.on {
 			flags = append(flags, f.name)
@@ -644,6 +644,29 @@ func (t *Terminal) Confirm(ctx context.Context, idx int, _ runbook.Step, command
 	}
 	a, err := t.stepPrompt(ctx, idx, "Run this step? [y]es / [s]kip / [a]bort",
 		map[string]string{"y": "y", "yes": "y", "s": "s", "skip": "s", "a": "a", "abort": "a"}, "")
+	if err != nil {
+		return false, err
+	}
+	if a == "a" {
+		return false, engine.ErrAborted
+	}
+	return a == "y", nil
+}
+
+// ConfirmDanger asks for the step number to be typed, so a dangerous step
+// out of sequence can't run on a reflexive "y".
+func (t *Terminal) ConfirmDanger(ctx context.Context, idx int, step runbook.Step, command, why string) (bool, error) {
+	fmt.Fprintln(t.out, t.c("1;31", "  ⚠ DANGEROUS, and not running in sequence"))
+	for _, l := range strings.Split(why, "\n") {
+		fmt.Fprintln(t.out, t.c("31", "  "+l))
+	}
+	fmt.Fprintln(t.out, t.c("2", "  will run:"))
+	for _, l := range strings.Split(strings.TrimRight(command, "\n"), "\n") {
+		fmt.Fprintln(t.out, t.c("2", "    "+l))
+	}
+	n := strconv.Itoa(idx + 1)
+	a, err := t.stepPrompt(ctx, idx, "Type "+n+" to run it anyway / [s]kip / [a]bort",
+		map[string]string{n: "y", "s": "s", "skip": "s", "a": "a", "abort": "a"}, "")
 	if err != nil {
 		return false, err
 	}
