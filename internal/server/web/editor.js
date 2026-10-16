@@ -287,7 +287,17 @@ function renderStruct(ed) {
         ${row("Description", H.runbook.description, control("description", "area", d.description))}
         ${row("Tags", H.runbook.tags, control("tags", "list", d.tags, { placeholder: "ops, deploy" }))}
         ${row("Shell", H.runbook.shell, control("shell", "text", d.shell, { placeholder: "sh" }))}
+        ${row("Libraries", H.runbook.libraries, control("libraries", "list", d.libraries, { placeholder: "aurora-helpers" }))}
       </div>
+      ${group("Functions", [
+        `<div class="fn-list" style="grid-column: 1 / -1">${Object.entries(d.functions || {}).map(([n, f]) => `
+          <div class="sub-card">
+            <div class="row"><input data-fn-rename="${esc(n)}" value="${esc(n)}" placeholder="name">
+              <input data-path="functions.${esc(n)}.description" value="${esc(f.description || "")}" placeholder="what it does / usage">
+              <button class="icon-btn danger" data-act="del-fn" data-fn="${esc(n)}" title="Remove">✕</button></div>
+            ${control(`functions.${n}.body`, "code", f.body, { rows: 3 })}
+          </div>`).join("")}<button data-act="add-fn">+ Add function</button></div>`,
+      ], { collapsible: true, id: "rb-fns", open: Object.keys(d.functions || {}).length > 0 })}
       ${group("Environment, profile & masking", [
         row("Environment", H.runbook.env, control("env", "kv", d.env, { placeholder: "KEY=value" })),
         row("Profile", H.runbook.profile, control("profile", "list", d.profile, { placeholder: "~/.zshrc" })),
@@ -333,6 +343,15 @@ function renderStruct(ed) {
   }).observe(el));
 
   pane.oninput = pane.onchange = (e) => {
+    const rn = e.target.closest("[data-fn-rename]");
+    if (rn) {
+      if (e.type !== "change") return;
+      const old = rn.dataset.fnRename, nw = rn.value.trim();
+      if (nw && nw !== old && !d.functions[nw]) {
+        d.functions = Object.fromEntries(Object.entries(d.functions).map(([k2, v]) => [k2 === old ? nw : k2, v]));
+      }
+      return renderStruct(ed);
+    }
     const k = e.target.closest("[data-act-change]");
     if (k && e.type === "change") {
       const sub = d.steps[+k.dataset.i].alternatives[+k.dataset.j].steps[+k.dataset.k];
@@ -394,6 +413,14 @@ function renderStruct(ed) {
         ed.open.add(d.steps.length - 1);
         break;
       case "add-input": d.inputs.push({ name: "" }); break;
+      case "add-fn": {
+        d.functions ||= {};
+        let n = 1;
+        while (d.functions[`fn${n}`]) n++;
+        d.functions[`fn${n}`] = { description: "", body: "echo hello" };
+        break;
+      }
+      case "del-fn": delete d.functions[b.dataset.fn]; break;
       case "del-input": d.inputs.splice(i, 1); break;
     }
     renderStruct(ed);

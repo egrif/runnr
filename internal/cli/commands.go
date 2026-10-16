@@ -75,7 +75,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -444,10 +444,14 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 			return err
 		}
 	}
+	libs, err := st.Libraries(rb.Libraries)
+	if err != nil {
+		return err
+	}
 	opts := engine.Options{
 		Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt,
 		Controls: engine.NewControls(cv), Review: interactive && !f.noReview, Previous: l.previous,
-		State: state, Resumes: resumes, RunbookVersion: ver,
+		State: state, Resumes: resumes, RunbookVersion: ver, Libraries: libs,
 	}
 	if !f.noHistory {
 		opts.Save = func(r *engine.Run) {
@@ -755,7 +759,11 @@ are asked for again).`,
 			defer stop()
 			term := NewTerminal(len(rb.Steps))
 			term.interrupts = paused
-			run := engine.Execute(ctx, rb, term, "", engine.Options{Vars: base, Interactive: true, ShellOnly: true})
+			libs, err := s().Libraries(rb.Libraries)
+			if err != nil {
+				return err
+			}
+			run := engine.Execute(ctx, rb, term, "", engine.Options{Vars: base, Interactive: true, ShellOnly: true, Libraries: libs})
 			if run.Status != engine.StatusSucceeded {
 				return ExitError{1}
 			}
@@ -1031,4 +1039,204 @@ func printNotes(notes []engine.Note, prefix string) {
 
 func indent(s string) string {
 	return "    " + strings.ReplaceAll(s, "\n", "\n    ")
+}
+
+func libCmd(s func() *store.Store) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "lib",
+		Short: "Manage function libraries runbooks can use",
+		Long: `A library is a named set of shell functions. A runbook that lists it under
+libraries: can call its functions in every step, and they're loaded into
+shells opened from runnr. To use them in any other terminal:
+
+  eval "$(runnr lib export <name>)"`,
+	}
+	var noEdit, force bool
+	newC := &cobra.Command{
+		Use: "new <name>", Short: "Create a library from a starter and open it in $EDITOR", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if _, _, err := s().SaveLibrary([]byte(runbook.LibraryScaffold(args[0])), store.SaveOpts{}); err != nil {
+				return err
+			}
+			fmt.Println("created library", args[0])
+			if noEdit || !isTTY(os.Stdin) {
+				return nil
+			}
+			return editLibrary(s(), args[0])
+		},
+	}
+	newC.Flags().BoolVar(&noEdit, "no-edit", false, "don't open an editor")
+	importC := &cobra.Command{
+		Use: "import <file>...", Short: "Add library files (- reads stdin)", Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			for _, f := range args {
+				var raw []byte
+				var err error
+				if f == "-" {
+					raw, err = io.ReadAll(os.Stdin)
+				} else {
+					raw, err = os.ReadFile(f)
+				}
+				if err != nil {
+					return err
+				}
+				lib, ver, err := s().SaveLibrary(raw, store.SaveOpts{Overwrite: force})
+				if err != nil {
+					return fmt.Errorf("%s: %w", f, err)
+				}
+				fmt.Printf("imported %s → library %s (version %d)\n", f, lib.Name, ver)
+			}
+			return nil
+		},
+	}
+	importC.Flags().BoolVarP(&force, "force", "f", false, "overwrite existing libraries")
+	var ver int
+	showC := &cobra.Command{
+		Use: "show <name>", Short: "Print a library's YAML (--version N for an older save)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if ver > 0 {
+				b, err := s().RawLibraryVersion(args[0], ver)
+				if err == nil {
+					_, err = os.Stdout.Write(b)
+				}
+				return err
+			}
+			d, err := s().LoadLibrary(args[0])
+			if err == nil {
+				_, err = os.Stdout.Write(d.Raw)
+			}
+			return err
+		},
+	}
+	showC.Flags().IntVar(&ver, "version", 0, "print this saved version")
+	cmd.AddCommand(
+		&cobra.Command{
+			Use: "list", Aliases: []string{"ls"}, Short: "List libraries and their functions", Args: cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				libs, err := s().ListLibraries()
+				if err != nil {
+					return err
+				}
+				if len(libs) == 0 {
+					fmt.Println("No libraries yet. Create one with: runnr lib new <name>")
+					return nil
+				}
+				w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+				fmt.Fprintln(w, "NAME\tVER\tFUNCTIONS\tDESCRIPTION")
+				for _, l := range libs {
+					sort.Strings(l.Functions)
+					desc := l.Description
+					if l.Err != "" {
+						desc = "INVALID: " + firstLine(l.Err)
+					}
+					fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", l.Name, l.Version, strings.Join(l.Functions, ", "), desc)
+				}
+				return w.Flush()
+			},
+		},
+		showC, newC, importC,
+		&cobra.Command{
+			Use: "edit <name>", Short: "Edit a library in $EDITOR (validated on save)", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error { return editLibrary(s(), args[0]) },
+		},
+		&cobra.Command{
+			Use: "delete <name>", Aliases: []string{"rm"}, Short: "Delete a library (its versions are kept)", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				if err := s().DeleteLibrary(args[0]); err != nil {
+					return err
+				}
+				fmt.Println("deleted library", args[0])
+				return nil
+			},
+		},
+		&cobra.Command{
+			Use: "versions <name>", Short: "List a library's saved versions", Args: cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				vs, err := s().LibraryVersions(args[0])
+				if err != nil {
+					return err
+				}
+				w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+				fmt.Fprintln(w, "VERSION\tSAVED\tBYTES")
+				for _, v := range vs {
+					fmt.Fprintf(w, "%d\t%s\t%d\n", v.Version, v.CreatedAt.Local().Format("2006-01-02 15:04:05"), v.Bytes)
+				}
+				return w.Flush()
+			},
+		},
+		&cobra.Command{
+			Use:   "export <name>...",
+			Short: "Print libraries as shell function definitions",
+			Long:  "Use them in any shell: eval \"$(runnr lib export <name>)\"",
+			Args:  cobra.MinimumNArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				libs, err := s().Libraries(args)
+				if err != nil {
+					return err
+				}
+				for _, l := range libs {
+					fmt.Printf("# runnr library %s\n%s", l.Name, runbook.FunctionScript(l.Functions))
+				}
+				return nil
+			},
+		},
+	)
+	return cmd
+}
+
+// editLibrary edits a temp copy and only saves it once valid.
+func editLibrary(st *store.Store, name string) error {
+	doc, err := st.LoadLibrary(name)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp("", "runnr-lib-"+name+"-*.yaml")
+	if err != nil {
+		return err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			os.Remove(tmp.Name())
+		}
+	}()
+	if _, err := tmp.Write(doc.Raw); err != nil {
+		return err
+	}
+	tmp.Close()
+	editor := nonEmptyEnv("VISUAL", nonEmptyEnv("EDITOR", "vi"))
+	for {
+		c := exec.Command("sh", "-c", editor+` "$1"`, "sh", tmp.Name())
+		c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
+		if err := c.Run(); err != nil {
+			return fmt.Errorf("editor: %w", err)
+		}
+		edited, err := os.ReadFile(tmp.Name())
+		if err != nil {
+			return err
+		}
+		lib, ver, err := st.SaveLibrary(edited, store.SaveOpts{OldName: name, BaseVersion: doc.Version})
+		if err == nil {
+			fmt.Printf("saved library %s (version %d)\n", lib.Name, ver)
+			return nil
+		}
+		if errors.Is(err, store.ErrConflict) {
+			keep = true
+			return fmt.Errorf("%w\nyour edits are in %s", err, tmp.Name())
+		}
+		fmt.Fprintln(os.Stderr, "invalid library:\n"+indent(err.Error()))
+		fmt.Fprint(os.Stderr, "  ? [e]dit again / [d]iscard changes: ")
+		var a string
+		_, _ = fmt.Fscanln(os.Stdin, &a)
+		if strings.HasPrefix(strings.ToLower(a), "d") {
+			return errors.New("changes discarded")
+		}
+	}
+}
+
+func nonEmptyEnv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

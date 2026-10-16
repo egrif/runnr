@@ -178,8 +178,10 @@ type Options struct {
 	Controls *Controls
 	// Review shows the plan before running (if the Interactor is a Reviewer).
 	Review bool
-	// Previous is an earlier run to compare against ("what it did last time").
+	// Previous is an earlier run to compare against ("last time").
 	Previous *Run
+	// Libraries are the function libraries the runbook uses, resolved.
+	Libraries []*runbook.Library
 	// State seeds variables from an earlier run (resume). Inputs win, and
 	// masked secrets are not restored.
 	State map[string]string
@@ -254,6 +256,8 @@ type Session interface {
 	Previous() *Run
 	// Mask hides the run's secrets in text.
 	Mask(string) string
+	// Functions lists the shell functions steps and shells can call.
+	Functions() []FuncInfo
 	// State returns the run's variables with secrets masked.
 	State() map[string]string
 	// CanShell reports whether Shell can work here.
@@ -310,7 +314,10 @@ type executor struct {
 	ctl        *Controls
 	// background sessions still running, by step index.
 	background map[int]*bgStep
-	mu         sync.Mutex
+	// funcFile holds the run's shell functions (libraries and the runbook's).
+	funcFile  string
+	functions []FuncInfo
+	mu        sync.Mutex
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -350,7 +357,10 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		}
 	}
 	x.save()
-	err := x.resolveInputs(ctx)
+	err := x.setupFunctions()
+	if err == nil {
+		err = x.resolveInputs(ctx)
+	}
 	if err == nil {
 		x.restoreState()
 		x.refreshState()
@@ -376,6 +386,9 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 
 func (x *executor) finish(ctx context.Context, err error) {
 	x.tendBackground(-1, true)
+	if x.funcFile != "" {
+		os.Remove(x.funcFile)
+	}
 	x.run.Ended = time.Now()
 	switch {
 	case err == nil:
@@ -650,6 +663,9 @@ func (x *executor) runnrEnv(step runbook.Step) ([]string, error) {
 		env = append(env, k+"="+v)
 	}
 	env = append(env, "RUNNR_RUN_ID="+x.run.ID, "RUNNR_RUNBOOK="+x.rb.Name)
+	if x.funcFile != "" {
+		env = append(env, "RUNNR_FUNCTIONS="+x.funcFile)
+	}
 	for _, m := range []map[string]string{x.rb.Env, step.Env} {
 		for k, v := range m {
 			r, err := x.render(v)

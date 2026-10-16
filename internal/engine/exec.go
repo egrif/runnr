@@ -88,7 +88,7 @@ func (x *executor) execStream(ctx context.Context, i int, step runbook.Step, com
 	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
 	env = append(env, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile)
 
-	if command, err = x.withProfile(command, tmp); err != nil {
+	if command, err = x.withPrelude(command, tmp); err != nil {
 		return cmdResult{err: err}
 	}
 	command = withOutputs(step, command)
@@ -214,11 +214,11 @@ func (x *executor) finishCmd(ctx context.Context, step runbook.Step, cmd *exec.C
 	return res
 }
 
-// withProfile sources the runbook's profile files before the step. The
-// step is then read from a file, so it's parsed after the profile has
-// defined its aliases and functions.
-func (x *executor) withProfile(command, tmp string) (string, error) {
-	if len(x.rb.Profile) == 0 {
+// withPrelude sources the runbook's profile files and the run's functions
+// before the step. The step is then read from a file, so it's parsed after
+// they've defined their aliases and functions.
+func (x *executor) withPrelude(command, tmp string) (string, error) {
+	if len(x.rb.Profile) == 0 && x.funcFile == "" {
 		return command, nil
 	}
 	script := filepath.Join(tmp, "step.sh")
@@ -232,9 +232,12 @@ func (x *executor) withProfile(command, tmp string) (string, error) {
 			f = filepath.Join(home, rest)
 		}
 		// Quiet: shell configs often print things meant for interactive use.
-		fmt.Fprintf(&b, "[ -r %[1]s ] && source %[1]s >/dev/null 2>&1\n", shQuote(f))
+		fmt.Fprintf(&b, "[ -r %[1]s ] && . %[1]s >/dev/null 2>&1\n", shQuote(f))
 	}
-	fmt.Fprintf(&b, "source %s\n", shQuote(script))
+	if x.funcFile != "" {
+		fmt.Fprintf(&b, ". %s\n", shQuote(x.funcFile))
+	}
+	fmt.Fprintf(&b, ". %s\n", shQuote(script))
 	return b.String(), nil
 }
 

@@ -457,7 +457,7 @@ func (x *executor) startBackground(ctx context.Context, i int, step runbook.Step
 		return x.fail(i, err)
 	}
 	extra = append(extra, "RUNNR_OUTPUT="+filepath.Join(tmp, "output"), "RUNNR_SECRET="+filepath.Join(tmp, "secret"))
-	if cmd, err = x.withProfile(cmd, tmp); err != nil {
+	if cmd, err = x.withPrelude(cmd, tmp); err != nil {
 		return x.fail(i, err)
 	}
 

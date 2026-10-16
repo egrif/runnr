@@ -61,6 +61,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runbooks/{name}/versions", s.listVersions)
 	mux.HandleFunc("GET /api/runbooks/{name}/versions/{version}", s.getVersion)
 	mux.HandleFunc("POST /api/validate", s.validate)
+	mux.HandleFunc("GET /api/libraries", s.listLibraries)
+	mux.HandleFunc("POST /api/libraries", s.createLibrary)
+	mux.HandleFunc("GET /api/libraries/{name}", s.getLibrary)
+	mux.HandleFunc("PUT /api/libraries/{name}", s.updateLibrary)
+	mux.HandleFunc("DELETE /api/libraries/{name}", s.deleteLibrary)
+	mux.HandleFunc("GET /api/libraries/{name}/versions", s.libraryVersions)
+	mux.HandleFunc("POST /api/libraries/validate", s.validateLibrary)
 	mux.HandleFunc("GET /api/template", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"raw": runbook.Scaffold(nonEmpty(r.URL.Query().Get("name"), "my-runbook"))})
 	})
@@ -421,6 +428,11 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		writeErr(w, err)
 		return
 	}
+	libs, err := s.st.Libraries(rb.Libraries)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if req.Wait && !req.Unattended {
 		writeErr(w, errors.New("wait requires unattended (nobody could answer prompts)"))
 		return
@@ -449,6 +461,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 			StartAt:        start,
 			Controls:       l.ctl,
 			Previous:       previous,
+			Libraries:      libs,
 			State:          state,
 			Resumes:        resumes,
 			RunbookVersion: ver,
@@ -778,4 +791,93 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	l.cancel()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---------- libraries ----------
+
+func (s *Server) listLibraries(w http.ResponseWriter, _ *http.Request) {
+	libs, err := s.st.ListLibraries()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, libs)
+}
+
+func (s *Server) getLibrary(w http.ResponseWriter, r *http.Request) {
+	d, err := s.st.LoadLibrary(r.PathValue("name"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	resp := map[string]any{"raw": string(d.Raw), "version": d.Version, "updated_at": d.UpdatedAt}
+	if d.ParseErr != nil {
+		resp["error"] = d.ParseErr.Error()
+	} else {
+		resp["library"] = d.Library
+		resp["script"] = runbook.FunctionScript(d.Library.Functions)
+	}
+	w.Header().Set("ETag", strconv.Itoa(d.Version))
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) saveLibrary(w http.ResponseWriter, r *http.Request, o store.SaveOpts, code int) {
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	lib, ver, err := s.st.SaveLibrary(raw, o)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, code, map[string]any{"name": lib.Name, "version": ver, "library": lib})
+}
+
+func (s *Server) createLibrary(w http.ResponseWriter, r *http.Request) {
+	s.saveLibrary(w, r, store.SaveOpts{}, http.StatusCreated)
+}
+
+func (s *Server) updateLibrary(w http.ResponseWriter, r *http.Request) {
+	o := store.SaveOpts{OldName: r.PathValue("name")}
+	if m := strings.Trim(r.Header.Get("If-Match"), `" `); m != "" {
+		v, err := strconv.Atoi(m)
+		if err != nil {
+			writeErr(w, fmt.Errorf("If-Match must be a version number"))
+			return
+		}
+		o.BaseVersion = v
+	}
+	s.saveLibrary(w, r, o, http.StatusOK)
+}
+
+func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) {
+	if err := s.st.DeleteLibrary(r.PathValue("name")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) libraryVersions(w http.ResponseWriter, r *http.Request) {
+	vs, err := s.st.LibraryVersions(r.PathValue("name"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, vs)
+}
+
+func (s *Server) validateLibrary(w http.ResponseWriter, r *http.Request) {
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if _, err := runbook.ParseLibrary(raw); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

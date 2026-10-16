@@ -158,6 +158,8 @@ type TermEvent struct {
 	Expect  string `json:"expect,omitempty"`
 	// Background sessions show as a tab without taking over the page.
 	Background bool `json:"background,omitempty"`
+	// Functions a shell can call, listed beside it.
+	Functions []engine.FuncInfo `json:"functions,omitempty"`
 }
 
 // StartBackground implements engine.BackgroundHost: a browser terminal tab
@@ -208,6 +210,9 @@ func (l *liveRun) startTerm(idx int, title string, background bool) *engine.Pipe
 	if idx >= 0 && l.session != nil {
 		v := l.session.View(idx)
 		start.Command, start.Expect = v.Command, v.Expect
+	}
+	if start.Shell && l.session != nil {
+		start.Functions = l.session.Functions()
 	}
 	l.publish(WireEvent{Event: engine.Event{Kind: "term_start", Step: idx}, Term: start})
 	go func() {

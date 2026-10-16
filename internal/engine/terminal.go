@@ -71,8 +71,14 @@ type termSession struct {
 // returns at once; wait for it with wait. conn is closed when it ends.
 func (x *executor) startTerm(ctx context.Context, shell, command string, extra []string, dir string, conn TermConn) (*termSession, error) {
 	var cmd *exec.Cmd
+	cleanup := func() {}
 	if command == "" {
-		cmd = exec.Command(userShell(x.rb.Shell))
+		var shellEnv []string
+		var err error
+		if cmd, shellEnv, cleanup, err = x.interactiveShell(); err != nil {
+			return nil, err
+		}
+		extra = append(extra, shellEnv...)
 	} else {
 		cmd = exec.Command(shell, "-c", command)
 	}
@@ -80,6 +86,7 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 	rows, cols := conn.Size()
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
+		cleanup()
 		return nil, err
 	}
 	s := &termSession{cmd: cmd, done: make(chan struct{})}
@@ -124,6 +131,7 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 		resizing.Wait()
 		f.Close()
 		conn.Close()
+		cleanup()
 		s.transcript = CleanTranscript(rec.String())
 		if cmd.ProcessState == nil {
 			s.err = err

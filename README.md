@@ -43,6 +43,8 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr show <name>` | Print YAML (`--version N` for an older save) |
 | `runnr inspect <name> [step]` | Explore what will run: all steps, or one step's code, expected outcome and outputs (`-v` fills in inputs, `--all`) |
 | `runnr versions <name>` | List saved versions |
+| `runnr lib list/show/new/edit/import/delete/versions` | Manage function libraries |
+| `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
 | `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin) |
 | `runnr delete <name>` | Delete (`-f` to skip the prompt) |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
@@ -170,6 +172,11 @@ description: Deploy a service
 tags: [deploy]
 shell: bash                     # default: sh
 profile: [~/.zshrc]             # sourced before every step: your aliases/functions work (slower)
+libraries: [aurora-helpers]     # shared shell functions every step (and shell) can call
+functions:                      # this runbook's own functions
+  wait_healthy:
+    description: Poll a URL until it returns 200
+    body: until curl -fsS "$1" >/dev/null; do sleep 5; done
 sensitive:                      # credentials to hide wherever they appear; {{SENSITIVE}} = the hidden part
   api_key: 'X-Api-Key: {{SENSITIVE}}'
   ticket_token: 'token={{SENSITIVE}}&' 
@@ -285,6 +292,26 @@ is a command or a short list of steps, which inherit the step's `dir`,
 
 The GUI's **Runbook format help** page describes every field, and the
 structured editor shows the same text on each field's ⓘ.
+
+**Functions and libraries.** Shell functions used across steps or
+runbooks go in a library: a named, versioned set of functions managed with
+`runnr lib` or under Libraries in the GUI. A runbook that lists it under
+`libraries:` (and its own `functions:`) can call them in every step, and
+shells opened from runnr load them after your own zsh/bash config. In any
+other terminal: `eval "$(runnr lib export <name>)"`. A run won't start if a
+library it uses is missing.
+
+```yaml
+# runnr lib import aurora-helpers.yaml
+name: aurora-helpers
+description: Helpers for Aurora migrations
+functions:
+  kpsql:
+    description: "Run SQL from a pod in the cluster. Usage: kpsql URL [SQL]"
+    body: |
+      kubectl run "psql-$RANDOM" --rm -i --restart=Never --image=postgres:16-alpine \
+        --env="URL=$1" -- psql "$URL" -XtA -c "${2:-select 1}"
+```
 
 **What steps can see.** Steps run as you, on the machine runnr runs on: your
 files, home directory and permissions, and the environment runnr was started

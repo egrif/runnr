@@ -38,6 +38,20 @@ proxy) off-host.
 Send `If-Match: <version>` with `PUT` to get `409 Conflict` instead of
 overwriting a newer save.
 
+## Libraries
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/libraries` | | `[{name, description, functions, version, updated_at, error?}]` |
+| GET | `/api/libraries/{name}` | | `{raw, version, updated_at, library?, script?, error?}` (`script`: the functions as shell code) |
+| POST | `/api/libraries` | YAML | `201 {name, version, library}` |
+| PUT | `/api/libraries/{name}` | YAML | `{name, version, library}` (`If-Match: <version>` → `409` on conflict) |
+| DELETE | `/api/libraries/{name}` | | `204` (versions kept) |
+| GET | `/api/libraries/{name}/versions` | | `[{version, created_at, bytes}]` |
+| POST | `/api/libraries/validate` | YAML | `{ok, error?}` |
+
+Starting a run fails with `400` if a library the runbook uses doesn't exist.
+
 ## Runs
 
 | Method | Path | Body | Returns |

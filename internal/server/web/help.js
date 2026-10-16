@@ -12,6 +12,8 @@ const FIELD_HELP = {
     env: "Environment variables for every step, KEY=value. Values may use templates like {{.input}}.",
     sensitive: "Credential patterns to hide in output, state and history: name=regex, with {{SENSITIVE}} where the credential is. URL passwords, Bearer tokens and AWS keys are hidden already.",
     inputs: "Values the operator gives when starting a run. Available to steps as {{.name}} and $name.",
+    libraries: "Function libraries this runbook uses: their functions can be called in every step and in shells opened from runnr.",
+    functions: "This runbook's own shell functions (name, description, body). They win over a library function of the same name.",
     steps: "What the runbook does, in order.",
   },
   input: {
@@ -53,6 +55,11 @@ const FIELD_HELP = {
     repeat_every: "With repeat: how long to wait between attempts, e.g. 20s.",
     repeat_timeout: "With repeat: give up (and fail) after this long, e.g. 10m.",
   },
+  library: {
+    name: "The library's identifier, used under a runbook's libraries:.",
+    description: "What the functions are for.",
+    functions: "name → description and body. Each becomes a shell function: name() { body }. Arguments are $1, $2…; the run's variables are available as usual.",
+  },
   check: {
     name: "What the check confirms, shown in the ✅/❌ table.",
     run: "Command that exits 0 when the check passes. Its output is kept for failing checks.",
@@ -84,11 +91,11 @@ function viewHelp() {
     <nav class="help-toc">
       <a href="#help-top">Runbook</a> · <a href="#help-inputs">Inputs</a> · <a href="#help-steps">Steps</a> ·
       <a href="#help-kinds">Kinds of step</a> · <a href="#help-templates">Templates &amp; state</a> ·
-      <a href="#help-masking">Masking</a> · <a href="#help-running">Running</a> · <a href="#help-example">Example</a>
+      <a href="#help-functions">Functions &amp; libraries</a> · <a href="#help-masking">Masking</a> · <a href="#help-running">Running</a> · <a href="#help-example">Example</a>
     </nav>
 
     <h2 id="help-top">Runbook</h2>
-    ${helpTable("runbook", [["name"], ["description"], ["tags"], ["shell"], ["profile"], ["env"], ["sensitive"], ["inputs"], ["steps"]])}
+    ${helpTable("runbook", [["name"], ["description"], ["tags"], ["shell"], ["profile"], ["env"], ["sensitive"], ["libraries"], ["functions"], ["inputs"], ["steps"]])}
 
     <h2 id="help-inputs">Inputs</h2>
     <pre class="cmd">inputs:
@@ -170,6 +177,17 @@ function viewHelp() {
     <p><code>run</code>, <code>manual</code>, <code>expect</code>, <code>when</code>, <code>dir</code> and <code>env</code> are Go templates: <code>{{.name}}</code> is a value; helpers are <code>default</code>, <code>upper</code>, <code>lower</code>, <code>trim</code>, <code>contains</code> and <code>quote</code> (shell-quote). An unknown name is an error.</p>
     <p>The run's <b>state</b> is every input and published value. Every later step gets all of it, both as <code>{{.name}}</code> and as the environment variable <code>$name</code>. Steps publish with <code>outputs</code> / <code>secret_outputs</code> (shell variables), <code>capture</code> (standard output), or by writing <code>name=value</code> lines to <code>$RUNNR_OUTPUT</code> / <code>$RUNNR_SECRET</code>. Each step runs in its own shell, so plain shell variables and <code>cd</code> don't carry over. State is saved after each step (credentials masked) and restored on resume; secrets are re-derived by <code>always</code> steps.</p>
     <p>Steps also get <code>RUNNR_RUN_ID</code> and <code>RUNNR_RUNBOOK</code>.</p>
+
+    <h2 id="help-functions">Functions &amp; libraries</h2>
+    <p>Put commands you use in many steps or runbooks into shell functions. A <b>library</b> is a named set of them, managed under <a href="#/libraries">Libraries</a> (or <code>runnr lib</code>); a runbook uses it by listing it, and can also define its own:</p>
+    <pre class="cmd">libraries: [aurora-helpers]
+functions:
+  wait_healthy:
+    description: Poll a URL until it returns 200. Usage: wait_healthy URL
+    body: |
+      until curl -fsS "$1" >/dev/null; do sleep 5; done</pre>
+    ${helpTable("library", [["name"], ["description"], ["functions"]])}
+    <p>Every step can call them (commands, checks, alternatives, background steps), and shells opened from runnr have them too, loaded after your own shell config. Elsewhere: <code>eval "$(runnr lib export aurora-helpers)"</code>. A run fails to start if a library it uses is missing. The run's functions are also in <code>$RUNNR_FUNCTIONS</code> to source by hand.</p>
 
     <h2 id="help-masking">Masking</h2>
     <p>Secret inputs and <code>secret_outputs</code> are hidden wherever they appear: output, commands, errors, state, history and terminals in the browser. When a pattern recognises a secret, only the credential part is hidden (<code>postgres://app:****@db/app</code>); otherwise all of it (<code>****</code>). Built-in patterns cover URL passwords, Bearer tokens and AWS secret keys; add your own with <code>sensitive</code>:</p>

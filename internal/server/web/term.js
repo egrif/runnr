@@ -29,6 +29,7 @@ function termDrawer() {
         <div class="row"><b>Step commands</b><span class="spacer"></span><button class="link term-copy">Copy</button></div>
         <pre class="term-cmd"></pre>
         <div class="term-expect"></div>
+        <div class="term-fns"></div>
       </div>
       <div class="term-body"></div>
     </div>`;
@@ -75,8 +76,11 @@ function renderTabs() {
     : s.shell ? "the run's variables are loaded · type exit (or End session) to go back to the run"
     : s.background ? "keeps running while the run goes on" : "type here when it asks · recorded with the step";
   const side = d.querySelector(".term-side");
-  side.hidden = !(s?.shell && s.command);
+  side.hidden = !(s?.shell && (s.command || s.functions?.length));
   d.querySelector(".term-cmd").textContent = s?.command || "";
+  d.querySelector(".term-cmd").hidden = !s?.command;
+  d.querySelector(".term-fns").innerHTML = s?.functions?.length ? `<b>Functions you can call</b><table class="kv">${s.functions.map((f) =>
+    `<tr><td><code>${esc(f.name)}</code></td><td>${esc(f.description || "")} <span class="muted">${esc(f.from === "runbook" ? "" : f.from)}</span></td></tr>`).join("")}</table>` : "";
   d.querySelector(".term-expect").innerHTML = s?.expect ? `<div class="expect"><b>Expect:</b> ${esc(s.expect)}</div>` : "";
 }
 
@@ -149,7 +153,7 @@ function startTerm(runId, t, step) {
   });
   const fit = new FitAddon.FitAddon();
   xt.loadAddon(fit);
-  const s = { id: t.id, title: t.title, step, shell: !!t.shell, background: !!t.background, command: t.command, expect: t.expect, xt, fit, el, ended: false, opened: false };
+  const s = { id: t.id, title: t.title, step, shell: !!t.shell, background: !!t.background, command: t.command, expect: t.expect, functions: t.functions, xt, fit, el, ended: false, opened: false };
   // ⌘C / Ctrl+Shift+C copy the selection; plain Ctrl+C still interrupts.
   xt.attachCustomKeyEventHandler((ev) => {
     const copyKey = ev.key.toLowerCase() === "c" && (ev.metaKey || (ev.ctrlKey && ev.shiftKey));

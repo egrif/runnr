@@ -175,3 +175,29 @@ func TestNotes(t *testing.T) {
 		})
 	}
 }
+
+func TestLibraries(t *testing.T) {
+	for name, s := range stores(t) {
+		t.Run(name, func(t *testing.T) {
+			s.db.Exec("DELETE FROM libraries")
+			s.db.Exec("DELETE FROM library_versions")
+			lib := "name: helpers\nfunctions:\n  greet: {body: 'echo hi'}\n"
+			if _, v, err := s.SaveLibrary([]byte(lib), SaveOpts{}); err != nil || v != 1 {
+				t.Fatalf("v%d %v", v, err)
+			}
+			if _, _, err := s.SaveLibrary([]byte(lib), SaveOpts{OldName: "helpers", BaseVersion: 7}); !errors.Is(err, ErrConflict) {
+				t.Fatalf("conflict: %v", err)
+			}
+			libs, err := s.Libraries([]string{"helpers"})
+			if err != nil || libs[0].Functions["greet"].Body != "echo hi" {
+				t.Fatalf("%v %v", libs, err)
+			}
+			if _, err := s.Libraries([]string{"missing"}); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("missing: %v", err)
+			}
+			if l, _ := s.ListLibraries(); len(l) != 1 || l[0].Functions[0] != "greet" {
+				t.Fatalf("list %+v", l)
+			}
+		})
+	}
+}

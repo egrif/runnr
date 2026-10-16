@@ -608,6 +608,12 @@ func (t *Terminal) OpenShell(ctx context.Context, idx int) error {
 	fmt.Fprintln(t.out, t.c("2", "  ── runnr shell: the run's variables are in the environment (try `env`).\n"+
 		"     Publish values back with: echo name=value >> \"$RUNNR_OUTPUT\" (or $RUNNR_SECRET).\n"+
 		"     Type `exit` to return."))
+	if fns := t.session.Functions(); len(fns) > 0 {
+		fmt.Fprintln(t.out, t.c("2", "     Functions you can call:"))
+		for _, f := range fns {
+			fmt.Fprintf(t.out, "%s\n", t.c("2", fmt.Sprintf("       %-18s %s", f.Name, f.Description)))
+		}
+	}
 	defer fmt.Fprintln(t.out, t.c("2", "  ── back in runnr"))
 	if t.interrupts != nil {
 		t.interrupts.Store(true)

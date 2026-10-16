@@ -798,3 +798,72 @@ steps:
 		t.Fatalf("forever %+v", f)
 	}
 }
+
+func TestFunctions(t *testing.T) {
+	lib, err := runbook.ParseLibrary([]byte(`
+name: helpers
+functions:
+  greet: {description: Say hello, body: 'echo "hello, $1"'}
+  twice: {body: 'echo "lib twice"'}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	rb := mustParse(t, `
+name: t
+libraries: [helpers]
+functions:
+  twice: {body: 'echo "$1$1"'}
+steps:
+  - {name: cmd, run: 'greet cmd; twice ab'}
+  - {name: gate, checks: [{name: has greet, run: 'greet check | grep -q "hello, check"'}]}
+  - name: alt
+    alternatives:
+      - name: only
+        steps: [{name: sub, run: 'greet sub'}]
+  - {name: bg, background: true, dir: `+dir+`, run: 'greet bg > out; sleep 5'}
+  - {name: wait, run: 'sleep 0.3'}
+`)
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{Libraries: []*runbook.Library{lib}})
+	if run.Status != StatusSucceeded {
+		t.Fatalf("%s %s", run.Status, run.Error)
+	}
+	got := strings.Join(ui.output, "|")
+	for _, want := range []string{"hello, cmd", "abab", "hello, sub"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %q", want, got)
+		}
+	}
+	if b, _ := os.ReadFile(dir + "/out"); strings.TrimSpace(string(b)) != "hello, bg" {
+		t.Fatalf("background: %q", b)
+	}
+}
+
+func TestFunctionsInShells(t *testing.T) {
+	for _, sh := range []string{"/bin/zsh", "/bin/bash"} {
+		if _, err := os.Stat(sh); err != nil {
+			continue
+		}
+		t.Run(sh, func(t *testing.T) {
+			home := t.TempDir()
+			// The user's own config still loads, before the run's functions.
+			os.WriteFile(home+"/.zshrc", []byte("myalias_ok() { echo user-config }\n"), 0o644)
+			os.WriteFile(home+"/.bashrc", []byte("myalias_ok() { echo user-config; }\n"), 0o644)
+			t.Setenv("HOME", home)
+			t.Setenv("ZDOTDIR", "")
+			t.Setenv("SHELL", sh)
+			rb := mustParse(t, "name: t\nfunctions:\n  greet: {body: 'echo \"hello, $1\"'}\nsteps:\n  - {name: a, run: 'true'}\n")
+			ui := &stepper{decisions: []StepDecision{StepRun}, shellAt: "a", keys: "greet shell; myalias_ok; exit\n"}
+			run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Controls: NewControls(ControlsView{StepAll: true})})
+			if run.Status != StatusSucceeded || len(run.Steps[0].Shells) != 1 {
+				t.Fatalf("%s %+v", run.Status, run.Steps[0])
+			}
+			tr := run.Steps[0].Shells[0]
+			if !strings.Contains(tr, "hello, shell") || !strings.Contains(tr, "user-config") {
+				t.Fatalf("transcript %q", tr)
+			}
+		})
+	}
+}

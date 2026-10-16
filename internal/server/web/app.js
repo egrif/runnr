@@ -110,6 +110,7 @@ function renderSidebar() {
     .join("") || `<li class="muted">No runbooks</li>`;
   $("#history-link").classList.toggle("active", location.hash.startsWith("#/history"));
   $("#help-link").classList.toggle("active", location.hash === "#/help");
+  $("#libs-link").classList.toggle("active", location.hash.startsWith("#/libraries"));
 }
 
 $("#filter").addEventListener("input", renderSidebar);
@@ -130,6 +131,8 @@ async function route() {
     if (h === "#/new") return await viewNew();
     if (h.startsWith("#/history")) return await viewHistory();
     if (h === "#/help") return viewHelp();
+    if (h === "#/libraries") return await viewLibraries();
+    if ((m = h.match(/^#\/libraries\/([^/]+)$/))) return await viewLibrary(decodeURIComponent(m[1]));
     return viewHome();
   } catch (e) {
     main.innerHTML = `<p class="error-text">${esc(e.message)}</p>`;

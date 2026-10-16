@@ -34,7 +34,12 @@ type Runbook struct {
 	// state and history. {{SENSITIVE}} marks the part to hide, e.g.
 	// "postgres://[^:/@]+:{{SENSITIVE}}@" hides just a URL's password.
 	Sensitive map[string]string `yaml:"sensitive,omitempty" json:"sensitive,omitempty"`
-	Steps     []Step            `yaml:"steps" json:"steps"`
+	// Libraries names shared function libraries every step can call.
+	Libraries []string `yaml:"libraries,omitempty" json:"libraries,omitempty"`
+	// Functions are this runbook's own shell functions (they win over a
+	// library's of the same name).
+	Functions map[string]Function `yaml:"functions,omitempty" json:"functions,omitempty"`
+	Steps     []Step              `yaml:"steps" json:"steps"`
 }
 
 type Input struct {
@@ -235,6 +240,12 @@ func (rb *Runbook) Validate() error {
 	for name, p := range rb.Sensitive {
 		if _, err := CompileSensitive(p); err != nil {
 			add("sensitive %q: %v", name, err)
+		}
+	}
+	errs = append(errs, validateFunctions("", rb.Functions)...)
+	for i, l := range rb.Libraries {
+		if !slugRe.MatchString(l) {
+			add("libraries[%d]: %q isn't a library name", i, l)
 		}
 	}
 	for i, f := range rb.Profile {
