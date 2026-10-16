@@ -211,7 +211,8 @@ func TestDryRun(t *testing.T) {
 
 func TestManualInteractive(t *testing.T) {
 	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, manual: hi}\n  - {name: b, manual: hi}\n")
-	ui := &scripted{manuals: []ManualOutcome{ManualDone, ManualFail}}
+	// A manual step marked failed gets the usual failure choices; abort here.
+	ui := &scripted{manuals: []ManualOutcome{ManualDone, ManualFail}, failures: []FailureAction{FailAbort}}
 	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
 	if run.Status != StatusFailed || statuses(run) != "succeeded,failed" {
 		t.Fatalf("%s %s", run.Status, statuses(run))
@@ -648,5 +649,152 @@ steps:
 	st := ResumeState(run)
 	if st["db"] != "****" || len(ResumeInputs(run)) != 0 {
 		t.Fatalf("resume state %v inputs %v", st, ResumeInputs(run))
+	}
+}
+
+func TestChecks(t *testing.T) {
+	dir := t.TempDir()
+	// "settles" passes from its third try; "steady" always passes.
+	rb := mustParse(t, `
+name: t
+steps:
+  - name: gate
+    dir: `+dir+`
+    checks:
+      - {name: steady, run: 'true'}
+      - {name: settles, run: 'n=$(cat n 2>/dev/null || echo 0); echo $((n+1)) > n; [ $((n+1)) -ge 3 ]'}
+    repeat: {every: 50ms, timeout: 5s}
+`)
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{})
+	if run.Status != StatusSucceeded || run.Steps[0].Attempts != 3 || len(run.Steps[0].Checks) != 2 || !run.Steps[0].Checks[1].Passed {
+		t.Fatalf("%s %s attempts=%d checks=%+v", run.Status, run.Error, run.Steps[0].Attempts, run.Steps[0].Checks)
+	}
+	if !strings.Contains(run.Steps[0].Output, "❌ settles") || !strings.Contains(run.Steps[0].Output, "✅ settles") {
+		t.Fatalf("output %q", run.Steps[0].Output)
+	}
+
+	// Without repeat, a failing group goes to the failure choices; retry re-runs it.
+	rb = mustParse(t, `
+name: t
+steps:
+  - name: gate
+    dir: `+t.TempDir()+`
+    checks:
+      - {name: flaky, run: 'n=$(cat n 2>/dev/null || echo 0); echo $((n+1)) > n; [ $((n+1)) -ge 2 ]'}
+`)
+	ui = &scripted{failures: []FailureAction{FailRetry}}
+	run = Execute(context.Background(), rb, ui, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded || run.Steps[0].Attempts != 2 {
+		t.Fatalf("%s attempts=%d", run.Status, run.Steps[0].Attempts)
+	}
+
+	// Repeat gives up at the timeout.
+	rb = mustParse(t, "name: t\nsteps:\n  - name: g\n    checks: [{name: never, run: 'false'}]\n    repeat: {every: 50ms, timeout: 200ms}\n")
+	run = Execute(context.Background(), rb, Unattended{}, "", Options{})
+	if run.Status != StatusFailed || !strings.Contains(run.Steps[0].Error, "gave up after 200ms") {
+		t.Fatalf("%s %q", run.Status, run.Steps[0].Error)
+	}
+}
+
+// chooser picks an alternative by name.
+type chooser struct {
+	scripted
+	pick string
+	seen []AltView
+}
+
+func (c *chooser) ChooseAlternative(_ context.Context, v StepView) (int, error) {
+	c.seen = v.Alternatives
+	return slices.IndexFunc(v.Alternatives, func(a AltView) bool { return a.Name == c.pick }), nil
+}
+
+func TestAlternatives(t *testing.T) {
+	dir := t.TempDir()
+	rb := mustParse(t, `
+name: t
+inputs: [{name: mode, default: fast}]
+steps:
+  - name: swap
+    dir: `+dir+`
+    outputs: [how]
+    alternatives:
+      - {name: script, when: '{{eq .mode "script"}}', run: 'how=script; echo via script'}
+      - name: by hand
+        steps:
+          - {name: one, run: 'echo one; touch one'}
+          - {name: two, run: '[ -f fixed ] || { touch fixed; exit 1; }; echo two', outputs: [how2]}
+          - {name: three, run: 'echo three'}
+  - {name: after, run: 'echo "how=$how"'}
+`)
+	// Unattended: the first whose when holds; "script" doesn't, "by hand" has none.
+	// Step two fails once; retry resumes at two (one isn't re-run).
+	ui := &scripted{failures: []FailureAction{}}
+	run := Execute(context.Background(), rb, Unattended{OnEvent: ui.Notify}, "", Options{})
+	if run.Status != StatusFailed || run.Steps[0].Alternative != "by hand" || run.Steps[0].Sub[1].Status != StatusFailed {
+		t.Fatalf("%s %+v", run.Status, run.Steps[0])
+	}
+
+	ui2 := &chooser{pick: "by hand"}
+	ui2.failures = []FailureAction{FailRetry}
+	os.Remove(dir + "/fixed")
+	run = Execute(context.Background(), rb, ui2, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded || run.Steps[0].Note != "used: by hand" {
+		t.Fatalf("%s %s %+v", run.Status, run.Error, run.Steps[0])
+	}
+	ones := 0
+	for _, l := range ui2.output {
+		if l == "one" {
+			ones++
+		}
+	}
+	if ones != 1 || strings.Count(strings.Join(ui2.output, "|"), "── 2/3 two") != 2 || len(ui2.seen) != 2 {
+		t.Fatalf("step one should run once: %q (seen %d alternatives)", ui2.output, len(ui2.seen))
+	}
+
+	// Choosing the command alternative: its outputs follow the step's.
+	ui3 := &chooser{pick: "script"}
+	run = Execute(context.Background(), rb, ui3, "", Options{Interactive: true, Vars: map[string]string{"mode": "script"}})
+	if run.Status != StatusSucceeded || !slices.Contains(ui3.output, "how=script") {
+		t.Fatalf("%s %q", run.Status, ui3.output)
+	}
+}
+
+func TestBackground(t *testing.T) {
+	dir := t.TempDir()
+	rb := mustParse(t, `
+name: t
+steps:
+  - id: watcher
+    name: watcher
+    dir: `+dir+`
+    background: true
+    stop_after: middle
+    run: 'echo watching; while true; do date +%s >> ticks; sleep 0.05; done'
+  - {name: first, run: 'sleep 0.3'}
+  - {id: middle, name: middle, run: 'true'}
+  - {name: last, run: 'sleep 0.3'}
+  - {name: forever, background: true, run: 'echo second; sleep 30'}
+  - {name: end, run: 'true'}
+`)
+	ui := &scripted{}
+	start := time.Now()
+	run := Execute(context.Background(), rb, ui, "", Options{})
+	if run.Status != StatusSucceeded || time.Since(start) > 10*time.Second {
+		t.Fatalf("%s %s %s", run.Status, run.Error, time.Since(start))
+	}
+	w := run.Steps[0]
+	if w.Status != StatusSucceeded || w.Note != "stopped after step 3" || !strings.Contains(w.Output, "watching") {
+		t.Fatalf("watcher %+v", w)
+	}
+	// It stopped after "middle": no ticks while "last" ran.
+	before, _ := os.ReadFile(dir + "/ticks")
+	time.Sleep(200 * time.Millisecond)
+	after, _ := os.ReadFile(dir + "/ticks")
+	if len(before) == 0 || len(before) != len(after) {
+		t.Fatalf("ticks %d -> %d", len(before), len(after))
+	}
+	if f := run.Steps[4]; f.Note != "stopped when the run ended" || !strings.Contains(f.Output, "second") {
+		t.Fatalf("forever %+v", f)
 	}
 }

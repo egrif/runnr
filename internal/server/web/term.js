@@ -1,11 +1,12 @@
 "use strict";
 
-// In-browser terminal for steps that need one (terminal steps, shells, run
-// it myself). It lives in a drawer outside #main, so re-rendering the run
-// page doesn't disturb it. Output arrives as run events; keystrokes and
-// size changes go back with POST /api/runs/{id}/term.
+// In-browser terminals for steps that need one (terminal steps, shells,
+// background steps). They live in a drawer outside #main, so re-rendering
+// the run page doesn't disturb them; each session is a tab. Output arrives
+// as run events; keystrokes and size changes go back with
+// POST /api/runs/{id}/term.
 
-const term = { runId: null, id: null, xt: null, fit: null, queue: "", timer: null, ended: false };
+const term = { runId: null, sessions: new Map(), active: null, queue: "", timer: null };
 
 function termDrawer() {
   let d = $("#term-drawer");
@@ -15,7 +16,7 @@ function termDrawer() {
   d.hidden = true;
   d.innerHTML = `
     <div class="term-head">
-      <span class="term-dot"></span><span class="term-title"></span>
+      <div class="term-tabs"></div>
       <span class="spacer"></span>
       <span class="muted small term-hint"></span>
       <button class="link term-copy-out" title="Copy the selection, or the whole session if nothing is selected (or select and press ⌘C / Ctrl+Shift+C)">Copy</button>
@@ -38,43 +39,64 @@ function termDrawer() {
     const big = d.classList.toggle("big");
     document.body.classList.toggle("term-big", big);
     e.target.textContent = big ? "Shrink" : "Expand";
-    term.fit?.fit();
+    activeSession()?.fit.fit();
   };
   d.querySelector(".term-end").onclick = () => {
-    if (!term.ended && confirm("End this terminal session? Anything still running in it is hung up.")) sendTerm({ end: true });
+    const s = activeSession();
+    if (s && !s.ended && confirm(`End “${s.title}”? Anything still running in it is hung up.`)) sendTerm(s, { end: true });
   };
   d.querySelector(".term-copy").onclick = async () => {
     try { await navigator.clipboard.writeText(d.querySelector(".term-cmd").textContent); toast("Copied"); }
     catch { toast("Select the text and copy it"); }
   };
-  window.addEventListener("resize", () => { if (term.fit && !d.hidden) term.fit.fit(); });
+  d.querySelector(".term-tabs").onclick = (e) => {
+    const b = e.target.closest("[data-term]");
+    if (b) showTerm(b.dataset.term);
+  };
+  window.addEventListener("resize", () => { if (!d.hidden) activeSession()?.fit.fit(); });
   return d;
 }
 
-// copyTerm copies the selection, or everything the session showed.
-async function copyTerm() {
-  if (!term.xt) return;
-  let text = term.xt.getSelection();
-  if (!text) {
-    const buf = term.xt.buffer.active, lines = [];
-    for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? "");
-    text = lines.join("\n").replace(/\n+$/, "\n");
-  }
-  try {
-    await navigator.clipboard.writeText(text);
-    toast(term.xt.hasSelection() ? "Copied selection" : "Copied the whole session");
-  } catch { toast("Couldn't reach the clipboard; select the text and press ⌘C"); }
+const activeSession = () => term.sessions.get(term.active);
+
+// runningBackground lists background sessions still going (for the run page).
+function runningBackground() {
+  return [...term.sessions.values()].filter((s) => s.background && !s.ended);
 }
 
-// showTermDrawer brings a hidden session back.
-function showTermDrawer() {
-  const d = $("#term-drawer");
-  if (!d || !term.xt) return;
+function renderTabs() {
+  const d = termDrawer();
+  d.querySelector(".term-tabs").innerHTML = [...term.sessions.values()].map((s) =>
+    `<button class="term-tab ${s.id === term.active ? "on" : ""} ${s.ended ? "ended" : ""}" data-term="${esc(s.id)}" title="${esc(s.title)}">
+      <span class="term-dot"></span>${s.background ? "◐ " : ""}${esc(s.title)}</button>`).join("");
+  const s = activeSession();
+  d.classList.toggle("ended", !!s?.ended);
+  d.querySelector(".term-hint").textContent = !s ? "" : s.ended ? "ended · recorded with the step"
+    : s.shell ? "the run's variables are loaded · type exit (or End session) to go back to the run"
+    : s.background ? "keeps running while the run goes on" : "type here when it asks · recorded with the step";
+  const side = d.querySelector(".term-side");
+  side.hidden = !(s?.shell && s.command);
+  d.querySelector(".term-cmd").textContent = s?.command || "";
+  d.querySelector(".term-expect").innerHTML = s?.expect ? `<div class="expect"><b>Expect:</b> ${esc(s.expect)}</div>` : "";
+}
+
+// showTerm makes a session the visible tab and opens the drawer.
+function showTerm(id) {
+  const s = term.sessions.get(id ?? term.active);
+  if (!s) return;
+  const d = termDrawer();
+  term.active = s.id;
   d.hidden = false;
   document.body.classList.add("term-open");
-  term.fit.fit();
-  term.xt.focus();
+  for (const o of term.sessions.values()) o.el.hidden = o !== s;
+  if (!s.opened) { s.xt.open(s.el); s.opened = true; }
+  renderTabs();
+  s.fit.fit();
+  s.xt.focus();
 }
+
+// Kept for the run page's "Show terminal" link.
+function showTermDrawer() { showTerm(); }
 
 function closeTermDrawer() {
   const d = $("#term-drawer");
@@ -85,83 +107,88 @@ function closeTermDrawer() {
 // resetTerm is called when leaving a run page.
 function resetTerm() {
   closeTermDrawer();
-  term.xt?.dispose();
-  Object.assign(term, { runId: null, id: null, xt: null, fit: null, queue: "", ended: false });
+  for (const s of term.sessions.values()) s.xt.dispose();
+  term.sessions.clear();
+  term.runId = term.active = null;
+  $("#term-drawer .term-body")?.replaceChildren();
 }
 
 function termEvent(runId, e) {
   const t = e.term;
-  if (e.kind === "term_start") return openTerm(runId, t, e.step);
-  if (t.id !== term.id || !term.xt) return;
+  if (e.kind === "term_start") return startTerm(runId, t, e.step);
+  const s = term.sessions.get(t.id);
+  if (!s) return;
   if (e.kind === "term") {
-    term.xt.write(Uint8Array.from(atob(t.data), (c) => c.charCodeAt(0)));
+    s.xt.write(Uint8Array.from(atob(t.data), (c) => c.charCodeAt(0)));
   } else if (e.kind === "term_end") {
-    term.ended = true;
-    term.xt.write("\r\n\x1b[2m── session ended ──\x1b[0m\r\n");
-    $("#term-drawer").classList.add("ended");
-    $("#term-drawer .term-hint").textContent = "session ended · recorded with the step";
-    // It's recorded with the step, so get out of the way (unless another session started).
-    const ended = t.id;
-    setTimeout(() => { if (term.id === ended) closeTermDrawer(); }, 1500);
+    s.ended = true;
+    s.xt.write("\r\n\x1b[2m── session ended ──\x1b[0m\r\n");
+    renderTabs();
+    // It's recorded with the step, so get out of the way, unless another
+    // session is still going.
+    setTimeout(() => {
+      if (term.active !== s.id) return;
+      const next = [...term.sessions.values()].find((o) => !o.ended && !o.background);
+      if (next) showTerm(next.id); else closeTermDrawer();
+    }, 1500);
   }
 }
 
-function openTerm(runId, t, step) {
-  term.xt?.dispose();
-  Object.assign(term, { runId, id: t.id, ended: false, queue: "" });
+function startTerm(runId, t, step) {
+  term.runId = runId;
   const d = termDrawer();
-  d.hidden = false;
-  d.classList.remove("ended");
-  document.body.classList.add("term-open");
-  d.querySelector(".term-title").textContent = t.title;
-  d.querySelector(".term-hint").textContent = t.shell
-    ? "the run's variables are loaded · type exit (or End session) to go back to the run"
-    : "type here when it asks · recorded with the step";
-  // Shells show the step's commands alongside, to run or adapt.
-  const side = d.querySelector(".term-side");
-  side.hidden = !(t.shell && t.command);
-  d.querySelector(".term-cmd").textContent = t.command || "";
-  d.querySelector(".term-expect").innerHTML = t.expect ? `<div class="expect"><b>Expect:</b> ${esc(t.expect)}</div>` : "";
-  const body = d.querySelector(".term-body");
-  body.innerHTML = "";
+  const el = document.createElement("div");
+  el.className = "term-pane";
+  el.hidden = true;
+  d.querySelector(".term-body").append(el);
   const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-  term.xt = new Terminal({
-    cursorBlink: true, convertEol: false, scrollback: 5000, fontSize: 13,
+  const xt = new Terminal({
+    cursorBlink: true, scrollback: 5000, fontSize: 13,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     theme: dark ? undefined : { background: "#15171c", foreground: "#e4e6eb" },
   });
-  term.fit = new FitAddon.FitAddon();
-  term.xt.loadAddon(term.fit);
+  const fit = new FitAddon.FitAddon();
+  xt.loadAddon(fit);
+  const s = { id: t.id, title: t.title, step, shell: !!t.shell, background: !!t.background, command: t.command, expect: t.expect, xt, fit, el, ended: false, opened: false };
   // ⌘C / Ctrl+Shift+C copy the selection; plain Ctrl+C still interrupts.
-  term.xt.attachCustomKeyEventHandler((ev) => {
+  xt.attachCustomKeyEventHandler((ev) => {
     const copyKey = ev.key.toLowerCase() === "c" && (ev.metaKey || (ev.ctrlKey && ev.shiftKey));
-    if (ev.type === "keydown" && copyKey && term.xt.hasSelection()) {
-      copyTerm();
-      return false;
-    }
+    if (ev.type === "keydown" && copyKey && xt.hasSelection()) { copyTerm(); return false; }
     return true;
   });
-  term.xt.open(body);
-  term.fit.fit();
-  term.xt.focus();
-  term.xt.onData((data) => {
-    if (term.ended) return;
+  xt.onData((data) => {
+    if (s.ended) return;
     term.queue += data;
     clearTimeout(term.timer);
-    term.timer = setTimeout(flushTerm, 12);
+    term.timer = setTimeout(() => { const q = term.queue; term.queue = ""; if (q) sendTerm(s, { data: q }); }, 12);
   });
-  term.xt.onResize(({ rows, cols }) => sendTerm({ rows, cols }));
-  sendTerm({ rows: term.xt.rows, cols: term.xt.cols });
+  xt.onResize(({ rows, cols }) => sendTerm(s, { rows, cols }));
+  term.sessions.set(s.id, s);
+  if (s.background) {
+    // Runs alongside the rest; it gets a tab but doesn't take over.
+    renderTabs();
+    if (d.hidden) toast(`Started in the background: ${t.title}`);
+  } else {
+    showTerm(s.id);
+  }
 }
 
-function flushTerm() {
-  if (!term.queue) return;
-  const data = term.queue;
-  term.queue = "";
-  sendTerm({ data });
+async function copyTerm() {
+  const s = activeSession();
+  if (!s) return;
+  let text = s.xt.getSelection();
+  if (!text) {
+    const buf = s.xt.buffer.active, lines = [];
+    for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+    text = lines.join("\n").replace(/\n+$/, "\n");
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(s.xt.hasSelection() ? "Copied selection" : "Copied the whole session");
+  } catch { toast("Couldn't reach the clipboard; select the text and press ⌘C"); }
 }
 
-function sendTerm(extra) {
-  if (!term.runId || term.ended) return;
-  api("POST", `/api/runs/${enc(term.runId)}/term`, { id: term.id, ...extra }).catch(() => {});
+function sendTerm(s, extra) {
+  if (!term.runId || s.ended) return;
+  api("POST", `/api/runs/${enc(term.runId)}/term`, { id: s.id, ...extra }).catch(() => {});
 }

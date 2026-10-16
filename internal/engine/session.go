@@ -22,11 +22,39 @@ func (x *executor) View(i int) StepView {
 		When: s.When, Confirm: s.Confirm, Always: s.Always, Timeout: s.Timeout, Retries: s.Retries,
 		Outputs: s.Outputs, SecretOutputs: s.SecretOutputs,
 	}
-	text := s.Run
-	if s.IsManual() {
-		text = s.Manual
+	v.Background, v.StopAfter = s.Background, s.StopAfter
+	var b strings.Builder
+	switch s.Kind() {
+	case "manual":
+		b.WriteString(x.lenient(s.Manual))
+	case "checks":
+		for _, c := range s.Checks {
+			cmd := x.mask(x.lenient(c.Run))
+			v.Checks = append(v.Checks, CheckView{Name: c.Name, Command: cmd})
+			fmt.Fprintf(&b, "✓ %s\n    %s\n", c.Name, strings.ReplaceAll(strings.TrimSpace(cmd), "\n", "\n    "))
+		}
+		if s.Repeat != nil {
+			v.Repeat = fmt.Sprintf("every %s, for up to %s", s.Repeat.Every, s.Repeat.Timeout)
+			fmt.Fprintf(&b, "(repeated %s until all pass)\n", v.Repeat)
+		}
+	case "alternatives":
+		for j, a := range s.Alternatives {
+			av := AltView{Name: a.Name, When: a.When}
+			fmt.Fprintf(&b, "%d) %s\n", j+1, a.Name)
+			if a.Run != "" {
+				av.Command = x.mask(x.lenient(a.Run))
+				fmt.Fprintf(&b, "    %s\n", strings.ReplaceAll(strings.TrimSpace(av.Command), "\n", "\n    "))
+			}
+			for k, sub := range a.Steps {
+				av.Steps = append(av.Steps, sub.Name)
+				fmt.Fprintf(&b, "    %d. %s\n", k+1, sub.Name)
+			}
+			v.Alternatives = append(v.Alternatives, av)
+		}
+	default:
+		b.WriteString(x.lenient(s.Run))
 	}
-	v.Command = x.mask(x.lenient(text))
+	v.Command = x.mask(b.String())
 	v.Expect = x.mask(x.lenient(s.Expect))
 	v.Dir = x.lenient(s.Dir)
 	return v
@@ -181,13 +209,7 @@ func Preview(rb *runbook.Runbook, vars, state map[string]string) []StepView {
 		}
 	}
 	for _, s := range rb.Steps {
-		kind := "run"
-		if s.IsManual() {
-			kind = "manual"
-		} else if s.TTY {
-			kind = "tty"
-		}
-		x.run.Steps = append(x.run.Steps, StepResult{Kind: kind})
+		x.run.Steps = append(x.run.Steps, StepResult{Kind: stepKind(s)})
 	}
 	return x.Plan()
 }

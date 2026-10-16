@@ -91,6 +91,7 @@ Start without `unattended`, then read `/events`. Each event is
 | `manual` | `done`, `skip`, `fail`, `abort` (optional `note`) |
 | `failure` | `retry`, `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
 | `before` | `run`, `skip`, `continue` (stop stepping through), `abort` |
+| `choose` (alternatives) | an alternative's name, or `abort` |
 | `after` | `continue`, `retry` (run again), `fail` (`note` = what's wrong; then a `failure` question), `abort` |
 
 Questions carry `text` (the rendered command or instructions) and `expect`.
@@ -99,7 +100,8 @@ which opens a terminal session with the run's environment and then asks the
 same question again; `tty` steps open one too.
 
 **Terminal sessions** stream as events: `term_start` (`term: {id, title,
-shell, command, expect}`: for shells, the step's commands to show beside it),
+shell, command, expect, background}`: for shells, the step's commands to show
+beside it; background sessions keep running while the run moves on),
 `term` (`term.data`: base64 output, secrets masked), and `term_end`. Send
 keystrokes and the viewer's size with:
 
@@ -111,6 +113,12 @@ What a `tty` step printed is recorded as the step's `output`, and shell
 sessions as its `shells`, cleaned of terminal control codes.
 
 `step_finished` events carry `state`: the run's variables, secrets masked.
+`step_progress` events carry a step's `result` while it's still going (each
+attempt of a group of checks; each step of an alternative). A background
+step finishes with status `background` and later gets another
+`step_finished` when it stops. Step results may include `checks` (latest
+attempt: `{name, passed, exit_code, output, error}`), `alternative` (the one
+chosen) and `sub` (its steps' results).
 `controls` events carry the live run's new `controls` after a PUT.
 
 A StepView is `{index, name, section, owner, kind, command, expect, dir, when,

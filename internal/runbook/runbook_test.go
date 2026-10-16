@@ -93,3 +93,28 @@ func TestSensitive(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateNewKinds(t *testing.T) {
+	bad := map[string]string{
+		"two kinds":          "name: a\nsteps: [{name: a, run: x, checks: [{name: c, run: y}]}]",
+		"stop_after earlier": "name: a\nsteps: [{name: a, run: x}, {name: b, run: y, background: true, stop_after: a}]",
+		"stop_after no bg":   "name: a\nsteps: [{name: a, run: x, stop_after: b}, {name: b, run: y}]",
+		"bg outputs":         "name: a\nsteps: [{name: a, run: x, background: true, outputs: [v]}]",
+		"repeat no checks":   "name: a\nsteps: [{name: a, run: x, repeat: {every: 1s, timeout: 5s}}]",
+		"repeat bad":         "name: a\nsteps: [{name: a, checks: [{name: c, run: y}], repeat: {every: 5s, timeout: 1s}}]",
+		"check no run":       "name: a\nsteps: [{name: a, checks: [{name: c}]}]",
+		"alt both":           "name: a\nsteps: [{name: a, alternatives: [{name: x, run: y, steps: [{name: s, run: z}]}]}]",
+		"alt nested":         "name: a\nsteps: [{name: a, alternatives: [{name: x, steps: [{name: s, alternatives: [{name: q, run: z}]}]}]}]",
+		"alt nested bg":      "name: a\nsteps: [{name: a, alternatives: [{name: x, steps: [{name: s, run: z, background: true}]}]}]",
+		"sub step invalid":   "name: a\nsteps: [{name: a, alternatives: [{name: x, steps: [{name: s}]}]}]",
+	}
+	for name, y := range bad {
+		if _, err := Parse([]byte(y)); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+	good := "name: a\nsteps:\n  - {name: w, run: x, background: true, stop_after: b}\n  - {id: b, name: b, checks: [{name: c, run: y}], repeat: {every: 1s, timeout: 5s}}\n  - {name: c, alternatives: [{name: x, run: y}, {name: z, steps: [{name: s, run: q, confirm: true}]}]}\n"
+	if _, err := Parse([]byte(good)); err != nil {
+		t.Fatal(err)
+	}
+}

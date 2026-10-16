@@ -74,9 +74,67 @@ type Step struct {
 	// run's state when the step ends, for later steps to use.
 	Outputs       []string `yaml:"outputs,omitempty" json:"outputs,omitempty"`
 	SecretOutputs []string `yaml:"secret_outputs,omitempty" json:"secret_outputs,omitempty"`
+
+	// Background starts the command and moves on; it runs on its own
+	// terminal until the step named by StopAfter finishes (or the run ends).
+	Background bool   `yaml:"background,omitempty" json:"background,omitempty"`
+	StopAfter  string `yaml:"stop_after,omitempty" json:"stop_after,omitempty"`
+
+	// Checks run as a group; the step passes when all of them pass.
+	// Repeat retries the group until it does.
+	Checks []Check `yaml:"checks,omitempty" json:"checks,omitempty"`
+	Repeat *Repeat `yaml:"repeat,omitempty" json:"repeat,omitempty"`
+
+	// Alternatives: one is chosen when the step runs.
+	Alternatives []Alternative `yaml:"alternatives,omitempty" json:"alternatives,omitempty"`
+}
+
+// Check is one command in a step's group of checks; it passes if it exits 0.
+type Check struct {
+	Name string `yaml:"name" json:"name"`
+	Run  string `yaml:"run" json:"run"`
+}
+
+// Repeat re-runs a group of checks until all pass.
+type Repeat struct {
+	Every   string `yaml:"every" json:"every"`
+	Timeout string `yaml:"timeout" json:"timeout"`
+}
+
+// Alternative is one way to do a step: a command, or a short list of steps.
+type Alternative struct {
+	Name string `yaml:"name" json:"name"`
+	// When, if set, must be true for the alternative to be chosen unattended.
+	When  string `yaml:"when,omitempty" json:"when,omitempty"`
+	Run   string `yaml:"run,omitempty" json:"run,omitempty"`
+	TTY   bool   `yaml:"tty,omitempty" json:"tty,omitempty"`
+	Steps []Step `yaml:"steps,omitempty" json:"steps,omitempty"`
 }
 
 func (s Step) IsManual() bool { return s.Manual != "" }
+
+// Kind is run, manual, checks or alternatives.
+func (s Step) Kind() string {
+	switch {
+	case s.Manual != "":
+		return "manual"
+	case len(s.Checks) > 0:
+		return "checks"
+	case len(s.Alternatives) > 0:
+		return "alternatives"
+	}
+	return "run"
+}
+
+func (r Repeat) EveryDuration() time.Duration {
+	d, _ := time.ParseDuration(r.Every)
+	return d
+}
+
+func (r Repeat) TimeoutDuration() time.Duration {
+	d, _ := time.ParseDuration(r.Timeout)
+	return d
+}
 
 func (s Step) TimeoutDuration() time.Duration {
 	d, _ := time.ParseDuration(s.Timeout)
@@ -185,62 +243,154 @@ func (rb *Runbook) Validate() error {
 		}
 	}
 	ids := map[string]bool{}
-	for i, s := range rb.Steps {
-		where := fmt.Sprintf("steps[%d] (%s)", i, s.Name)
-		if s.Name == "" {
-			add("steps[%d]: name is required", i)
-		}
-		if (s.Run == "") == (s.Manual == "") {
-			add("%s: exactly one of run or manual is required", where)
-		}
-		if s.ID != "" {
-			if !identRe.MatchString(s.ID) {
-				add("%s: id %q must be a valid identifier", where, s.ID)
+	for i, st := range rb.Steps {
+		if st.ID != "" {
+			if ids[st.ID] {
+				add("steps[%d] (%s): duplicate id %q", i, st.Name, st.ID)
 			}
-			if ids[s.ID] {
-				add("%s: duplicate id %q", where, s.ID)
-			}
-			ids[s.ID] = true
+			ids[st.ID] = true
 		}
-		if s.Capture != "" && !identRe.MatchString(s.Capture) {
-			add("%s: capture %q must be a valid identifier", where, s.Capture)
-		}
-		if s.Timeout != "" {
-			if _, err := time.ParseDuration(s.Timeout); err != nil {
-				add("%s: invalid timeout %q", where, s.Timeout)
-			}
-		}
-		if s.RetryDelay != "" {
-			if _, err := time.ParseDuration(s.RetryDelay); err != nil {
-				add("%s: invalid retry_delay %q", where, s.RetryDelay)
-			}
-		}
-		if s.TTY && s.Capture != "" {
-			add("%s: capture can't be used with tty (write to $RUNNR_OUTPUT instead)", where)
-		}
-		if s.Retries < 0 {
-			add("%s: retries must be >= 0", where)
-		}
-		switch s.Unattended {
-		case "", UnattendedFail, UnattendedSkip, UnattendedPass:
-		default:
-			add("%s: unattended must be fail, skip or pass", where)
-		}
-		if s.IsManual() && (s.Capture != "" || s.Retries > 0 || s.Timeout != "" || s.RetryDelay != "" || s.TTY || len(s.Outputs)+len(s.SecretOutputs) > 0) {
-			add("%s: capture, retries, retry_delay, timeout, tty and outputs only apply to run steps", where)
-		}
-		for _, o := range append(append([]string{}, s.Outputs...), s.SecretOutputs...) {
-			if !identRe.MatchString(o) {
-				add("%s: output %q must be a valid identifier", where, o)
-			}
-		}
-		for field, text := range map[string]string{"run": s.Run, "manual": s.Manual, "when": s.When, "dir": s.Dir, "expect": s.Expect} {
-			if _, err := template.New("").Funcs(TemplateFuncs).Option("missingkey=error").Parse(text); err != nil {
-				add("%s: %s template: %v", where, field, err)
+		errs = append(errs, validateStep(fmt.Sprintf("steps[%d] (%s)", i, st.Name), st, false)...)
+		if st.StopAfter != "" {
+			if j, err := rb.StepIndex(st.StopAfter); err != nil {
+				add("steps[%d] (%s): stop_after: %v", i, st.Name, err)
+			} else if j <= i {
+				add("steps[%d] (%s): stop_after must name a later step", i, st.Name)
 			}
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func validTemplate(text string) error {
+	_, err := template.New("").Funcs(TemplateFuncs).Option("missingkey=error").Parse(text)
+	return err
+}
+
+// validateStep checks one step; nested is set for steps inside an alternative.
+func validateStep(where string, s Step, nested bool) []error {
+	var errs []error
+	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(where+": "+format, a...)) }
+
+	if s.Name == "" {
+		add("name is required")
+	}
+	kinds := 0
+	for _, on := range []bool{s.Run != "", s.Manual != "", len(s.Checks) > 0, len(s.Alternatives) > 0} {
+		if on {
+			kinds++
+		}
+	}
+	if kinds != 1 {
+		add("exactly one of run, manual, checks or alternatives is required")
+	}
+	if s.ID != "" && !identRe.MatchString(s.ID) {
+		add("id %q must be a valid identifier", s.ID)
+	}
+	if s.Capture != "" && !identRe.MatchString(s.Capture) {
+		add("capture %q must be a valid identifier", s.Capture)
+	}
+	for field, v := range map[string]string{"timeout": s.Timeout, "retry_delay": s.RetryDelay} {
+		if v != "" {
+			if _, err := time.ParseDuration(v); err != nil {
+				add("invalid %s %q", field, v)
+			}
+		}
+	}
+	if s.TTY && s.Capture != "" {
+		add("capture can't be used with tty (write to $RUNNR_OUTPUT instead)")
+	}
+	if s.Retries < 0 {
+		add("retries must be >= 0")
+	}
+	switch s.Unattended {
+	case "", UnattendedFail, UnattendedSkip, UnattendedPass:
+	default:
+		add("unattended must be fail, skip or pass")
+	}
+	runOnly := s.Capture != "" || s.Retries > 0 || s.RetryDelay != "" || s.TTY || len(s.Outputs)+len(s.SecretOutputs) > 0
+	switch s.Kind() {
+	case "manual":
+		if runOnly || s.Timeout != "" {
+			add("capture, retries, retry_delay, timeout, tty and outputs only apply to commands")
+		}
+	case "checks":
+		if runOnly {
+			add("capture, retries, retry_delay, tty and outputs don't apply to checks (use repeat)")
+		}
+	case "alternatives":
+		if s.Capture != "" || s.Retries > 0 || s.RetryDelay != "" || s.TTY {
+			add("capture, retries, retry_delay and tty go on the alternatives' steps")
+		}
+	}
+	for _, o := range append(append([]string{}, s.Outputs...), s.SecretOutputs...) {
+		if !identRe.MatchString(o) {
+			add("output %q must be a valid identifier", o)
+		}
+	}
+	for field, text := range map[string]string{"run": s.Run, "manual": s.Manual, "when": s.When, "dir": s.Dir, "expect": s.Expect} {
+		if err := validTemplate(text); err != nil {
+			add("%s template: %v", field, err)
+		}
+	}
+
+	if s.Background {
+		if s.Kind() != "run" {
+			add("background only applies to a command")
+		}
+		if s.Capture != "" || s.Retries > 0 || len(s.Outputs)+len(s.SecretOutputs) > 0 {
+			add("a background command can't capture or publish outputs, or retry")
+		}
+		if nested {
+			add("background steps can't be inside an alternative")
+		}
+	} else if s.StopAfter != "" {
+		add("stop_after only applies to background steps")
+	}
+
+	for j, c := range s.Checks {
+		if c.Name == "" || c.Run == "" {
+			add("checks[%d]: name and run are required", j)
+		}
+		if err := validTemplate(c.Run); err != nil {
+			add("checks[%d] (%s): run template: %v", j, c.Name, err)
+		}
+	}
+	if s.Repeat != nil {
+		if len(s.Checks) == 0 {
+			add("repeat only applies to checks")
+		}
+		every, err1 := time.ParseDuration(s.Repeat.Every)
+		timeout, err2 := time.ParseDuration(s.Repeat.Timeout)
+		if err1 != nil || err2 != nil || every <= 0 || timeout < every {
+			add("repeat needs every and timeout durations, with timeout >= every (e.g. every: 20s, timeout: 10m)")
+		}
+	}
+
+	if len(s.Alternatives) > 0 && nested {
+		add("alternatives can't be nested")
+	}
+	for j, a := range s.Alternatives {
+		aw := fmt.Sprintf("alternatives[%d] (%s)", j, a.Name)
+		if a.Name == "" {
+			add("%s: name is required", aw)
+		}
+		if (a.Run == "") == (len(a.Steps) == 0) {
+			add("%s: exactly one of run or steps is required", aw)
+		}
+		if a.TTY && a.Run == "" {
+			add("%s: tty applies to run", aw)
+		}
+		for field, text := range map[string]string{"run": a.Run, "when": a.When} {
+			if err := validTemplate(text); err != nil {
+				add("%s: %s template: %v", aw, field, err)
+			}
+		}
+		for k, sub := range a.Steps {
+			errs = append(errs, validateStep(fmt.Sprintf("%s: %s.steps[%d] (%s)", where, aw, k, sub.Name), sub, true)...)
+		}
+	}
+	return errs
 }
 
 func contains(xs []string, x string) bool {

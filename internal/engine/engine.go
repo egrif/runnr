@@ -30,6 +30,8 @@ const (
 	StatusAborted   Status = "aborted"
 	// StatusForced: the step failed but an operator accepted it, with a reason.
 	StatusForced Status = "forced"
+	// StatusBackground: a background step that has started and is still running.
+	StatusBackground Status = "background"
 )
 
 // Note is an operator comment on a step or a run. Notes are stored apart
@@ -55,9 +57,14 @@ type StepResult struct {
 	Attempts int    `json:"attempts,omitempty"`
 	Notes    []Note `json:"notes,omitempty"`
 	// Shells are transcripts of shells the operator opened at this step.
-	Shells  []string  `json:"shells,omitempty"`
-	Started time.Time `json:"started,omitzero"`
-	Ended   time.Time `json:"ended,omitzero"`
+	Shells []string `json:"shells,omitempty"`
+	// Checks holds the latest attempt of a group of checks.
+	Checks []CheckResult `json:"checks,omitempty"`
+	// Alternative is the one chosen; Sub holds its steps' results.
+	Alternative string       `json:"alternative,omitempty"`
+	Sub         []StepResult `json:"sub,omitempty"`
+	Started     time.Time    `json:"started,omitzero"`
+	Ended       time.Time    `json:"ended,omitzero"`
 }
 
 type Run struct {
@@ -93,6 +100,9 @@ const (
 	EventOutput       EventKind = "output"
 	EventStepFinished EventKind = "step_finished"
 	EventRunFinished  EventKind = "run_finished"
+	// EventStepProgress: a step's result changed without it finishing
+	// (checks attempted, a sub-step done).
+	EventStepProgress EventKind = "step_progress"
 )
 
 type Event struct {
@@ -202,6 +212,34 @@ type StepView struct {
 	Retries       int      `json:"retries,omitempty"`
 	Outputs       []string `json:"outputs,omitempty"`
 	SecretOutputs []string `json:"secret_outputs,omitempty"`
+	Background    bool     `json:"background,omitempty"`
+	StopAfter     string   `json:"stop_after,omitempty"`
+	// Checks and Alternatives are filled in for those kinds of step.
+	Checks       []CheckView `json:"checks,omitempty"`
+	Repeat       string      `json:"repeat,omitempty"`
+	Alternatives []AltView   `json:"alternatives,omitempty"`
+}
+
+// CheckResult is one check's outcome in the latest attempt.
+type CheckResult struct {
+	Name     string `json:"name"`
+	Passed   bool   `json:"passed"`
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Output   string `json:"output,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+type CheckView struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+}
+
+// AltView is one alternative as it would run: a command, or its steps.
+type AltView struct {
+	Name    string   `json:"name"`
+	When    string   `json:"when,omitempty"`
+	Command string   `json:"command,omitempty"`
+	Steps   []string `json:"steps,omitempty"`
 }
 
 // Session gives an interactor read access to the run it's driving, plus
@@ -239,6 +277,12 @@ type Reviewer interface {
 	Review(ctx context.Context, plan []StepView, c *Controls) error
 }
 
+// Chooser picks which of a step's alternatives to run. Without one (or
+// unattended), the first alternative whose when holds is used.
+type Chooser interface {
+	ChooseAlternative(ctx context.Context, v StepView) (int, error)
+}
+
 // Stepper is asked before steps set to pause before (or all of them, in
 // step-through mode), and after steps set to pause after.
 type Stepper interface {
@@ -264,6 +308,8 @@ type executor struct {
 	masker     *runbook.Masker
 	secretVars map[string]bool
 	ctl        *Controls
+	// background sessions still running, by step index.
+	background map[int]*bgStep
 	mu         sync.Mutex
 }
 
@@ -280,13 +326,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	x := &executor{rb: rb, ui: ui, opts: opts, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
 	for i, s := range rb.Steps {
-		kind := "run"
-		if s.IsManual() {
-			kind = "manual"
-		} else if s.TTY {
-			kind = "tty"
-		}
-		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: kind, Status: StatusPending})
+		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending})
 	}
 
 	if opts.Previous != nil {
@@ -335,6 +375,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 }
 
 func (x *executor) finish(ctx context.Context, err error) {
+	x.tendBackground(-1, true)
 	x.run.Ended = time.Now()
 	switch {
 	case err == nil:
@@ -413,122 +454,15 @@ func (x *executor) steps(ctx context.Context) error {
 			}
 			x.run.Steps[i].Status, x.run.Steps[i].Note = StatusSkipped, note
 			x.stepDone(i)
+			x.tendBackground(i, false)
 			continue
 		}
 		if err := x.step(ctx, i, step); err != nil {
 			return err
 		}
+		x.tendBackground(i, false)
 	}
 	return nil
-}
-
-func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
-	res := &x.run.Steps[i]
-	if step.When != "" {
-		cond, err := x.render(step.When)
-		if err != nil {
-			return x.fail(i, fmt.Errorf("when: %w", err))
-		}
-		if !runbook.Truthy(cond) {
-			res.Status, res.Note = StatusSkipped, "condition false"
-			x.stepDone(i)
-			return nil
-		}
-	}
-	res.Status, res.Started = StatusRunning, time.Now()
-	x.notify(Event{Kind: EventStepStarted, Step: i, Result: x.result(i)})
-
-	confirmed := false
-	if _, before, _ := x.ctl.Get(i); before && x.canPause() {
-		d, err := x.ui.(Stepper).BeforeStep(ctx, x.View(i))
-		if err != nil {
-			return x.fail(i, err)
-		}
-		switch d {
-		case StepSkip:
-			res.Status, res.Note = StatusSkipped, "skipped by operator"
-			x.stepDone(i)
-			return nil
-		case StepContinue:
-			x.ctl.SetStepAll(false)
-		case StepAbort:
-			return x.fail(i, errAborted)
-		}
-		confirmed = true // choosing to run counts as the confirmation
-	}
-
-	if step.IsManual() {
-		return x.manual(ctx, i, step, step.Manual)
-	}
-
-	cmd, err := x.render(step.Run)
-	if err != nil {
-		return x.fail(i, fmt.Errorf("run: %w", err))
-	}
-	res.Command = x.mask(cmd)
-
-	if step.TTY && !x.CanShell() && !x.opts.DryRun {
-		// No terminal here: hand the command to a human instead.
-		return x.manual(ctx, i, step, "Run in a terminal (needs interactive input):\n\n"+step.Run)
-	}
-
-	if step.Confirm && !confirmed && !x.opts.DryRun {
-		ok, err := x.ui.Confirm(ctx, i, step, x.mask(cmd))
-		if err != nil {
-			return x.fail(i, err)
-		}
-		if !ok {
-			res.Status, res.Note = StatusSkipped, "declined"
-			x.stepDone(i)
-			return nil
-		}
-	}
-	if x.opts.DryRun {
-		res.Status, res.Note = StatusSkipped, "dry run"
-		x.stepDone(i)
-		return nil
-	}
-
-	for {
-		attempts := step.Retries + 1
-		var out cmdResult
-		for a := 1; a <= attempts; a++ {
-			res.Attempts++
-			out = x.exec(ctx, i, step, cmd)
-			if out.err == nil || ctx.Err() != nil || a == attempts {
-				break
-			}
-			delay := step.RetryDelayDuration()
-			x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: fmt.Sprintf("attempt %d/%d failed (%s); retrying in %s", a, attempts, x.mask(out.err.Error()), delay)})
-			select {
-			case <-ctx.Done():
-			case <-time.After(delay):
-			}
-		}
-		res.Output = x.mask(out.combined)
-		res.ExitCode = out.exitCode
-		if out.err == nil {
-			x.apply(step, out)
-			res.Command = x.mask(res.Command) // in case it contained a just-published secret
-			res.Status, res.Error = StatusSucceeded, ""
-			if err := x.afterStep(ctx, i, step); err != errRetry {
-				return err
-			}
-			continue
-		}
-		if ctx.Err() != nil {
-			return x.fail(i, ctx.Err())
-		}
-		res.Error = x.mask(out.err.Error())
-		if step.ContinueOnError {
-			res.Status, res.Note = StatusFailed, "continue_on_error"
-			x.stepDone(i)
-			return nil
-		}
-		if err := x.onFailure(ctx, i, step, out); err != errRetry {
-			return err
-		}
-	}
 }
 
 var errRetry = errors.New("retry")
@@ -609,47 +543,6 @@ func (x *executor) apply(step runbook.Step, out cmdResult) {
 		x.secretVars[k] = true
 		x.addSecret(v, false)
 	}
-}
-
-func (x *executor) manual(ctx context.Context, i int, step runbook.Step, tmpl string) error {
-	res := &x.run.Steps[i]
-	text, err := x.render(tmpl)
-	if err != nil {
-		return x.fail(i, fmt.Errorf("manual: %w", err))
-	}
-	res.Command = x.mask(text)
-	if x.opts.DryRun {
-		res.Status, res.Note = StatusSkipped, "dry run"
-		x.stepDone(i)
-		return nil
-	}
-	outcome, note, err := x.ui.Manual(ctx, i, step, x.mask(text))
-	if err != nil {
-		return x.fail(i, err)
-	}
-	res.Note = note
-	switch outcome {
-	case ManualDone:
-		res.Status = StatusSucceeded
-	case ManualSkip:
-		res.Status = StatusSkipped
-	default:
-		res.Status = StatusFailed
-		if step.ContinueOnError {
-			break
-		}
-		x.stepDone(i)
-		return fmt.Errorf("manual step %d (%s) failed%s", i+1, step.Name, suffix(note))
-	}
-	x.stepDone(i)
-	return nil
-}
-
-func suffix(note string) string {
-	if note == "" {
-		return ""
-	}
-	return ": " + note
 }
 
 func (x *executor) fail(i int, err error) error {
@@ -776,7 +669,7 @@ var ErrAborted = errAborted
 // succeeded nor was skipped, or -1 if there's nothing left to do.
 func ResumePoint(r *Run) int {
 	for i, s := range r.Steps {
-		if s.Status != StatusSucceeded && s.Status != StatusSkipped && s.Status != StatusForced {
+		if !slices.Contains([]Status{StatusSucceeded, StatusSkipped, StatusForced, StatusBackground}, s.Status) {
 			return i
 		}
 	}

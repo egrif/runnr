@@ -3,7 +3,7 @@
 const $ = (sel, el = document) => el.querySelector(sel);
 const main = $("#main");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■", running: "▶", pending: "○", forced: "⚑" };
+const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■", running: "▶", pending: "○", forced: "⚑", background: "◐" };
 
 let runbooks = [];
 let stream = null; // active EventSource
@@ -109,6 +109,7 @@ function renderSidebar() {
         ${esc(r.name)}<span class="desc">${esc(r.error ? "invalid runbook" : r.description || `${r.steps} steps`)}</span></a></li>`)
     .join("") || `<li class="muted">No runbooks</li>`;
   $("#history-link").classList.toggle("active", location.hash.startsWith("#/history"));
+  $("#help-link").classList.toggle("active", location.hash === "#/help");
 }
 
 $("#filter").addEventListener("input", renderSidebar);
@@ -127,6 +128,7 @@ async function route() {
     if ((m = h.match(/^#\/runs\/([^/]+)$/))) return await viewRun(decodeURIComponent(m[1]));
     if (h === "#/new") return await viewNew();
     if (h.startsWith("#/history")) return await viewHistory();
+    if (h === "#/help") return viewHelp();
     return viewHome();
   } catch (e) {
     main.innerHTML = `<p class="error-text">${esc(e.message)}</p>`;
@@ -212,8 +214,10 @@ async function viewRun(id) {
     if (e.kind.startsWith("term")) {
       termEvent(id, e);
       if (e.kind === "term") return; // terminal output doesn't change the page
-      state.termStep = e.kind === "term_start" ? e.step : null;
-      state.termShell = e.kind === "term_start" && !!e.term.shell;
+      if (!e.term.background) {
+        state.termStep = e.kind === "term_start" ? e.step : null;
+        state.termShell = e.kind === "term_start" && !!e.term.shell;
+      }
     }
     applyEvent(state, e);
     renderRun(state);
@@ -245,7 +249,7 @@ function applyEvent(state, e) {
       Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes });
       if (e.state) { state.run.state = e.state; state.onState?.(); }
       // Terminal sessions aren't streamed into the log; show the recorded transcript.
-      if (!state.steps[e.step].log.length && e.result.output) {
+      if ((!state.steps[e.step].log.length || e.result.kind === "background") && e.result.output) {
         state.steps[e.step].log = e.result.output.replace(/\n$/, "").split("\n").map((t) => ({ stream: "stdout", text: t }));
       }
       if (e.result.status === "succeeded" && !e.result.output) state.open.delete(e.step);
@@ -262,6 +266,9 @@ function applyEvent(state, e) {
       break;
     case "controls":
       state.controls = e.controls;
+      break;
+    case "step_progress":
+      Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes, log: state.steps[e.step].log });
       break;
   }
 }
@@ -291,6 +298,7 @@ function renderRun(state) {
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
     ${(state.messages || []).map((m) => `<p class="muted">ℹ ${esc(m)}</p>`).join("")}
+    ${runningBackground().length ? `<div class="bg-list">${runningBackground().map((s) => `<span class="bg-item">◐ ${esc(s.title.replace(/^background · /, ""))} <button class="link" data-show-bg="${esc(s.id)}">View</button></span>`).join("")}</div>` : ""}
     <div class="notes">${renderNotes(run.notes)}<button class="link" data-note="0">✎ Add run note</button></div>
     ${renderState(run.state, state)}
     ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
@@ -321,6 +329,7 @@ function renderRun(state) {
             ${s.command || state.preview?.[i]?.command ? `<pre class="cmd">${esc(s.command || state.preview[i].command)}</pre>` : ""}
             ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : ""}
             ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}`}
+          ${renderChecks(s.checks)}${renderSub(s)}
           ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
           <button class="link" data-note="${i + 1}">✎ Add note</button></div>
           ${state.prev ? `<div><h4>Last time</h4>${lastTime(state.prev.steps[i], state.prev)}</div>` : ""}
@@ -348,12 +357,28 @@ function renderRun(state) {
     setControls(run.id, next, state);
   }));
   $("#step-all") && ($("#step-all").onchange = (e) => setControls(run.id, { ...ctl, step_mode: e.target.checked }, state));
+  main.querySelectorAll("[data-show-bg]").forEach((b) => (b.onclick = () => showTerm(b.dataset.showBg)));
   main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
   $("#cancel") && ($("#cancel").onclick = () => api("POST", `/api/runs/${run.id}/cancel`).catch((e) => toast(e.message)));
   $("#resume") && ($("#resume").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?resume=${enc(run.id)}`));
   $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?rerun=${enc(run.id)}`));
   const q = $(".question");
   if (q) bindQuestion(q, state.question, run.id);
+}
+
+// renderChecks shows the latest attempt of a group of checks.
+function renderChecks(checks) {
+  if (!checks?.length) return "";
+  return `<table class="checks">${checks.map((c) => `<tr>
+    <td>${c.passed ? "✅" : "❌"}</td><td>${esc(c.name)}</td>
+    <td class="muted">${c.passed ? "" : esc((c.output || c.error || "").split("\n").filter(Boolean).pop() || "")}</td></tr>`).join("")}</table>`;
+}
+
+// renderSub shows which alternative ran and its steps.
+function renderSub(s) {
+  if (!s.alternative) return "";
+  return `<p class="muted">Done by: <b>${esc(s.alternative)}</b></p>${(s.sub || []).length ? `<ol class="sub-steps">${s.sub.map((r) =>
+    `<li><span class="s-${esc(r.status)}">${ICONS[r.status] || ""}</span> ${esc(r.name)} <span class="muted">${esc([r.note, r.error].filter(Boolean).join(" · "))}</span></li>`).join("")}</ol>` : ""}`;
 }
 
 async function setControls(id, c, state) {

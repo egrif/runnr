@@ -101,24 +101,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
 
 // ---------- structured view ----------
 
-// Field kinds: text (default), area, code, int, bool, list (comma
-// separated), kv (KEY=value per line), select.
-const STEP_FIELDS = [
-  ["name", "Name", "text"], ["id", "ID", "text", "Optional; for --from and references"],
-  ["section", "Section", "text", "Heading this step is grouped under"], ["owner", "Owner", "text", "Who does it (display only)"],
-  ["expect", "Expected outcome", "area", "What success looks like"],
-  ["dir", "Directory", "text"], ["when", "Only when", "text", `Template, e.g. {{eq .env "production"}}`],
-  ["timeout", "Timeout", "text", "e.g. 30s, 10m"], ["retries", "Retries", "int"], ["retry_delay", "Retry delay", "text", "e.g. 10s"],
-  ["shell", "Shell", "text", "Default: the runbook's"], ["capture", "Capture stdout as", "text"],
-  ["outputs", "Publishes", "list", "Shell variables to add to the run's state"],
-  ["secret_outputs", "Publishes (secret)", "list", "Same, masked and never stored"],
-  ["env", "Environment", "kv", "KEY=value per line"],
-  ["unattended", "When unattended", "select", "Manual and terminal steps with nobody there", ["", "fail", "skip", "pass"]],
-];
-const STEP_FLAGS = [
-  ["confirm", "Confirm before running"], ["always", "Always run (setup)"],
-  ["tty", "Needs a terminal"], ["continue_on_error", "Continue on error"],
-];
+const H = FIELD_HELP;
 
 function cleanDoc(doc) {
   // Drop empty values so they don't show up in the YAML.
@@ -146,19 +129,33 @@ function setPath(obj, path, v) {
   if (v === undefined) delete parent[last]; else parent[last] = v;
 }
 
-function fieldHTML(path, label, kind, val, help, choices) {
+// control renders an input for a field. Kinds: text (default), area, code,
+// int, bool, list (comma separated), kv (KEY=value per line), select.
+function control(path, kind, val, opts = {}) {
   const p = esc(path);
-  let ctl;
+  const ph = opts.placeholder ? ` placeholder="${esc(opts.placeholder)}"` : "";
   switch (kind) {
-    case "area": ctl = `<textarea data-path="${p}" rows="2">${esc(val || "")}</textarea>`; break;
-    case "code": ctl = `<textarea class="code" data-path="${p}" rows="${Math.min(16, Math.max(3, String(val || "").split("\n").length + 1))}" spellcheck="false">${esc(val || "")}</textarea>`; break;
-    case "int": ctl = `<input type="number" min="0" data-path="${p}" data-kind="int" value="${esc(val ?? "")}">`; break;
-    case "list": ctl = `<input data-path="${p}" data-kind="list" value="${esc((val || []).join(", "))}">`; break;
-    case "kv": ctl = `<textarea data-path="${p}" data-kind="kv" rows="2" spellcheck="false">${esc(Object.entries(val || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`; break;
-    case "select": ctl = `<select data-path="${p}">${choices.map((c) => `<option value="${esc(c)}" ${c === (val || "") ? "selected" : ""}>${esc(c || "(default)")}</option>`).join("")}</select>`; break;
-    default: ctl = `<input data-path="${p}" value="${esc(val ?? "")}">`;
+    case "area": return `<textarea data-path="${p}" rows="${opts.rows || 2}"${ph}>${esc(val || "")}</textarea>`;
+    case "code": return `<textarea class="code" data-path="${p}" rows="${opts.rows || Math.min(24, Math.max(6, String(val || "").split("\n").length + 2))}" spellcheck="false"${ph}>${esc(val || "")}</textarea>`;
+    case "int": return `<input type="number" min="0" data-path="${p}" data-kind="int" value="${esc(val ?? "")}"${ph}>`;
+    case "bool": return `<input type="checkbox" data-path="${p}" ${val ? "checked" : ""}>`;
+    case "list": return `<input data-path="${p}" data-kind="list" value="${esc((val || []).join(", "))}"${ph}>`;
+    case "kv": return `<textarea data-path="${p}" data-kind="kv" rows="2" spellcheck="false"${ph}>${esc(Object.entries(val || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`;
+    case "select": return `<select data-path="${p}">${opts.choices.map(([v, label]) => `<option value="${esc(v)}" ${v === (val || "") ? "selected" : ""}>${esc(label)}</option>`).join("")}</select>`;
   }
-  return `<label class="f"><span>${esc(label)}</span>${ctl}${help ? `<small>${esc(help)}</small>` : ""}</label>`;
+  return `<input data-path="${p}" value="${esc(val ?? "")}"${ph}>`;
+}
+
+// row is a label (with its ⓘ) beside its input; rows in a group align.
+function row(label, help, ctl) {
+  return `<label class="frow"><span class="flabel">${esc(label)}${helpIcon(help)}</span>${ctl}</label>`;
+}
+
+// group is a set of rows; collapsible groups start open if they hold values.
+function group(title, rows, { collapsible = false, open = false, id = "" } = {}) {
+  const body = `<div class="fgroup-rows">${rows.filter(Boolean).join("")}</div>`;
+  if (!collapsible) return `<div class="fgroup"><div class="fgroup-title">${esc(title)}</div>${body}</div>`;
+  return `<details class="fgroup" data-group="${esc(id)}" ${open ? "open" : ""}><summary class="fgroup-title">${esc(title)}</summary>${body}</details>`;
 }
 
 function readField(el) {
@@ -175,6 +172,108 @@ function readField(el) {
   return v === "" ? undefined : v;
 }
 
+const hasAny = (o, keys) => keys.some((k) => { const v = o[k]; return v !== undefined && v !== "" && !(Array.isArray(v) && !v.length) && !(v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length); });
+
+function kindOf(s) {
+  return s.manual !== undefined && s.run === undefined ? "manual" : s.checks ? "checks" : s.alternatives ? "alternatives" : "run";
+}
+
+// stepLeft is the main body of a step: its command, instructions, checks
+// or alternatives.
+function stepLeft(s, i) {
+  const kind = kindOf(s);
+  const P = `steps.${i}`;
+  const seg = `<div class="seg kind-seg">${[["run", "Command"], ["manual", "Manual"], ["checks", "Checks"], ["alternatives", "Alternatives"]].map(([k, l]) =>
+    `<button data-act="kind" data-kind="${k}" data-i="${i}" class="${kind === k ? "on" : ""}">${l}</button>`).join("")}${helpIcon(H.step.kind)}</div>`;
+  let body = "";
+  if (kind === "run") body = `<div class="flabel">Command${helpIcon(H.step.run)}</div>${control(`${P}.run`, "code", s.run)}`;
+  if (kind === "manual") body = `<div class="flabel">Instructions${helpIcon(H.step.manual)}</div>${control(`${P}.manual`, "code", s.manual)}`;
+  if (kind === "checks") {
+    body = `<div class="flabel">Checks${helpIcon(H.step.checks)}</div>${(s.checks || []).map((c, j) => `
+      <div class="sub-card">
+        <div class="row">${control(`${P}.checks.${j}.name`, "text", c.name, { placeholder: "what it confirms" })}${helpIcon(H.check.name)}
+          <button class="icon-btn danger" data-act="del-check" data-i="${i}" data-j="${j}" title="Remove check">✕</button></div>
+        ${control(`${P}.checks.${j}.run`, "code", c.run, { rows: 3, placeholder: "command that exits 0 when it passes" })}
+      </div>`).join("")}<button data-act="add-check" data-i="${i}">+ Add check</button>`;
+  }
+  if (kind === "alternatives") {
+    body = `<div class="flabel">Alternatives${helpIcon(H.step.alternatives)}</div>${(s.alternatives || []).map((a, j) => {
+      const A = `${P}.alternatives.${j}`;
+      const withSteps = !!a.steps;
+      return `<div class="sub-card">
+        <div class="row">${control(`${A}.name`, "text", a.name, { placeholder: "name" })}
+          <button class="icon-btn danger" data-act="del-alt" data-i="${i}" data-j="${j}" title="Remove alternative">✕</button></div>
+        <div class="fgroup-rows">${row("Only when", H.alternative.when, control(`${A}.when`, "text", a.when, { placeholder: "optional, for unattended runs" }))}</div>
+        <div class="seg small-seg"><button data-act="alt-kind" data-i="${i}" data-j="${j}" data-kind="run" class="${withSteps ? "" : "on"}">Command</button><button data-act="alt-kind" data-i="${i}" data-j="${j}" data-kind="steps" class="${withSteps ? "on" : ""}">Steps</button>${helpIcon(H.alternative.steps)}</div>
+        ${withSteps ? `${(a.steps || []).map((st, k) => {
+          const S = `${A}.steps.${k}`;
+          const manual = st.manual !== undefined && st.run === undefined;
+          return `<div class="mini-step">
+            <div class="row"><span class="n">${k + 1}</span>${control(`${S}.name`, "text", st.name, { placeholder: "step name" })}
+              <select data-act-change="sub-kind" data-i="${i}" data-j="${j}" data-k="${k}"><option value="run" ${manual ? "" : "selected"}>command</option><option value="manual" ${manual ? "selected" : ""}>manual</option></select>
+              <label class="small">${control(`${S}.confirm`, "bool", st.confirm)} confirm</label>
+              <label class="small">${control(`${S}.tty`, "bool", st.tty)} terminal</label>
+              <button class="icon-btn danger" data-act="del-sub" data-i="${i}" data-j="${j}" data-k="${k}" title="Remove">✕</button></div>
+            ${control(`${S}.${manual ? "manual" : "run"}`, "code", manual ? st.manual : st.run, { rows: 2 })}
+          </div>`;
+        }).join("")}<button data-act="add-sub" data-i="${i}" data-j="${j}">+ Add step</button>`
+        : `${control(`${A}.run`, "code", a.run, { rows: 4 })}<label class="small">${control(`${A}.tty`, "bool", a.tty)} needs a terminal${helpIcon(H.alternative.tty)}</label>`}
+      </div>`;
+    }).join("")}<button data-act="add-alt" data-i="${i}">+ Add alternative</button>`;
+  }
+  return seg + body;
+}
+
+// stepRight holds the step's settings, grouped: common things first, related
+// things together, rarely used groups folded away.
+function stepRight(d, s, i) {
+  const kind = kindOf(s);
+  const P = `steps.${i}`;
+  const isRun = kind === "run";
+  const later = d.steps.slice(i + 1).map((o, k) => [o.id || o.name, `${i + k + 2}. ${o.name}`]);
+  const flags = [
+    row("Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)),
+    row("Always run", H.step.always, control(`${P}.always`, "bool", s.always)),
+    row("Keep going if it fails", H.step.continue_on_error, control(`${P}.continue_on_error`, "bool", s.continue_on_error)),
+    isRun && row("Needs a terminal", H.step.tty, control(`${P}.tty`, "bool", s.tty)),
+    isRun && row("Run in background", H.step.background, control(`${P}.background`, "bool", s.background)),
+    isRun && s.background && row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })),
+  ];
+  return [
+    group("Step", [
+      row("Name", H.step.name, control(`${P}.name`, "text", s.name)),
+      row("Section", H.step.section, control(`${P}.section`, "text", s.section)),
+      row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner)),
+      row("Expected", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "what success looks like" })),
+    ]),
+    group("Behaviour", flags),
+    kind === "checks" && group("Repeat until all pass", [
+      row("Every", H.step.repeat_every, control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "e.g. 20s (blank: don't repeat)" })),
+      row("Give up after", H.step.repeat_timeout, control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "e.g. 10m" })),
+    ]),
+    group("Conditions & timing", [
+      row("Only when", H.step.when, control(`${P}.when`, "text", s.when, { placeholder: '{{eq .env "production"}}' })),
+      kind !== "manual" && row("Timeout", H.step.timeout, control(`${P}.timeout`, "text", s.timeout, { placeholder: "e.g. 10m" })),
+      isRun && row("Retries", H.step.retries, control(`${P}.retries`, "int", s.retries)),
+      isRun && row("Retry delay", H.step.retry_delay, control(`${P}.retry_delay`, "text", s.retry_delay, { placeholder: "e.g. 10s" })),
+    ], { collapsible: true, id: "timing", open: hasAny(s, ["when", "timeout", "retries", "retry_delay"]) }),
+    kind !== "manual" && group("Where it runs", [
+      row("Directory", H.step.dir, control(`${P}.dir`, "text", s.dir)),
+      row("Shell", H.step.step_shell, control(`${P}.shell`, "text", s.shell, { placeholder: d.shell || "sh" })),
+      row("Environment", H.step.step_env, control(`${P}.env`, "kv", s.env, { placeholder: "KEY=value" })),
+    ], { collapsible: true, id: "where", open: hasAny(s, ["dir", "shell", "env"]) }),
+    (isRun || kind === "alternatives") && !s.background && group("Publishes to later steps", [
+      row("Values", H.step.outputs, control(`${P}.outputs`, "list", s.outputs, { placeholder: "var1, var2" })),
+      row("Secret values", H.step.secret_outputs, control(`${P}.secret_outputs`, "list", s.secret_outputs)),
+      isRun && row("Capture stdout as", H.step.capture, control(`${P}.capture`, "text", s.capture)),
+    ], { collapsible: true, id: "outputs", open: hasAny(s, ["outputs", "secret_outputs", "capture"]) }),
+    group("Advanced", [
+      row("ID", H.step.id, control(`${P}.id`, "text", s.id)),
+      row("When unattended", H.step.unattended, control(`${P}.unattended`, "select", s.unattended, { choices: [["", "fail (default)"], ["fail", "fail"], ["skip", "skip"], ["pass", "pass"]] })),
+    ], { collapsible: true, id: "advanced", open: hasAny(s, ["id", "unattended"]) }),
+  ].filter(Boolean).join("");
+}
+
 function renderStruct(ed) {
   const d = ed.doc;
   d.inputs ||= [];
@@ -183,34 +282,36 @@ function renderStruct(ed) {
   pane.innerHTML = `
     <div class="card">
       <h3>Runbook</h3>
-      <div class="fgrid">
-        ${fieldHTML("name", "Name", "text", d.name, "Lowercase identifier")}
-        ${fieldHTML("shell", "Shell", "text", d.shell, "Default: sh")}
-        ${fieldHTML("tags", "Tags", "list", d.tags)}
-        ${fieldHTML("profile", "Profile", "list", d.profile, "Files sourced before every step, e.g. ~/.zshrc (aliases, functions)")}
+      <div class="fgroup-rows">
+        ${row("Name", H.runbook.name, control("name", "text", d.name))}
+        ${row("Description", H.runbook.description, control("description", "area", d.description))}
+        ${row("Tags", H.runbook.tags, control("tags", "list", d.tags, { placeholder: "ops, deploy" }))}
+        ${row("Shell", H.runbook.shell, control("shell", "text", d.shell, { placeholder: "sh" }))}
       </div>
-      ${fieldHTML("description", "Description", "area", d.description)}
-      ${fieldHTML("env", "Environment for every step", "kv", d.env, "KEY=value per line; values may use {{.input}}")}
-      ${fieldHTML("sensitive", "Sensitive patterns", "kv", d.sensitive, "name=regex per line; {{SENSITIVE}} marks the part to hide, e.g. api=X-Api-Key: {{SENSITIVE}}")}
+      ${group("Environment, profile & masking", [
+        row("Environment", H.runbook.env, control("env", "kv", d.env, { placeholder: "KEY=value" })),
+        row("Profile", H.runbook.profile, control("profile", "list", d.profile, { placeholder: "~/.zshrc" })),
+        row("Sensitive patterns", H.runbook.sensitive, control("sensitive", "kv", d.sensitive, { placeholder: "api_key=X-Api-Key: {{SENSITIVE}}" })),
+      ], { collapsible: true, id: "rb-more", open: hasAny(d, ["env", "profile", "sensitive"]) })}
     </div>
     <div class="card">
-      <h3>Inputs</h3>
-      <table class="inputs"><thead><tr><th>Name</th><th>Description</th><th>Default</th><th>Choices</th><th>Required</th><th>Secret</th><th></th></tr></thead><tbody>
+      <h3>Inputs${helpIcon(H.runbook.inputs)}</h3>
+      <table class="inputs"><thead><tr>
+        <th>Name${helpIcon(H.input.name)}</th><th>Description${helpIcon(H.input.description)}</th><th>Default${helpIcon(H.input.default)}</th>
+        <th>Choices${helpIcon(H.input.choices)}</th><th>Required${helpIcon(H.input.required)}</th><th>Secret${helpIcon(H.input.secret)}</th><th></th></tr></thead><tbody>
       ${d.inputs.map((inp, i) => `<tr>
-        <td><input data-path="inputs.${i}.name" value="${esc(inp.name || "")}"></td>
-        <td><input data-path="inputs.${i}.description" value="${esc(inp.description || "")}"></td>
-        <td><input data-path="inputs.${i}.default" value="${esc(inp.default || "")}"></td>
-        <td><input data-path="inputs.${i}.choices" data-kind="list" value="${esc((inp.choices || []).join(", "))}" placeholder="a, b"></td>
-        <td><input type="checkbox" data-path="inputs.${i}.required" ${inp.required ? "checked" : ""}></td>
-        <td><input type="checkbox" data-path="inputs.${i}.secret" ${inp.secret ? "checked" : ""}></td>
+        <td>${control(`inputs.${i}.name`, "text", inp.name)}</td>
+        <td>${control(`inputs.${i}.description`, "text", inp.description)}</td>
+        <td>${control(`inputs.${i}.default`, "text", inp.default)}</td>
+        <td>${control(`inputs.${i}.choices`, "list", inp.choices, { placeholder: "a, b" })}</td>
+        <td>${control(`inputs.${i}.required`, "bool", inp.required)}</td>
+        <td>${control(`inputs.${i}.secret`, "bool", inp.secret)}</td>
         <td><button class="link" data-act="del-input" data-i="${i}">remove</button></td></tr>`).join("")}
       </tbody></table>
       <button data-act="add-input">+ Add input</button>
     </div>
-    <h3>Steps</h3>
-    <ol class="steps struct-steps">${d.steps.map((s, i) => {
-      const manual = s.manual !== undefined && s.run === undefined;
-      return `${sectionHeading(d.steps, i)}<li class="step">
+    <h3>Steps${helpIcon(H.runbook.steps)}</h3>
+    <ol class="steps struct-steps">${d.steps.map((s, i) => `${sectionHeading(d.steps, i)}<li class="step">
         <div class="step-head" data-act="open" data-i="${i}">
           <span class="n">${i + 1}</span><span class="name">${esc(s.name || "(unnamed)")} ${stepBadges(s)}</span>
           <span class="spacer"></span>
@@ -219,30 +320,39 @@ function renderStruct(ed) {
           <button class="icon-btn" data-act="dup" data-i="${i}" title="Duplicate">⧉</button>
           <button class="icon-btn danger" data-act="del" data-i="${i}" title="Delete">✕</button>
         </div>
-        ${ed.open.has(i) ? `<div class="step-body">
-          <div class="seg kind-seg">
-            <button data-act="kind" data-kind="run" data-i="${i}" class="${manual ? "" : "on"}">Command</button>
-            <button data-act="kind" data-kind="manual" data-i="${i}" class="${manual ? "on" : ""}">Manual instructions</button>
-          </div>
-          ${fieldHTML(`steps.${i}.${manual ? "manual" : "run"}`, manual ? "Instructions" : "Command", "code", manual ? s.manual : s.run, manual ? "What the operator should do; templates allowed" : "Shell script; templates like {{.input}} allowed")}
-          <div class="flags">${STEP_FLAGS.map(([k, label]) => `<label><input type="checkbox" data-path="steps.${i}.${k}" ${s[k] ? "checked" : ""}> ${label}</label>`).join("")}</div>
-          <div class="fgrid">${STEP_FIELDS.map(([k, label, kind, help, choices]) => fieldHTML(`steps.${i}.${k}`, label, kind, s[k], help, choices)).join("")}</div>
+        ${ed.open.has(i) ? `<div class="step-body step-edit">
+          <div class="se-left" style="${ed.leftWidth ? `width:${ed.leftWidth}px` : ""}">${stepLeft(s, i)}</div>
+          <div class="se-right">${stepRight(d, s, i)}</div>
         </div>` : ""}
-      </li>`;
-    }).join("")}</ol>
+      </li>`).join("")}</ol>
     <button data-act="add-step">+ Add step</button>`;
 
+  // Remember the command pane's width when it's resized.
+  pane.querySelectorAll(".se-left").forEach((el) => new ResizeObserver(() => {
+    if (el.offsetWidth) ed.leftWidth = el.offsetWidth;
+  }).observe(el));
+
   pane.oninput = pane.onchange = (e) => {
+    const k = e.target.closest("[data-act-change]");
+    if (k && e.type === "change") {
+      const sub = d.steps[+k.dataset.i].alternatives[+k.dataset.j].steps[+k.dataset.k];
+      const text = sub.run ?? sub.manual ?? "";
+      delete sub.run; delete sub.manual;
+      sub[k.value] = text;
+      return renderStruct(ed);
+    }
     const el = e.target.closest("[data-path]");
     if (!el) return;
     setPath(d, el.dataset.path, readField(el));
-    if (/\.name$/.test(el.dataset.path) && e.type === "change") renderStruct(ed);
+    // Structure-changing fields redraw the form.
+    if (e.type === "change" && /\.(name|background)$/.test(el.dataset.path)) renderStruct(ed);
   };
   pane.onclick = (e) => {
     const b = e.target.closest("[data-act]");
-    if (!b) return;
+    if (!b || b.tagName === "SELECT") return;
     e.preventDefault();
-    const i = +b.dataset.i;
+    const i = +b.dataset.i, j = +b.dataset.j, k = +b.dataset.k;
+    const s = d.steps[i];
     const swap = (a, c) => {
       [d.steps[a], d.steps[c]] = [d.steps[c], d.steps[a]];
       const oa = ed.open.has(a), oc = ed.open.has(c);
@@ -254,15 +364,31 @@ function renderStruct(ed) {
       case "open": toggle(ed.open, i); break;
       case "up": swap(i, i - 1); break;
       case "down": swap(i, i + 1); break;
-      case "dup": d.steps.splice(i + 1, 0, structuredClone({ ...d.steps[i], id: undefined, name: `${d.steps[i].name} (copy)` })); break;
-      case "del": if (!confirm(`Delete step ${i + 1} (${d.steps[i].name})?`)) return; d.steps.splice(i, 1); ed.open.clear(); break;
+      case "dup": d.steps.splice(i + 1, 0, structuredClone({ ...s, id: undefined, name: `${s.name} (copy)` })); break;
+      case "del": if (!confirm(`Delete step ${i + 1} (${s.name})?`)) return; d.steps.splice(i, 1); ed.open.clear(); break;
       case "kind": {
-        const s = d.steps[i];
-        const text = s.run ?? s.manual ?? "";
-        delete s.run; delete s.manual;
-        s[b.dataset.kind] = text;
+        // Carry the text over where it makes sense.
+        const text = s.run ?? s.manual ?? s.checks?.[0]?.run ?? s.alternatives?.[0]?.run ?? "";
+        for (const f of ["run", "manual", "checks", "alternatives", "repeat"]) delete s[f];
+        if (b.dataset.kind === "run") s.run = text;
+        if (b.dataset.kind === "manual") s.manual = text;
+        if (b.dataset.kind === "checks") s.checks = [{ name: "check 1", run: text }];
+        if (b.dataset.kind === "alternatives") s.alternatives = [{ name: "option 1", run: text }, { name: "option 2", run: "" }];
+        if (b.dataset.kind !== "run") { delete s.background; delete s.stop_after; delete s.tty; }
         break;
       }
+      case "add-check": (s.checks ||= []).push({ name: `check ${s.checks.length + 1}`, run: "" }); break;
+      case "del-check": s.checks.splice(j, 1); break;
+      case "add-alt": (s.alternatives ||= []).push({ name: `option ${s.alternatives.length + 1}`, run: "" }); break;
+      case "del-alt": s.alternatives.splice(j, 1); break;
+      case "alt-kind": {
+        const a = s.alternatives[j];
+        if (b.dataset.kind === "steps") { a.steps = [{ name: "step 1", run: a.run || "" }]; delete a.run; delete a.tty; }
+        else { a.run = a.steps?.[0]?.run || ""; delete a.steps; }
+        break;
+      }
+      case "add-sub": s.alternatives[j].steps.push({ name: `step ${s.alternatives[j].steps.length + 1}`, run: "" }); break;
+      case "del-sub": s.alternatives[j].steps.splice(k, 1); break;
       case "add-step":
         d.steps.push({ name: "New step", run: "echo hello", section: d.steps.at(-1)?.section });
         ed.open.add(d.steps.length - 1);

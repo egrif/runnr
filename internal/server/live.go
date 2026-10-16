@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -155,12 +156,37 @@ type TermEvent struct {
 	Shell   bool   `json:"shell,omitempty"`
 	Command string `json:"command,omitempty"`
 	Expect  string `json:"expect,omitempty"`
+	// Background sessions show as a tab without taking over the page.
+	Background bool `json:"background,omitempty"`
+}
+
+// StartBackground implements engine.BackgroundHost: a browser terminal tab
+// that keeps running while the run moves on.
+func (l *liveRun) StartBackground(idx int, title string) engine.TermConn {
+	return l.startTerm(idx, title, true)
+}
+
+// ChooseAlternative implements engine.Chooser.
+func (l *liveRun) ChooseAlternative(ctx context.Context, v engine.StepView) (int, error) {
+	opts := make([]string, 0, len(v.Alternatives)+1)
+	for _, a := range v.Alternatives {
+		opts = append(opts, a.Name)
+	}
+	a, err := l.askStep(ctx, Question{Type: "choose", Step: v.Index, Title: "How should “" + v.Name + "” be done?", Text: v.Command, Expect: v.Expect, Options: append(opts, "abort")})
+	if err != nil {
+		return 0, err
+	}
+	return slices.Index(opts, a.Value), nil
 }
 
 // StartTerm implements engine.TermHost with a terminal in the browser:
 // output is streamed to everyone watching the run (secrets masked), and
 // keystrokes come back through POST /api/runs/{id}/term.
 func (l *liveRun) StartTerm(idx int, title string) (engine.TermConn, error) {
+	return l.startTerm(idx, title, false), nil
+}
+
+func (l *liveRun) startTerm(idx int, title string, background bool) *engine.PipeConn {
 	l.mu.Lock()
 	l.tseq++
 	id := fmt.Sprintf("t%d", l.tseq)
@@ -178,7 +204,7 @@ func (l *liveRun) StartTerm(idx int, title string) (engine.TermConn, error) {
 	}
 	l.terms[id] = conn
 	l.mu.Unlock()
-	start := &TermEvent{ID: id, Title: title, Shell: strings.HasPrefix(title, "shell")}
+	start := &TermEvent{ID: id, Title: title, Shell: strings.HasPrefix(title, "shell"), Background: background}
 	if idx >= 0 && l.session != nil {
 		v := l.session.View(idx)
 		start.Command, start.Expect = v.Command, v.Expect
@@ -191,7 +217,7 @@ func (l *liveRun) StartTerm(idx int, title string) (engine.TermConn, error) {
 		l.mu.Unlock()
 		l.publish(WireEvent{Event: engine.Event{Kind: "term_end", Step: idx}, Term: &TermEvent{ID: id}})
 	}()
-	return conn, nil
+	return conn
 }
 
 func (l *liveRun) term(id string) *engine.PipeConn {

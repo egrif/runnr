@@ -230,4 +230,61 @@ body.term-open main { padding-bottom: calc(42vh + 24px); }
 body.term-big main { padding-bottom: calc(80vh + 24px); }
 .term-head .link { white-space: nowrap; }
 .term-head .term-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.term-title { white-space: nowrap; }
+.term-tabs { display: flex; gap: 4px; min-width: 0; overflow-x: auto; }
+.term-tab { display: flex; align-items: center; gap: 6px; background: transparent; color: #9a9ba3; border: 1px solid #2c2e35; border-radius: 6px; padding: 2px 10px; font-size: 12px; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.term-tab.on { color: #e4e6eb; border-color: var(--accent); }
+.term-tab.ended .term-dot { background: var(--muted); }
+.term-pane { height: 100%; }
+.term-pane[hidden] { display: none; }
+.bg-list { display: flex; gap: 12px; flex-wrap: wrap; margin: 6px 0; }
+.bg-item { font-size: 13px; color: var(--run); }
+table.checks { border: none; margin: 8px 0; width: auto; }
+table.checks td { border: none; padding: 2px 8px; }
+table.checks tr:hover { background: none; cursor: default; }
+.sub-steps { margin: 4px 0 8px; padding-left: 20px; font-size: 13px; }
+
+/* Structured editor */
+.step-edit { display: flex; gap: 16px; align-items: flex-start; }
+.se-left { width: 50%; min-width: 280px; max-width: 80%; resize: horizontal; overflow: auto; padding-right: 8px; border-right: 1px dashed var(--border); flex-shrink: 0; }
+.se-left textarea.code { width: 100%; min-height: 140px; }
+.se-right { flex: 1; min-width: 260px; }
+.fgroup { margin-bottom: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--panel); }
+.fgroup-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 6px; cursor: default; }
+details.fgroup > summary.fgroup-title { cursor: pointer; margin-bottom: 0; }
+details.fgroup[open] > summary.fgroup-title { margin-bottom: 6px; }
+.fgroup-rows { display: grid; grid-template-columns: max-content 1fr; gap: 6px 10px; align-items: center; }
+.frow { display: contents; }
+.flabel { font-size: 13px; font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.fgroup-rows input:not([type=checkbox]), .fgroup-rows select, .fgroup-rows textarea { width: 100%; }
+.fgroup-rows input[type=checkbox] { justify-self: start; }
+.sub-card { border: 1px solid var(--border); border-radius: 6px; padding: 8px; margin: 6px 0; background: var(--bg); }
+.sub-card .row { flex-wrap: nowrap; margin-bottom: 6px; }
+.sub-card .row input:not([type=checkbox]) { flex: 1; }
+.sub-card textarea.code { width: 100%; }
+.mini-step { border-left: 3px solid var(--border); padding-left: 8px; margin: 6px 0; }
+.mini-step .row { gap: 6px; margin-bottom: 4px; }
+.small-seg { margin: 6px 0; }
+.small-seg button { font-size: 12px; padding: 2px 10px; }
+label.small { font-size: 12px; display: inline-flex; gap: 4px; align-items: center; color: var(--muted); }
+.kind-seg { margin-bottom: 10px; align-items: center; }
+/* ⓘ help */
+.info { position: relative; display: inline-block; color: var(--accent); font-weight: 400; font-size: 12px; cursor: help; text-transform: none; letter-spacing: 0; }
+.info:hover::after, .info:focus::after {
+  content: attr(data-tip); position: absolute; left: 50%; top: 130%; transform: translateX(-30%); z-index: 20;
+  width: max-content; max-width: 320px; white-space: normal; background: var(--text); color: var(--bg);
+  padding: 8px 10px; border-radius: 6px; font-size: 12px; line-height: 1.4; font-weight: 400; box-shadow: 0 4px 12px rgba(0,0,0,.2);
+}
+/* Help page */
+.help { max-width: 900px; }
+.help h2 { margin-top: 32px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.help h3 { margin: 20px 0 6px; font-size: 15px; }
+.help-toc { margin: 12px 0 20px; }
+table.help-fields { margin: 8px 0; }
+table.help-fields td { vertical-align: top; }
+table.help-fields td:first-child { white-space: nowrap; }
+table.help-fields tbody tr:hover { background: none; cursor: default; }
+#help-link.active, #history-link.active { font-weight: 600; }
+.kind-seg { display: flex; width: fit-content; }
+.se-left > .flabel { display: flex; margin: 4px 0; }
+.info { margin-left: 3px; }
+table.inputs { overflow: visible; }

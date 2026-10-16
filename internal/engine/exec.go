@@ -54,6 +54,11 @@ func (r *ringBuffer) String() string {
 }
 
 func (x *executor) exec(ctx context.Context, i int, step runbook.Step, command string) cmdResult {
+	return x.execStream(ctx, i, step, command, true)
+}
+
+// execStream is exec; stream=false keeps the output out of the live log.
+func (x *executor) execStream(ctx context.Context, i int, step runbook.Step, command string, stream bool) cmdResult {
 	if d := step.TimeoutDuration(); d > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, d)
@@ -122,7 +127,7 @@ func (x *executor) exec(ctx context.Context, i int, step runbook.Step, command s
 	}
 
 	var wg sync.WaitGroup
-	pump := func(r io.Reader, stream string, also io.Writer) {
+	pump := func(r io.Reader, name string, also io.Writer) {
 		defer wg.Done()
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 64<<10), 1<<20)
@@ -132,7 +137,9 @@ func (x *executor) exec(ctx context.Context, i int, step runbook.Step, command s
 				also.Write([]byte(line + "\n"))
 			}
 			combined.Write([]byte(line + "\n"))
-			x.notify(Event{Kind: EventOutput, Step: i, Stream: stream, Text: x.mask(line)})
+			if stream {
+				x.notify(Event{Kind: EventOutput, Step: i, Stream: name, Text: x.mask(line)})
+			}
 		}
 	}
 	wg.Add(2)

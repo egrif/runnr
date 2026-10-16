@@ -33,6 +33,8 @@ type Terminal struct {
 	session engine.Session
 	// interrupts, when set, makes runnr ignore Ctrl-C while a shell runs.
 	interrupts *atomic.Bool
+	// bg holds background steps' terminals, by step index.
+	bg map[int]*bgView
 }
 
 // header prints the step title, preceded by its section when that changes.
@@ -69,12 +71,13 @@ func (t *Terminal) c(code, s string) string {
 }
 
 var statusStyle = map[engine.Status]struct{ code, icon string }{
-	engine.StatusSucceeded: {"32", "✔"},
-	engine.StatusFailed:    {"31", "✘"},
-	engine.StatusSkipped:   {"33", "↷"},
-	engine.StatusAborted:   {"31", "■"},
-	engine.StatusForced:    {"33", "⚑"},
-	engine.StatusRunning:   {"36", "▶"},
+	engine.StatusSucceeded:  {"32", "✔"},
+	engine.StatusFailed:     {"31", "✘"},
+	engine.StatusSkipped:    {"33", "↷"},
+	engine.StatusAborted:    {"31", "■"},
+	engine.StatusForced:     {"33", "⚑"},
+	engine.StatusRunning:    {"36", "▶"},
+	engine.StatusBackground: {"36", "◐"},
 }
 
 func (t *Terminal) Notify(e engine.Event) {
@@ -95,7 +98,8 @@ func (t *Terminal) Notify(e engine.Event) {
 		fmt.Fprintln(t.out, prefix+e.Text)
 	case engine.EventStepFinished:
 		r := e.Result
-		if r.Note == engine.NoteBeforeStart {
+		// A background step ending later is reported by an info line.
+		if r.Note == engine.NoteBeforeStart || (r.Kind == "background" && r.Status != engine.StatusBackground) {
 			return
 		}
 		st := statusStyle[r.Status]
@@ -222,6 +226,10 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 		extra += " · [!] shell"
 		all["!"], all["shell"] = "\x00shell", "\x00shell"
 	}
+	if len(t.running()) > 0 {
+		extra += " · [w]atch background"
+		all["w"], all["watch"] = "\x00watch", "\x00watch"
+	}
 	for k, v := range opts {
 		all[k] = v
 	}
@@ -255,6 +263,10 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 			if err := t.OpenShell(ctx, idx); err != nil {
 				fmt.Fprintln(t.out, t.c("31", "  shell: "+err.Error()))
 			}
+		case "\x00watch":
+			if err := t.watch(ctx); err != nil {
+				return "", err
+			}
 		default:
 			return a, nil
 		}
@@ -272,7 +284,7 @@ func (t *Terminal) viewText(v engine.StepView, in string) string {
 	for _, f := range []struct {
 		on   bool
 		name string
-	}{{true, v.Kind}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.When != "", "when " + v.When},
+	}{{true, v.Kind}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.StopAfter != "", "until " + v.StopAfter}, {v.When != "", "when " + v.When},
 		{v.Timeout != "", "timeout " + v.Timeout}, {v.Retries > 0, fmt.Sprintf("retries %d", v.Retries)}} {
 		if f.on {
 			flags = append(flags, f.name)
@@ -357,6 +369,7 @@ func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.St
 var statusIcon = map[engine.Status]string{
 	engine.StatusSucceeded: "✔", engine.StatusFailed: "✘", engine.StatusSkipped: "↷",
 	engine.StatusAborted: "■", engine.StatusForced: "⚑", engine.StatusRunning: "▶", engine.StatusPending: "○",
+	engine.StatusBackground: "◐",
 }
 
 // previousStep returns what step i did in the run being compared against.

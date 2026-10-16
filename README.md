@@ -111,6 +111,7 @@ At any step prompt you can also:
 
 - **`v`**: view the step as it will run: commands with current values filled
   in, expected outcome, directory, what it publishes.
+- **`w`**: watch a background step (its terminal; Ctrl-] to come back).
 - **`l`**: what this step did last time (status, command, output, notes).
 - **`e`**: show the run's state: every variable so far, credentials masked.
 - **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
@@ -215,6 +216,25 @@ steps:
   - name: Smoke test
     run: curl -fsS https://example.com/healthz
     continue_on_error: true
+  - id: watcher
+    name: Status dashboard
+    run: ./status.sh --watch
+    background: true            # starts and moves on; runs on its own terminal
+    stop_after: verify          # stopped (hung up) after that step finishes
+  - id: verify
+    name: Ready?
+    checks:                     # all must pass; each runs every attempt
+      - { name: API up, run: curl -fsS https://example.com/healthz }
+      - { name: Queue drained, run: ./queue-depth.sh | grep -qx 0 }
+    repeat: { every: 20s, timeout: 10m }   # retry until all pass
+  - name: Rotate secrets
+    alternatives:               # pick one when the step runs
+      - name: script
+        run: ./rotate.sh
+      - name: by hand
+        steps:
+          - { name: Edit, manual: Update the secrets in the console. }
+          - { name: Restart, run: ./restart.sh, confirm: true }
 ```
 
 Each step has exactly one of `run` or `manual`. Every input and published
@@ -246,6 +266,25 @@ recorded with the step, cleaned of colour and cursor codes, secrets masked.
 Shells (`!`) work the same way, so what you did by hand is recorded too.
 **End session** (GUI) hangs up a terminal like closing its window. Unattended runs have no one to type, so `tty` steps follow
 their `unattended` policy.
+
+**Background steps** (`background: true`) start and let the run move on.
+They run on their own terminal until the `stop_after` step finishes (or the
+run ends), are visible as a tab in the GUI or with `w` in the CLI, and their
+output is recorded with the step. They can't publish outputs.
+
+**Checks** run several commands as one step: each passes if it exits 0,
+every one runs on each attempt, and the step passes when all pass. Results
+show as a ✅/❌ table. With `repeat`, the group re-runs on its own until it
+passes or times out; otherwise a failure offers retry (re-runs the group),
+skip, force or abort.
+
+**Alternatives** are different ways to do one step. You pick one when the
+step runs (unattended runs use the first whose `when` holds). An alternative
+is a command or a short list of steps, which inherit the step's `dir`,
+`shell` and `env`; retrying resumes at the step that failed. One level only.
+
+The GUI's **Runbook format help** page describes every field, and the
+structured editor shows the same text on each field's ⓘ.
 
 **What steps can see.** Steps run as you, on the machine runnr runs on: your
 files, home directory and permissions, and the environment runnr was started

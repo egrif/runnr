@@ -138,10 +138,20 @@ async function viewLaunch(el, name, mode, runId) {
 
 function toggle(set, i) { set.has(i) ? set.delete(i) : set.add(i); }
 
+function stepKindName(s) {
+  if (s.background || s.kind === "background") return "background";
+  if (s.checks?.length || s.kind === "checks") return "checks";
+  if (s.alternatives?.length || s.kind === "alternatives") return "alternatives";
+  if (s.manual || s.kind === "manual") return "manual";
+  if (s.tty || s.kind === "tty") return "terminal";
+  return "command";
+}
+
 function stepBadges(s) {
-  const kind = s.manual || s.kind === "manual" ? "manual" : s.tty || s.kind === "tty" ? "terminal" : "command";
   return [
-    `<span class="badge-k">${kind}</span>`,
+    `<span class="badge-k">${stepKindName(s)}</span>`,
+    s.stop_after && `<span class="badge-k" title="Runs in the background until this step finishes">until ${esc(s.stop_after)}</span>`,
+    s.repeat && `<span class="badge-k" title="Re-runs the checks until they all pass">repeats</span>`,
     s.confirm && `<span class="badge-k warn" title="Asks before running, even without pauses">confirms on its own</span>`,
     s.always && `<span class="badge-k" title="Runs even when starting later or resuming">always</span>`,
     s.when && `<span class="badge-k" title="${esc(s.when)}">conditional</span>`,

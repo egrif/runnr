@@ -46,6 +46,30 @@ func (x *executor) inTerminal(ctx context.Context, idx int, title, shell, comman
 	if !ok {
 		return nil, "", errNoTerminal
 	}
+	conn, err := h.StartTerm(idx, title)
+	if err != nil {
+		return nil, "", err
+	}
+	s, err := x.startTerm(ctx, shell, command, extra, dir, conn)
+	if err != nil {
+		conn.Close()
+		return nil, "", err
+	}
+	return s.wait()
+}
+
+// termSession is a command running on a pseudo-terminal.
+type termSession struct {
+	cmd        *exec.Cmd
+	done       chan struct{}
+	code       *int
+	err        error
+	transcript string
+}
+
+// startTerm starts command (or $SHELL if "") on a pty connected to conn and
+// returns at once; wait for it with wait. conn is closed when it ends.
+func (x *executor) startTerm(ctx context.Context, shell, command string, extra []string, dir string, conn TermConn) (*termSession, error) {
 	var cmd *exec.Cmd
 	if command == "" {
 		cmd = exec.Command(userShell(x.rb.Shell))
@@ -53,17 +77,12 @@ func (x *executor) inTerminal(ctx context.Context, idx int, title, shell, comman
 		cmd = exec.Command(shell, "-c", command)
 	}
 	cmd.Env, cmd.Dir = append(os.Environ(), append(extra, "TERM="+termName())...), dir
-
-	conn, err := h.StartTerm(idx, title)
-	if err != nil {
-		return nil, "", err
-	}
-	defer conn.Close()
 	rows, cols := conn.Size()
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
+	s := &termSession{cmd: cmd, done: make(chan struct{})}
 
 	// Keystrokes in. When the operator ends the session, hang up.
 	var exited atomic.Bool
@@ -73,15 +92,9 @@ func (x *executor) inTerminal(ctx context.Context, idx int, title, shell, comman
 			hangup(cmd.Process)
 		}
 	}()
-	// Resizes go to the pty until the session ends; the resize goroutine
-	// must be done before the pty is closed.
+	// Resizes go to the pty until the session ends.
 	ended := make(chan struct{})
 	var resizing sync.WaitGroup
-	defer func() {
-		close(ended)
-		resizing.Wait()
-		f.Close()
-	}()
 	if ch := conn.Resized(); ch != nil {
 		resizing.Add(1)
 		go func() {
@@ -98,27 +111,106 @@ func (x *executor) inTerminal(ctx context.Context, idx int, title, shell, comman
 		}()
 	}
 	// Cancelling the run (or a timeout) kills the command.
-	stop := context.AfterFunc(ctx, func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-	})
-	defer stop()
+	stop := context.AfterFunc(ctx, func() { _ = cmd.Process.Kill() })
 
-	// Output out, and into the transcript.
-	rec := &ringBuffer{}
-	_, _ = io.Copy(io.MultiWriter(conn, rec), f) // ends when the terminal closes (EIO)
-	err = cmd.Wait()
-	exited.Store(true)
-	transcript := CleanTranscript(rec.String())
-	if cmd.ProcessState == nil {
-		return nil, transcript, err
+	go func() {
+		defer close(s.done)
+		rec := &ringBuffer{}
+		_, _ = io.Copy(io.MultiWriter(conn, rec), f) // ends when the terminal closes (EIO)
+		err := cmd.Wait()
+		exited.Store(true)
+		stop()
+		close(ended)
+		resizing.Wait()
+		f.Close()
+		conn.Close()
+		s.transcript = CleanTranscript(rec.String())
+		if cmd.ProcessState == nil {
+			s.err = err
+			return
+		}
+		code := cmd.ProcessState.ExitCode()
+		s.code = &code
+		if ctx.Err() != nil {
+			s.err = ctx.Err()
+		}
+	}()
+	return s, nil
+}
+
+func (s *termSession) wait() (*int, string, error) {
+	<-s.done
+	return s.code, s.transcript, s.err
+}
+
+// stop hangs up the session (as closing its terminal would) and waits for
+// it, killing it if it won't go.
+func (s *termSession) stop() {
+	select {
+	case <-s.done:
+		return
+	default:
 	}
-	code := cmd.ProcessState.ExitCode()
-	if ctx.Err() != nil {
-		return &code, transcript, ctx.Err()
+	hangup(s.cmd.Process)
+	select {
+	case <-s.done:
+	case <-time.After(5 * time.Second):
+		_ = s.cmd.Process.Kill()
+		<-s.done
 	}
-	return &code, transcript, nil
+}
+
+// BackgroundHost is implemented by interactors that show background
+// sessions (a tab in the GUI; attachable in the CLI). Without one, a
+// background session just runs and is recorded.
+type BackgroundHost interface {
+	StartBackground(idx int, title string) TermConn
+}
+
+// BackgroundConn is a terminal nobody has to be watching: it keeps recent
+// output so a viewer can attach later, then follow it live and type.
+type BackgroundConn struct {
+	*PipeConn
+	mu   sync.Mutex
+	raw  []byte
+	subs map[chan []byte]struct{}
+}
+
+const backgroundKeep = 256 << 10
+
+func NewBackgroundConn(rows, cols uint16) *BackgroundConn {
+	b := &BackgroundConn{subs: map[chan []byte]struct{}{}}
+	b.PipeConn = NewPipeConn(b.fanout, rows, cols)
+	return b
+}
+
+func (b *BackgroundConn) fanout(p []byte) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.raw = append(b.raw, p...)
+	if len(b.raw) > backgroundKeep {
+		b.raw = b.raw[len(b.raw)-backgroundKeep:]
+	}
+	for ch := range b.subs {
+		select {
+		case ch <- p:
+		default:
+		}
+	}
+}
+
+// Attach returns recent output and a channel of what follows; call detach
+// when done watching.
+func (b *BackgroundConn) Attach() (recent []byte, live <-chan []byte, detach func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ch := make(chan []byte, 256)
+	b.subs[ch] = struct{}{}
+	return append([]byte(nil), b.raw...), ch, func() {
+		b.mu.Lock()
+		delete(b.subs, ch)
+		b.mu.Unlock()
+	}
 }
 
 func termName() string {

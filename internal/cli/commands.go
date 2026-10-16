@@ -930,6 +930,19 @@ func printRun(r *engine.Run) {
 		if st.Error != "" {
 			fmt.Println(indent("error: " + st.Error))
 		}
+		for _, c := range st.Checks {
+			mark := "✅"
+			if !c.Passed {
+				mark = "❌"
+			}
+			fmt.Printf("    %s %s\n", mark, c.Name)
+		}
+		if st.Alternative != "" {
+			fmt.Printf("    done by: %s\n", st.Alternative)
+			for k, sub := range st.Sub {
+				fmt.Printf("      %d. %s — %s %s\n", k+1, sub.Name, sub.Status, sub.Note)
+			}
+		}
 		printNotes(st.Notes, "    ")
 	}
 }
