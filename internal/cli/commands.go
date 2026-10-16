@@ -649,7 +649,7 @@ would publish show as <name>.`,
 				fmt.Println(indent(strings.TrimSpace(rb.Description)))
 			}
 			if rb.Expect != "" {
-				fmt.Println(t.c("32", "  By the end: ") + strings.TrimSpace(rb.Expect))
+				fmt.Println(t.c("32", "  By the end: ") + strings.ReplaceAll(strings.TrimSpace(rb.Expect), "\n", "\n              "))
 			}
 			sections := map[string]runbook.Section{}
 			for _, sec := range rb.Sections {
