@@ -130,23 +130,35 @@ func (t *Terminal) watch(ctx context.Context) error {
 	}
 }
 
-// ChooseAlternative asks which way to do a step (engine.Chooser).
-func (t *Terminal) ChooseAlternative(ctx context.Context, v engine.StepView) (int, error) {
-	fmt.Fprintln(t.out, t.c("1", "  This step can be done different ways:"))
+// ChooseWay asks which way to do a step (engine.Chooser); Enter takes
+// the preferred one.
+func (t *Terminal) ChooseWay(ctx context.Context, v engine.StepView, failed int) (int, error) {
+	if failed >= 0 {
+		fmt.Fprintln(t.out, t.c("1", "  Try it another way:"))
+	} else {
+		fmt.Fprintln(t.out, t.c("1", "  This step can be done different ways:"))
+	}
 	opts := map[string]string{"a": "a", "abort": "a"}
-	for n, a := range v.Alternatives {
-		fmt.Fprintf(t.out, "  %s %s\n", t.c("36;1", fmt.Sprintf("%d)", n+1)), t.c("1", a.Name))
-		if a.Command != "" {
-			for _, l := range strings.Split(strings.TrimRight(a.Command, "\n"), "\n") {
-				fmt.Fprintln(t.out, t.c("2", "       $ "+l))
-			}
+	def := ""
+	for n, w := range v.Ways {
+		note := map[string]string{"run": "scripted"}[w.Kind]
+		if note == "" {
+			note = w.Kind
 		}
-		for k, s := range a.Steps {
-			fmt.Fprintf(t.out, "%s\n", t.c("2", fmt.Sprintf("       %d. %s", k+1, s)))
+		if w.Preferred {
+			note += ", preferred"
+			def = strconv.Itoa(n + 1)
+		}
+		if n == failed {
+			note += ", just failed"
+		}
+		fmt.Fprintf(t.out, "  %s %s %s\n", t.c("36;1", fmt.Sprintf("%d)", n+1)), t.c("1", w.Name), t.c("2", "("+note+")"))
+		for _, l := range strings.Split(strings.TrimRight(w.Command, "\n"), "\n") {
+			fmt.Fprintln(t.out, t.c("2", "       "+l))
 		}
 		opts[strconv.Itoa(n+1)] = strconv.Itoa(n + 1)
 	}
-	a, err := t.stepPrompt(ctx, v.Index, fmt.Sprintf("Which? [1-%d] / [a]bort", len(v.Alternatives)), opts, "1")
+	a, err := t.stepPrompt(ctx, v.Index, fmt.Sprintf("Which? [1-%d, Enter = %s] / [a]bort", len(v.Ways), def), opts, def)
 	if err != nil {
 		return 0, err
 	}

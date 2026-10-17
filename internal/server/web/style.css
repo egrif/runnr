@@ -376,3 +376,14 @@ dialog.edit-step .row { margin-top: 8px; gap: 8px; }
 .new-opts { gap: 16px; margin-bottom: 8px; }
 .new-opts label { display: inline-flex; gap: 6px; align-items: center; }
 .new-opts label.link { color: var(--accent); cursor: pointer; }
+
+/* Maintenance window */
+.step.in-window { box-shadow: inset 3px 0 0 var(--fail); }
+.badge-k.planned { color: var(--accent); border-color: currentColor; font-variant-numeric: tabular-nums; }
+.mw-banner { margin: 8px 0; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.mw-banner.open { border-color: var(--fail); }
+.mw-banner.open b { color: var(--fail); }
+.mw-banner.over b, .mw-over { color: var(--fail); }
+.mw-clock { font-variant-numeric: tabular-nums; font-weight: 600; }
+.step .meta .late { color: var(--fail); }
+.step .meta .early { color: var(--ok, #2e7d32); }

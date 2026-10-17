@@ -373,11 +373,11 @@ func validateCmd(s func() *store.Store) *cobra.Command {
 }
 
 type runFlags struct {
-	vars                     []string
-	unattended, yes, dry, js bool
-	quiet, noHistory         bool
-	stepMode, noReview       bool
-	skip, before, after      string
+	vars                                   []string
+	unattended, yes, dry, js, usePreferred bool
+	quiet, noHistory                       bool
+	stepMode, noReview                     bool
+	skip, before, after                    string
 }
 
 func (f *runFlags) register(cmd *cobra.Command) {
@@ -385,6 +385,7 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.StringArrayVarP(&f.vars, "var", "v", nil, "set an input (key=value), repeatable")
 	fl.BoolVarP(&f.unattended, "unattended", "u", false, "never prompt")
 	fl.BoolVarP(&f.yes, "yes", "y", false, "approve confirm-gated steps when unattended")
+	fl.BoolVar(&f.usePreferred, "use-preferred", false, "unattended: steps set to ask which way use their preferred way (asked otherwise)")
 	fl.BoolVar(&f.dry, "dry-run", false, "render steps without executing them")
 	fl.BoolVar(&f.js, "json", false, "unattended; print the run record as JSON instead of progress")
 	fl.BoolVarP(&f.quiet, "quiet", "q", false, "hide command output")
@@ -461,6 +462,22 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		values[k] = v
 	}
 	interactive := !f.unattended && !f.js && isTTY(os.Stdin)
+	if !interactive && !f.usePreferred && !f.dry {
+		if ch := rb.ChoosingSteps(cv.Skip); len(ch) > 0 {
+			var names []string
+			for _, i := range ch {
+				names = append(names, fmt.Sprintf("%d (%s)", i+1, rb.Steps[i].Name))
+			}
+			msg := fmt.Sprintf("steps %s normally ask which way to do them; unattended, they'll use their preferred way", strings.Join(names, ", "))
+			if !isTTY(os.Stdin) {
+				return fmt.Errorf("%s. Add --use-preferred to go ahead", msg)
+			}
+			fmt.Fprintf(os.Stderr, "%s. Go ahead? [y/N]: ", msg)
+			if a, err := NewTerminal(0).readLine(context.Background()); err != nil || !strings.HasPrefix(strings.ToLower(a), "y") {
+				return errors.New("not started")
+			}
+		}
+	}
 
 	term := NewTerminal(len(rb.Steps))
 	term.quiet = f.quiet
@@ -692,6 +709,21 @@ would publish show as <name>.`,
 			if rb.Description != "" {
 				fmt.Println(indent(strings.TrimSpace(rb.Description)))
 			}
+			if mw := rb.MaintenanceWindow; mw != nil {
+				line := "  Maintenance window (production down)"
+				if mw.Target != "" {
+					line += ": target " + mw.Target
+				}
+				if o, c := rb.WindowSteps(); o >= 0 {
+					line += fmt.Sprintf(", steps %d", o+1)
+					if c >= 0 {
+						line += fmt.Sprintf("–%d", c+1)
+					} else {
+						line += "– (no step closes it)"
+					}
+				}
+				fmt.Println(t.c("31", line))
+			}
 			if rb.Expect != "" {
 				fmt.Println(t.c("32", "  By the end: ") + strings.ReplaceAll(strings.TrimSpace(rb.Expect), "\n", "\n              "))
 			}
@@ -709,6 +741,26 @@ would publish show as <name>.`,
 					}
 				}
 				flags := []string{v.Kind}
+				if len(v.Ways) > 1 {
+					var names []string
+					for _, w := range v.Ways {
+						n := w.Name
+						if w.Preferred {
+							n += "*"
+						}
+						names = append(names, n)
+					}
+					flags[0] = "ways: " + strings.Join(names, ", ")
+					if v.Choose {
+						flags = append(flags, "asks which")
+					}
+				}
+				if v.Window != "" {
+					flags = append(flags, t.c("31", "window "+v.Window+"s"))
+				}
+				if v.Offset != "" {
+					flags = append(flags, "T"+v.Offset)
+				}
 				if v.Always {
 					flags = append(flags, "always")
 				}

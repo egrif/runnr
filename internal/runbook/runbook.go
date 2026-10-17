@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"text/template"
 	"time"
@@ -27,6 +28,9 @@ type Runbook struct {
 	// Expect is where things stand once the runbook has run.
 	Expect string   `yaml:"expect,omitempty" json:"expect,omitempty"`
 	Tags   []string `yaml:"tags,omitempty" json:"tags,omitempty"`
+	// MaintenanceWindow is the time production is down: from the step
+	// marked window: open to the one marked window: close.
+	MaintenanceWindow *MaintenanceWindow `yaml:"maintenance_window,omitempty" json:"maintenance_window,omitempty"`
 	// Sections describe the groups of steps (named by the steps' section).
 	Sections []Section         `yaml:"sections,omitempty" json:"sections,omitempty"`
 	Inputs   []Input           `yaml:"inputs,omitempty" json:"inputs,omitempty"`
@@ -53,7 +57,23 @@ type Section struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	Expect      string `yaml:"expect,omitempty" json:"expect,omitempty"`
+	// WindowOffset is when the section is planned to start, relative to
+	// the maintenance window opening (e.g. -30m, 0, +12m).
+	WindowOffset string `yaml:"window_offset,omitempty" json:"window_offset,omitempty"`
 }
+
+// MaintenanceWindow describes the planned production downtime.
+type MaintenanceWindow struct {
+	// Target is how long it's expected (or allowed) to last, e.g. 45m.
+	Target      string `yaml:"target,omitempty" json:"target,omitempty"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+}
+
+// Window marks on steps.
+const (
+	WindowOpen  = "open"  // production goes down when this step starts
+	WindowClose = "close" // production is back when this step finishes
+)
 
 type Input struct {
 	Name        string   `yaml:"name" json:"name"`
@@ -108,8 +128,20 @@ type Step struct {
 	Checks []Check `yaml:"checks,omitempty" json:"checks,omitempty"`
 	Repeat *Repeat `yaml:"repeat,omitempty" json:"repeat,omitempty"`
 
-	// Alternatives: one is chosen when the step runs.
-	Alternatives []Alternative `yaml:"alternatives,omitempty" json:"alternatives,omitempty"`
+	// Ways are different ways to do the step (e.g. Scripted, Manual, or a
+	// named alternative); the preferred one is used unless Choose is set,
+	// which asks each time (unattended runs always use the preferred one).
+	Ways   []Way `yaml:"ways,omitempty" json:"ways,omitempty"`
+	Choose bool  `yaml:"choose,omitempty" json:"choose,omitempty"`
+
+	// Window marks where the maintenance window opens or closes;
+	// WindowOffset is when the step is planned to start relative to its
+	// opening (e.g. -30m, +12m).
+	Window       string `yaml:"window,omitempty" json:"window,omitempty"`
+	WindowOffset string `yaml:"window_offset,omitempty" json:"window_offset,omitempty"`
+
+	// Alternatives was replaced by Ways; it's kept only to say so.
+	Alternatives yaml.Node `yaml:"alternatives,omitempty" json:"-"`
 }
 
 // Check is one command in a step's group of checks; it passes if it exits 0.
@@ -124,29 +156,130 @@ type Repeat struct {
 	Timeout string `yaml:"timeout" json:"timeout"`
 }
 
-// Alternative is one way to do a step: a command, or a short list of steps.
-type Alternative struct {
-	Name string `yaml:"name" json:"name"`
-	// When, if set, must be true for the alternative to be chosen unattended.
-	When  string `yaml:"when,omitempty" json:"when,omitempty"`
-	Run   string `yaml:"run,omitempty" json:"run,omitempty"`
-	TTY   bool   `yaml:"tty,omitempty" json:"tty,omitempty"`
-	Steps []Step `yaml:"steps,omitempty" json:"steps,omitempty"`
+// Way is one way to do a step: a command, instructions for a person, or
+// a group of checks.
+type Way struct {
+	Name      string  `yaml:"name" json:"name"`
+	Preferred bool    `yaml:"preferred,omitempty" json:"preferred,omitempty"`
+	Run       string  `yaml:"run,omitempty" json:"run,omitempty"`
+	Manual    string  `yaml:"manual,omitempty" json:"manual,omitempty"`
+	Checks    []Check `yaml:"checks,omitempty" json:"checks,omitempty"`
+	TTY       bool    `yaml:"tty,omitempty" json:"tty,omitempty"`
+}
+
+// Kind is run, manual or checks.
+func (w Way) Kind() string {
+	switch {
+	case w.Manual != "":
+		return "manual"
+	case len(w.Checks) > 0:
+		return "checks"
+	}
+	return "run"
 }
 
 func (s Step) IsManual() bool { return s.Manual != "" }
 
-// Kind is run, manual, checks or alternatives.
+// Kind is run, manual, checks, or ways (several ways to do it).
 func (s Step) Kind() string {
 	switch {
+	case len(s.Ways) > 1:
+		return "ways"
+	case len(s.Ways) == 1:
+		return s.Ways[0].Kind()
 	case s.Manual != "":
 		return "manual"
 	case len(s.Checks) > 0:
 		return "checks"
-	case len(s.Alternatives) > 0:
-		return "alternatives"
 	}
 	return "run"
+}
+
+// WayList is the step's ways: its Ways, or the one way its run, manual or
+// checks make.
+func (s Step) WayList() []Way {
+	if len(s.Ways) > 0 {
+		return s.Ways
+	}
+	return []Way{{Name: wayName(s.Kind()), Preferred: true, Run: s.Run, Manual: s.Manual, Checks: s.Checks, TTY: s.TTY}}
+}
+
+func wayName(kind string) string {
+	return map[string]string{"run": "Scripted", "manual": "Manual", "checks": "Checks"}[kind]
+}
+
+// PreferredWay is the index of the preferred way (the first if none is marked).
+func (s Step) PreferredWay() int {
+	for i, w := range s.Ways {
+		if w.Preferred {
+			return i
+		}
+	}
+	return 0
+}
+
+// WithWay is the step done the given way: a plain run, manual or checks step.
+func (s Step) WithWay(w Way) Step {
+	s.Ways, s.Choose = nil, false
+	s.Run, s.Manual, s.Checks = w.Run, w.Manual, w.Checks
+	s.TTY = w.Kind() == "run" && (s.TTY || w.TTY)
+	return s
+}
+
+// ParseOffset reads a window offset: a signed duration such as -30m,
+// +1h15m or 0.
+func ParseOffset(v string) (time.Duration, error) {
+	t := strings.TrimSpace(v)
+	if t == "0" {
+		return 0, nil
+	}
+	return time.ParseDuration(strings.TrimPrefix(t, "+"))
+}
+
+// PlannedOffset is when step i is planned to start relative to the window
+// opening: its own window_offset, or its section's for a section's first step.
+func (rb *Runbook) PlannedOffset(i int) (time.Duration, bool) {
+	st := rb.Steps[i]
+	v := st.WindowOffset
+	if v == "" && st.Section != "" && (i == 0 || rb.Steps[i-1].Section != st.Section) {
+		for _, sec := range rb.Sections {
+			if sec.Name == st.Section {
+				v = sec.WindowOffset
+			}
+		}
+	}
+	if v == "" {
+		return 0, false
+	}
+	d, err := ParseOffset(v)
+	return d, err == nil
+}
+
+// ChoosingSteps lists the steps (indexes) set to ask which way, leaving
+// out skip (indexes).
+func (rb *Runbook) ChoosingSteps(skip []int) []int {
+	var out []int
+	for i, st := range rb.Steps {
+		if st.Choose && len(st.Ways) > 1 && !slices.Contains(skip, i) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// WindowSteps returns the indexes of the steps that open and close the
+// maintenance window (-1 if none).
+func (rb *Runbook) WindowSteps() (open, close int) {
+	open, close = -1, -1
+	for i, st := range rb.Steps {
+		switch st.Window {
+		case WindowOpen:
+			open = i
+		case WindowClose:
+			close = i
+		}
+	}
+	return open, close
 }
 
 func (r Repeat) EveryDuration() time.Duration {
@@ -287,6 +420,7 @@ func (rb *Runbook) Validate() error {
 			add("profile[%d]: empty path", i)
 		}
 	}
+	errs = append(errs, rb.validateWindow()...)
 	ids := map[string]bool{}
 	for i, st := range rb.Steps {
 		if st.ID != "" {
@@ -295,7 +429,7 @@ func (rb *Runbook) Validate() error {
 			}
 			ids[st.ID] = true
 		}
-		errs = append(errs, validateStep(fmt.Sprintf("steps[%d] (%s)", i, st.Name), st, false)...)
+		errs = append(errs, validateStep(fmt.Sprintf("steps[%d] (%s)", i, st.Name), st)...)
 		if st.StopAfter != "" {
 			if j, err := rb.StepIndex(st.StopAfter); err != nil {
 				add("steps[%d] (%s): stop_after: %v", i, st.Name, err)
@@ -307,27 +441,79 @@ func (rb *Runbook) Validate() error {
 	return errors.Join(errs...)
 }
 
+func (rb *Runbook) validateWindow() []error {
+	var errs []error
+	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(format, a...)) }
+	used := false
+	opens, closes := 0, 0
+	for i, st := range rb.Steps {
+		switch st.Window {
+		case "":
+		case WindowOpen:
+			opens++
+		case WindowClose:
+			closes++
+		default:
+			add("steps[%d] (%s): window must be open or close", i, st.Name)
+		}
+		if st.WindowOffset != "" {
+			used = true
+			if _, err := ParseOffset(st.WindowOffset); err != nil {
+				add("steps[%d] (%s): window_offset %q must be a duration like -30m, 0 or +12m", i, st.Name, st.WindowOffset)
+			}
+		}
+	}
+	for i, sec := range rb.Sections {
+		if sec.WindowOffset != "" {
+			used = true
+			if _, err := ParseOffset(sec.WindowOffset); err != nil {
+				add("sections[%d] (%s): window_offset %q must be a duration like -30m, 0 or +12m", i, sec.Name, sec.WindowOffset)
+			}
+		}
+	}
+	if opens > 1 || closes > 1 {
+		add("only one step can open the maintenance window and one close it")
+	}
+	if o, c := rb.WindowSteps(); o >= 0 && c >= 0 && c < o {
+		add("the step closing the maintenance window comes before the one opening it")
+	} else if c >= 0 && o < 0 {
+		add("a step closes the maintenance window, but none opens it")
+	}
+	if (used || opens+closes > 0) && rb.MaintenanceWindow == nil {
+		add("window and window_offset need a maintenance_window (e.g. maintenance_window: {target: 45m})")
+	}
+	if mw := rb.MaintenanceWindow; mw != nil && mw.Target != "" {
+		if d, err := time.ParseDuration(mw.Target); err != nil || d <= 0 {
+			add("maintenance_window: target %q must be a duration like 45m", mw.Target)
+		}
+	}
+	return errs
+}
+
 func validTemplate(text string) error {
 	_, err := template.New("").Funcs(TemplateFuncs).Option("missingkey=error").Parse(text)
 	return err
 }
 
-// validateStep checks one step; nested is set for steps inside an alternative.
-func validateStep(where string, s Step, nested bool) []error {
+// validateStep checks one step.
+func validateStep(where string, s Step) []error {
 	var errs []error
 	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(where+": "+format, a...)) }
 
 	if s.Name == "" {
 		add("name is required")
 	}
+	if !s.Alternatives.IsZero() {
+		add("alternatives was replaced by ways: list each way with a name and run, manual or checks, and mark one preferred")
+	}
 	kinds := 0
-	for _, on := range []bool{s.Run != "", s.Manual != "", len(s.Checks) > 0, len(s.Alternatives) > 0} {
+	for _, on := range []bool{s.Run != "", s.Manual != "", len(s.Checks) > 0, len(s.Ways) > 0} {
 		if on {
 			kinds++
 		}
 	}
 	if kinds != 1 {
-		add("exactly one of run, manual, checks or alternatives is required")
+		add("exactly one of run, manual, checks or ways is required")
 	}
 	if s.ID != "" && !identRe.MatchString(s.ID) {
 		add("id %q must be a valid identifier", s.ID)
@@ -354,19 +540,59 @@ func validateStep(where string, s Step, nested bool) []error {
 		add("unattended must be fail, skip or pass")
 	}
 	runOnly := s.Capture != "" || s.Retries > 0 || s.RetryDelay != "" || s.TTY || len(s.Outputs)+len(s.SecretOutputs) > 0
-	switch s.Kind() {
-	case "manual":
-		if runOnly || s.Timeout != "" {
-			add("capture, retries, retry_delay, timeout, tty and outputs only apply to commands")
+	hasKind := func(k string) bool {
+		return slices.ContainsFunc(s.WayList(), func(w Way) bool { return w.Kind() == k })
+	}
+	if runOnly && !hasKind("run") {
+		add("capture, retries, retry_delay, tty and outputs only apply to commands (checks use repeat)")
+	}
+	if s.Timeout != "" && !hasKind("run") && !hasKind("checks") {
+		add("timeout doesn't apply to a manual step")
+	}
+	if s.Choose && len(s.Ways) < 2 {
+		add("choose needs at least two ways")
+	}
+	seenWay := map[string]bool{}
+	preferred := 0
+	for j, w := range s.Ways {
+		ww := fmt.Sprintf("ways[%d] (%s)", j, w.Name)
+		if w.Name == "" {
+			add("%s: name is required", ww)
+		} else if seenWay[w.Name] {
+			add("%s: two ways have that name", ww)
 		}
-	case "checks":
-		if runOnly {
-			add("capture, retries, retry_delay, tty and outputs don't apply to checks (use repeat)")
+		seenWay[w.Name] = true
+		n := 0
+		for _, on := range []bool{w.Run != "", w.Manual != "", len(w.Checks) > 0} {
+			if on {
+				n++
+			}
 		}
-	case "alternatives":
-		if s.Capture != "" || s.Retries > 0 || s.RetryDelay != "" || s.TTY {
-			add("capture, retries, retry_delay and tty go on the alternatives' steps")
+		if n != 1 {
+			add("%s: exactly one of run, manual or checks is required", ww)
 		}
+		if w.TTY && w.Run == "" {
+			add("%s: tty applies to run", ww)
+		}
+		if w.Preferred {
+			preferred++
+		}
+		for field, text := range map[string]string{"run": w.Run, "manual": w.Manual} {
+			if err := validTemplate(text); err != nil {
+				add("%s: %s template: %v", ww, field, err)
+			}
+		}
+		for k, c := range w.Checks {
+			if c.Name == "" || c.Run == "" {
+				add("%s: checks[%d]: name and run are required", ww, k)
+			}
+			if err := validTemplate(c.Run); err != nil {
+				add("%s: checks[%d] (%s): run template: %v", ww, k, c.Name, err)
+			}
+		}
+	}
+	if preferred > 1 {
+		add("only one way can be preferred")
 	}
 	for _, o := range append(append([]string{}, s.Outputs...), s.SecretOutputs...) {
 		if !identRe.MatchString(o) {
@@ -386,9 +612,6 @@ func validateStep(where string, s Step, nested bool) []error {
 		if s.Capture != "" || s.Retries > 0 || len(s.Outputs)+len(s.SecretOutputs) > 0 {
 			add("a background command can't capture or publish outputs, or retry")
 		}
-		if nested {
-			add("background steps can't be inside an alternative")
-		}
 	} else if s.StopAfter != "" {
 		add("stop_after only applies to background steps")
 	}
@@ -402,7 +625,7 @@ func validateStep(where string, s Step, nested bool) []error {
 		}
 	}
 	if s.Repeat != nil {
-		if len(s.Checks) == 0 {
+		if !hasKind("checks") {
 			add("repeat only applies to checks")
 		}
 		every, err1 := time.ParseDuration(s.Repeat.Every)
@@ -412,32 +635,6 @@ func validateStep(where string, s Step, nested bool) []error {
 		}
 	}
 
-	if s.Dangerous && nested {
-		add("dangerous goes on the step, not inside an alternative")
-	}
-	if len(s.Alternatives) > 0 && nested {
-		add("alternatives can't be nested")
-	}
-	for j, a := range s.Alternatives {
-		aw := fmt.Sprintf("alternatives[%d] (%s)", j, a.Name)
-		if a.Name == "" {
-			add("%s: name is required", aw)
-		}
-		if (a.Run == "") == (len(a.Steps) == 0) {
-			add("%s: exactly one of run or steps is required", aw)
-		}
-		if a.TTY && a.Run == "" {
-			add("%s: tty applies to run", aw)
-		}
-		for field, text := range map[string]string{"run": a.Run, "when": a.When} {
-			if err := validTemplate(text); err != nil {
-				add("%s: %s template: %v", aw, field, err)
-			}
-		}
-		for k, sub := range a.Steps {
-			errs = append(errs, validateStep(fmt.Sprintf("%s: %s.steps[%d] (%s)", where, aw, k, sub.Name), sub, true)...)
-		}
-	}
 	return errs
 }
 

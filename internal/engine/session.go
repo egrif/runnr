@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
 )
@@ -23,42 +24,81 @@ func (x *executor) View(i int) StepView {
 		Outputs: s.Outputs, SecretOutputs: s.SecretOutputs,
 	}
 	v.Background, v.StopAfter = s.Background, s.StopAfter
+	v.Choose, v.Window = s.Choose, s.Window
+	if d, ok := x.rb.PlannedOffset(i); ok {
+		sec := int(d.Seconds())
+		v.Offset, v.OffsetSec = FormatOffset(d), &sec
+	}
 	var b strings.Builder
-	switch s.Kind() {
-	case "manual":
-		b.WriteString(x.lenient(s.Manual))
-	case "checks":
-		for _, c := range s.Checks {
-			cmd := x.mask(x.lenient(c.Run))
-			v.Checks = append(v.Checks, CheckView{Name: c.Name, Command: cmd})
-			fmt.Fprintf(&b, "✓ %s\n    %s\n", c.Name, strings.ReplaceAll(strings.TrimSpace(cmd), "\n", "\n    "))
+	if len(s.Ways) > 1 {
+		pref := s.PreferredWay()
+		for j, w := range s.Ways {
+			cmd := x.wayCommand(s, w, nil)
+			v.Ways = append(v.Ways, WayView{Name: w.Name, Kind: w.Kind(), Command: x.mask(cmd), Preferred: j == pref})
+			mark := ""
+			if j == pref {
+				mark = " (preferred)"
+			}
+			fmt.Fprintf(&b, "%d) %s%s\n    %s\n", j+1, w.Name, mark, strings.ReplaceAll(strings.TrimSpace(cmd), "\n", "\n    "))
 		}
 		if s.Repeat != nil {
 			v.Repeat = fmt.Sprintf("every %s, for up to %s", s.Repeat.Every, s.Repeat.Timeout)
-			fmt.Fprintf(&b, "(repeated %s until all pass)\n", v.Repeat)
 		}
-	case "alternatives":
-		for j, a := range s.Alternatives {
-			av := AltView{Name: a.Name, When: a.When}
-			fmt.Fprintf(&b, "%d) %s\n", j+1, a.Name)
-			if a.Run != "" {
-				av.Command = x.mask(x.lenient(a.Run))
-				fmt.Fprintf(&b, "    %s\n", strings.ReplaceAll(strings.TrimSpace(av.Command), "\n", "\n    "))
-			}
-			for k, sub := range a.Steps {
-				av.Steps = append(av.Steps, sub.Name)
-				fmt.Fprintf(&b, "    %d. %s\n", k+1, sub.Name)
-			}
-			v.Alternatives = append(v.Alternatives, av)
-		}
-	default:
-		b.WriteString(x.lenient(s.Run))
+	} else {
+		b.WriteString(x.wayCommand(s, s.WayList()[0], &v))
 	}
 	v.Command = x.mask(b.String())
 	v.Expect = x.mask(x.lenient(s.Expect))
 	v.Description = x.mask(x.lenient(s.Description))
 	v.Dir = x.lenient(s.Dir)
 	return v
+}
+
+// wayCommand is what a way would run (or the instructions it gives),
+// rendered as far as the run's state allows. With v, checks are listed on it.
+func (x *executor) wayCommand(s runbook.Step, w runbook.Way, v *StepView) string {
+	var b strings.Builder
+	switch w.Kind() {
+	case "manual":
+		b.WriteString(x.lenient(w.Manual))
+	case "checks":
+		for _, c := range w.Checks {
+			cmd := x.mask(x.lenient(c.Run))
+			if v != nil {
+				v.Checks = append(v.Checks, CheckView{Name: c.Name, Command: cmd})
+			}
+			fmt.Fprintf(&b, "✓ %s\n    %s\n", c.Name, strings.ReplaceAll(strings.TrimSpace(cmd), "\n", "\n    "))
+		}
+		if s.Repeat != nil {
+			rep := fmt.Sprintf("every %s, for up to %s", s.Repeat.Every, s.Repeat.Timeout)
+			if v != nil {
+				v.Repeat = rep
+			}
+			fmt.Fprintf(&b, "(repeated %s until all pass)\n", rep)
+		}
+	default:
+		b.WriteString(x.lenient(w.Run))
+	}
+	return b.String()
+}
+
+// FormatOffset shows a window offset as -30m, +0, +1h15m.
+func FormatOffset(d time.Duration) string {
+	sign := "+"
+	if d < 0 {
+		sign, d = "-", -d
+	}
+	s := d.Round(time.Second).String() // e.g. 1h0m0s, 30m0s, 45s, 0s
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	if s == "0s" {
+		s = "0"
+	}
+	return sign + s
 }
 
 func (x *executor) Controls() *Controls  { return x.ctl }

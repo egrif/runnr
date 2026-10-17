@@ -697,66 +697,119 @@ steps:
 	}
 }
 
-// chooser picks an alternative by name.
+// chooser picks a way by name, and records what it was offered.
 type chooser struct {
 	scripted
-	pick string
-	seen []AltView
+	picks  []string
+	asked  int
+	failed []int
 }
 
-func (c *chooser) ChooseAlternative(_ context.Context, v StepView) (int, error) {
-	c.seen = v.Alternatives
-	return slices.IndexFunc(v.Alternatives, func(a AltView) bool { return a.Name == c.pick }), nil
+func (c *chooser) ChooseWay(_ context.Context, v StepView, failed int) (int, error) {
+	c.asked++
+	c.failed = append(c.failed, failed)
+	pick := c.picks[0]
+	c.picks = c.picks[1:]
+	return slices.IndexFunc(v.Ways, func(w WayView) bool { return w.Name == pick }), nil
 }
 
-func TestAlternatives(t *testing.T) {
-	dir := t.TempDir()
-	rb := mustParse(t, `
+const waysRB = `
 name: t
-inputs: [{name: mode, default: fast}]
 steps:
   - name: swap
-    dir: `+dir+`
     outputs: [how]
-    alternatives:
-      - {name: script, when: '{{eq .mode "script"}}', run: 'how=script; echo via script'}
-      - name: by hand
-        steps:
-          - {name: one, run: 'echo one; touch one'}
-          - {name: two, run: '[ -f fixed ] || { touch fixed; exit 1; }; echo two', outputs: [how2]}
-          - {name: three, run: 'echo three'}
+    ways:
+      - {name: Scripted, run: 'how=script; echo via script'}
+      - {name: Manual, manual: 'Do it by hand', preferred: true}
+      - {name: quick, run: 'how=quick; echo via quick'}
   - {name: after, run: 'echo "how=$how"'}
+`
+
+func TestWaysPreferred(t *testing.T) {
+	rb := mustParse(t, waysRB)
+	// Not set to choose: the preferred way (Manual), without asking.
+	ui := &chooser{scripted: scripted{manuals: []ManualOutcome{ManualDone}}}
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded || ui.asked != 0 || run.Steps[0].Way != "Manual" || run.Steps[0].Kind != "manual" {
+		t.Fatalf("%s asked=%d %+v", run.Status, ui.asked, run.Steps[0])
+	}
+	// Unattended: the preferred way too (a manual one follows its policy).
+	run = Execute(context.Background(), rb, Unattended{}, "", Options{})
+	if run.Status != StatusFailed || run.Steps[0].Way != "Manual" {
+		t.Fatalf("unattended: %s %+v", run.Status, run.Steps[0])
+	}
+}
+
+func TestWaysChooseAndOtherWayAfterFailure(t *testing.T) {
+	rb := mustParse(t, strings.Replace(waysRB, "  - name: swap\n", "  - name: swap\n    choose: true\n", 1))
+	ui := &chooser{picks: []string{"quick"}}
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded || ui.asked != 1 || !slices.Contains(ui.output, "how=quick") || run.Steps[0].Way != "quick" {
+		t.Fatalf("%s asked=%d %q %+v", run.Status, ui.asked, ui.output, run.Steps[0])
+	}
+
+	// A way fails: "try another way" offers the ways again, with the failed one marked.
+	broken := strings.Replace(waysRB, "how=script; echo via script", "exit 1", 1)
+	broken = strings.Replace(broken, ", preferred: true", "", 1) // Scripted (first) is preferred now
+	ui = &chooser{picks: []string{"quick"}}
+	ui.failures = []FailureAction{FailOtherWay}
+	run = Execute(context.Background(), mustParse(t, broken), ui, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded || !slices.Equal(ui.failed, []int{0}) || run.Steps[0].Way != "quick" || !slices.Contains(ui.output, "how=quick") {
+		t.Fatalf("%s failed=%v %q %+v", run.Status, ui.failed, ui.output, run.Steps[0])
+	}
+}
+
+func TestMaintenanceWindow(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+maintenance_window: {target: 1m}
+steps:
+  - {name: prep, run: 'true'}
+  - {name: down, run: 'sleep 0.1', window: open}
+  - {name: work, run: 'sleep 0.1', window_offset: +5m}
+  - {name: up, run: 'true', window: close}
+  - {name: after, run: 'true'}
 `)
-	// Unattended: the first whose when holds; "script" doesn't, "by hand" has none.
-	// Step two fails once; retry resumes at two (one isn't re-run).
-	ui := &scripted{failures: []FailureAction{}}
-	run := Execute(context.Background(), rb, Unattended{OnEvent: ui.Notify}, "", Options{})
-	if run.Status != StatusFailed || run.Steps[0].Alternative != "by hand" || run.Steps[0].Sub[1].Status != StatusFailed {
-		t.Fatalf("%s %+v", run.Status, run.Steps[0])
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{})
+	w := run.Window
+	if run.Status != StatusSucceeded || w == nil || w.Opened.IsZero() || w.Closed.IsZero() || w.OpenStep != 1 || w.CloseStep != 3 {
+		t.Fatalf("%s %+v", run.Status, w)
 	}
+	if d := w.Closed.Sub(w.Opened); d < 200*time.Millisecond || w.Opened.Before(run.Steps[1].Started) || w.Closed.After(run.Steps[4].Started) {
+		t.Fatalf("window %s", d)
+	}
+	if !strings.Contains(strings.Join(ui.output, "|"), "maintenance window closed") {
+		t.Fatalf("%q", ui.output)
+	}
+	// A run that stops while production is down leaves the window open;
+	// resuming it keeps the time it opened.
+	failing := strings.Replace(strings.Replace(rbYAML(t, rb), "sleep 0.1", "exit 1", 2), "", "", 0)
+	rb2 := mustParse(t, failing)
+	prev := Execute(context.Background(), rb2, Unattended{}, "", Options{})
+	if prev.Window.Opened.IsZero() || !prev.Window.Closed.IsZero() {
+		t.Fatalf("stopped run window %+v", prev.Window)
+	}
+	resumed := Execute(context.Background(), rb, Unattended{}, "", Options{StartAt: 2, Resumed: prev, Controls: NewControls(ControlsView{Skip: []int{0, 1}})})
+	if !resumed.Window.Opened.Equal(prev.Window.Opened) || resumed.Window.Closed.IsZero() {
+		t.Fatalf("resumed window %+v (prev %+v)", resumed.Window, prev.Window)
+	}
+}
 
-	ui2 := &chooser{pick: "by hand"}
-	ui2.failures = []FailureAction{FailRetry}
-	os.Remove(dir + "/fixed")
-	run = Execute(context.Background(), rb, ui2, "", Options{Interactive: true})
-	if run.Status != StatusSucceeded || run.Steps[0].Note != "used: by hand" {
-		t.Fatalf("%s %s %+v", run.Status, run.Error, run.Steps[0])
+func rbYAML(t *testing.T, rb *runbook.Runbook) string {
+	t.Helper()
+	b, err := runbook.Format(rb)
+	if err != nil {
+		t.Fatal(err)
 	}
-	ones := 0
-	for _, l := range ui2.output {
-		if l == "one" {
-			ones++
+	return string(b)
+}
+
+func TestFormatOffset(t *testing.T) {
+	for d, want := range map[time.Duration]string{-30 * time.Minute: "-30m", 0: "+0", 75 * time.Minute: "+1h15m", time.Hour: "+1h", 45 * time.Second: "+45s"} {
+		if got := FormatOffset(d); got != want {
+			t.Errorf("FormatOffset(%s) = %q, want %q", d, got, want)
 		}
-	}
-	if ones != 1 || strings.Count(strings.Join(ui2.output, "|"), "── 2/3 two") != 2 || len(ui2.seen) != 2 {
-		t.Fatalf("step one should run once: %q (seen %d alternatives)", ui2.output, len(ui2.seen))
-	}
-
-	// Choosing the command alternative: its outputs follow the step's.
-	ui3 := &chooser{pick: "script"}
-	run = Execute(context.Background(), rb, ui3, "", Options{Interactive: true, Vars: map[string]string{"mode": "script"}})
-	if run.Status != StatusSucceeded || !slices.Contains(ui3.output, "how=script") {
-		t.Fatalf("%s %q", run.Status, ui3.output)
 	}
 }
 
@@ -818,10 +871,10 @@ functions:
 steps:
   - {name: cmd, run: 'greet cmd; twice ab'}
   - {name: gate, checks: [{name: has greet, run: 'greet check | grep -q "hello, check"'}]}
-  - name: alt
-    alternatives:
-      - name: only
-        steps: [{name: sub, run: 'greet sub'}]
+  - name: way
+    ways:
+      - {name: only, run: 'greet sub'}
+      - {name: other, manual: 'by hand'}
   - {name: bg, background: true, dir: `+dir+`, run: 'greet bg > out; sleep 5'}
   - {name: wait, run: 'sleep 0.3'}
 `)

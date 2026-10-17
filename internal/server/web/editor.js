@@ -113,7 +113,7 @@ function cleanDoc(doc) {
       const out = {};
       for (const [k, v] of Object.entries(o)) {
         const c = clean(v);
-        if (c === "" || c === false || c === 0 || c == null || (Array.isArray(c) && !c.length && k !== "steps") || (typeof c === "object" && !Array.isArray(c) && !Object.keys(c).length)) continue;
+        if (c === "" || c === false || c === 0 || c == null || (Array.isArray(c) && !c.length && k !== "steps") || (typeof c === "object" && !Array.isArray(c) && !Object.keys(c).length && k !== "maintenance_window")) continue;
         out[k] = c;
       }
       return out;
@@ -176,54 +176,87 @@ function readField(el) {
 
 const hasAny = (o, keys) => keys.some((k) => { const v = o[k]; return v !== undefined && v !== "" && !(Array.isArray(v) && !v.length) && !(v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length); });
 
+const WAY_KINDS = [["run", "Scripted"], ["manual", "Manual"], ["checks", "Checks"]];
+const wayKind = (w) => (w.manual !== undefined && w.run === undefined ? "manual" : w.checks ? "checks" : "run");
+
 function kindOf(s) {
-  return s.manual !== undefined && s.run === undefined ? "manual" : s.checks ? "checks" : s.alternatives ? "alternatives" : "run";
+  if (s.ways) return "ways";
+  return wayKind(s);
 }
 
-// stepLeft is the main body of a step: its command, instructions, checks
-// or alternatives.
-function stepLeft(s, i) {
-  const kind = kindOf(s);
-  const P = `steps.${i}`;
-  const seg = `<div class="seg kind-seg">${[["run", "Command"], ["manual", "Manual"], ["checks", "Checks"], ["alternatives", "Alternatives"]].map(([k, l]) =>
-    `<button data-act="kind" data-kind="${k}" data-i="${i}" class="${kind === k ? "on" : ""}">${l}</button>`).join("")}${helpIcon(H.step.kind)}</div>`;
-  let body = "";
-  if (kind === "run") body = `<div class="flabel">Command${helpIcon(H.step.run)}</div>${control(`${P}.run`, "code", s.run)}`;
-  if (kind === "manual") body = `<div class="flabel">Instructions${helpIcon(H.step.manual)}</div>${control(`${P}.manual`, "code", s.manual)}`;
-  if (kind === "checks") {
-    body = `<div class="flabel">Checks${helpIcon(H.step.checks)}</div>${(s.checks || []).map((c, j) => `
+// hasKind: the step (or one of its ways) is a script, manual or checks.
+const hasKind = (s, k) => (s.ways ? s.ways.some((w) => wayKind(w) === k) : wayKind(s) === k);
+
+// wayBody edits a script, instructions or checks; P is the path of the step
+// (one way) or of one of its ways (w is its index).
+function wayBody(o, P, kind, i, w) {
+  const wa = w === undefined ? "" : ` data-w="${w}"`;
+  if (kind === "run") return control(`${P}.run`, "code", o.run, w === undefined ? {} : { rows: 5 });
+  if (kind === "manual") return control(`${P}.manual`, "code", o.manual, w === undefined ? {} : { rows: 4 });
+  return `${(o.checks || []).map((c, j) => `
       <div class="sub-card">
         <div class="row">${control(`${P}.checks.${j}.name`, "text", c.name, { placeholder: "what it confirms" })}${helpIcon(H.check.name)}
-          <button class="icon-btn danger" data-act="del-check" data-i="${i}" data-j="${j}" title="Remove check">✕</button></div>
+          <button class="icon-btn danger" data-act="del-check" data-i="${i}" data-j="${j}"${wa} title="Remove check">✕</button></div>
         ${control(`${P}.checks.${j}.run`, "code", c.run, { rows: 3, placeholder: "command that exits 0 when it passes" })}
-      </div>`).join("")}<button data-act="add-check" data-i="${i}">+ Add check</button>`;
+      </div>`).join("")}<button data-act="add-check" data-i="${i}"${wa}>+ Add check</button>`;
+}
+
+// stepLeft is the main body of a step: its script, instructions or checks,
+// or its ways when there are several.
+function stepLeft(s, i) {
+  const P = `steps.${i}`;
+  if (!s.ways) {
+    const kind = kindOf(s);
+    const seg = `<div class="seg kind-seg">${WAY_KINDS.map(([k, l]) =>
+      `<button data-act="kind" data-kind="${k}" data-i="${i}" class="${kind === k ? "on" : ""}">${l}</button>`).join("")}${helpIcon(H.step.kind)}</div>`;
+    const label = { run: ["Script", H.step.run], manual: ["Instructions", H.step.manual], checks: ["Checks", H.step.checks] }[kind];
+    return `${seg}<div class="flabel">${label[0]}${helpIcon(label[1])}</div>${wayBody(s, P, kind, i)}
+      <div class="row add-way-row"><button data-act="add-way" data-i="${i}">+ Add another way</button>${helpIcon(H.step.ways)}</div>`;
   }
-  if (kind === "alternatives") {
-    body = `<div class="flabel">Alternatives${helpIcon(H.step.alternatives)}</div>${(s.alternatives || []).map((a, j) => {
-      const A = `${P}.alternatives.${j}`;
-      const withSteps = !!a.steps;
-      return `<div class="sub-card">
-        <div class="row">${control(`${A}.name`, "text", a.name, { placeholder: "name" })}
-          <button class="icon-btn danger" data-act="del-alt" data-i="${i}" data-j="${j}" title="Remove alternative">✕</button></div>
-        <div class="fgroup-rows">${row("Only when", H.alternative.when, control(`${A}.when`, "text", a.when, { placeholder: "optional, for unattended runs" }))}</div>
-        <div class="seg small-seg"><button data-act="alt-kind" data-i="${i}" data-j="${j}" data-kind="run" class="${withSteps ? "" : "on"}">Command</button><button data-act="alt-kind" data-i="${i}" data-j="${j}" data-kind="steps" class="${withSteps ? "on" : ""}">Steps</button>${helpIcon(H.alternative.steps)}</div>
-        ${withSteps ? `${(a.steps || []).map((st, k) => {
-          const S = `${A}.steps.${k}`;
-          const manual = st.manual !== undefined && st.run === undefined;
-          return `<div class="mini-step">
-            <div class="row"><span class="n">${k + 1}</span>${control(`${S}.name`, "text", st.name, { placeholder: "step name" })}
-              <select data-act-change="sub-kind" data-i="${i}" data-j="${j}" data-k="${k}"><option value="run" ${manual ? "" : "selected"}>command</option><option value="manual" ${manual ? "selected" : ""}>manual</option></select>
-              <label class="small">${control(`${S}.confirm`, "bool", st.confirm)} confirm</label>
-              <label class="small">${control(`${S}.tty`, "bool", st.tty)} terminal</label>
-              <button class="icon-btn danger" data-act="del-sub" data-i="${i}" data-j="${j}" data-k="${k}" title="Remove">✕</button></div>
-            ${control(`${S}.${manual ? "manual" : "run"}`, "code", manual ? st.manual : st.run, { rows: 2 })}
-          </div>`;
-        }).join("")}<button data-act="add-sub" data-i="${i}" data-j="${j}">+ Add step</button>`
-        : `${control(`${A}.run`, "code", a.run, { rows: 4 })}<label class="small">${control(`${A}.tty`, "bool", a.tty)} needs a terminal${helpIcon(H.alternative.tty)}</label>`}
+  const pref = Math.max(0, s.ways.findIndex((w) => w.preferred));
+  return `<div class="row ways-head"><span class="flabel">Ways${helpIcon(H.step.ways)}</span><span class="spacer"></span>
+      <label class="check">${control(`${P}.choose`, "bool", s.choose)}<span>Ask which way each time</span>${helpIcon(H.step.choose)}</label></div>
+    ${s.ways.map((w, j) => {
+      const W = `${P}.ways.${j}`, k = wayKind(w);
+      return `<div class="sub-card way-card ${j === pref ? "preferred" : ""}">
+        <div class="row">${control(`${W}.name`, "text", w.name, { placeholder: "name, e.g. Scripted" })}
+          <select data-way-kind data-i="${i}" data-j="${j}">${WAY_KINDS.map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+          <label class="check" title="${esc(H.way.preferred)}"><input type="radio" name="pref-${i}" data-pref data-i="${i}" data-j="${j}" ${j === pref ? "checked" : ""}><span>preferred</span></label>
+          ${k === "run" ? `<label class="check">${control(`${W}.tty`, "bool", w.tty)}<span>terminal</span></label>` : ""}
+          <button class="icon-btn danger" data-act="del-way" data-i="${i}" data-j="${j}" title="Remove this way">✕</button></div>
+        ${wayBody(w, W, k, i, j)}
       </div>`;
-    }).join("")}<button data-act="add-alt" data-i="${i}">+ Add alternative</button>`;
-  }
-  return seg + body;
+    }).join("")}
+    <button data-act="add-way" data-i="${i}">+ Add a way</button>`;
+}
+
+// uniqueWayName returns base, or base 2, base 3… not used by the step's ways.
+function uniqueWayName(ways, base) {
+  let n = 1, name = base;
+  while (ways.some((w) => w.name === name)) name = `${base} ${++n}`;
+  return name;
+}
+
+// sectionPick is a step's section dropdown. "(none)" is only offered before
+// any section starts: a step without one belongs to the section above it.
+function sectionPick(d, i) {
+  const s = d.steps[i];
+  const none = i === 0 || !d.steps[i - 1].section;
+  return `<select data-sec-pick data-i="${i}">
+    ${none || !s.section ? `<option value="" ${s.section ? "" : "selected"}>(none)</option>` : ""}
+    ${sectionNames(d).map((n) => `<option ${n === s.section ? "selected" : ""}>${esc(n)}</option>`).join("")}
+    <option value="__new__">+ New section…</option></select>`;
+}
+
+// plannedHint: what a step's planned time is without its own (from its section).
+function plannedHint(d, i) {
+  const p = plannedOffset(d.steps.map((s, k) => (k === i ? { ...s, window_offset: "" } : s)), d.sections, i);
+  return p == null ? "e.g. -30m, 0, +12m" : `T${fmtOffset(p)} (from the section)`;
+}
+
+// sectionNames: the sections steps use, in order, then any only described.
+function sectionNames(d) {
+  return [...new Set([...d.steps.map((s) => s.section), ...(d.sections || []).map((x) => x.name)].filter(Boolean))];
 }
 
 // Less-used step fields, under Advanced. [key, label, kind, help, applies(step kind), group]
@@ -233,16 +266,16 @@ const MORE_FIELDS = [
   ["tty", "Needs a terminal", "bool", H.step.tty, (k) => k === "run", "Behaviour"],
   ["background", "Run in background", "bool", H.step.background, (k) => k === "run", "Behaviour"],
   ["when", "Only when", "text", H.step.when, () => true, "Conditions & timing"],
-  ["timeout", "Timeout", "text", H.step.timeout, (k) => k !== "manual", "Conditions & timing"],
-  ["retries", "Retries", "int", H.step.retries, (k) => k === "run", "Conditions & timing"],
-  ["retry_delay", "Retry delay", "text", H.step.retry_delay, (k) => k === "run", "Conditions & timing"],
-  ["repeat", "Repeat until all pass", "repeat", H.step.repeat_every, (k) => k === "checks", "Conditions & timing"],
+  ["timeout", "Timeout", "text", H.step.timeout, (k, s) => hasKind(s, "run") || hasKind(s, "checks"), "Conditions & timing"],
+  ["retries", "Retries", "int", H.step.retries, (k, s) => hasKind(s, "run"), "Conditions & timing"],
+  ["retry_delay", "Retry delay", "text", H.step.retry_delay, (k, s) => hasKind(s, "run"), "Conditions & timing"],
+  ["repeat", "Repeat until all pass", "repeat", H.step.repeat_every, (k, s) => hasKind(s, "checks"), "Conditions & timing"],
   ["dir", "Directory", "text", H.step.dir, (k) => k !== "manual", "Where it runs"],
   ["shell", "Shell", "text", H.step.step_shell, (k) => k !== "manual", "Where it runs"],
   ["env", "Environment", "kv", H.step.step_env, (k) => k !== "manual", "Where it runs"],
-  ["outputs", "Publishes", "list", H.step.outputs, (k) => k === "run" || k === "alternatives", "Publishes to later steps"],
-  ["secret_outputs", "Publishes (secret)", "list", H.step.secret_outputs, (k) => k === "run" || k === "alternatives", "Publishes to later steps"],
-  ["capture", "Capture stdout as", "text", H.step.capture, (k) => k === "run", "Publishes to later steps"],
+  ["outputs", "Publishes", "list", H.step.outputs, (k, s) => hasKind(s, "run"), "Publishes to later steps"],
+  ["secret_outputs", "Publishes (secret)", "list", H.step.secret_outputs, (k, s) => hasKind(s, "run"), "Publishes to later steps"],
+  ["capture", "Capture stdout as", "text", H.step.capture, (k, s) => hasKind(s, "run"), "Publishes to later steps"],
   ["id", "ID", "text", H.step.id, () => true, "Other"],
   ["unattended", "When unattended", "select", H.step.unattended, () => true, "Other"],
 ];
@@ -274,7 +307,7 @@ function detailsPane(ed, d, s, i) {
     const bools = fs.filter((f) => f[2] === "bool");
     return (bools.length ? checkRow(bools.map(box)) : "") + fs.filter((f) => f[2] !== "bool").map(fieldRow).join("");
   };
-  const all = MORE_FIELDS.filter(([, , , , applies]) => applies(kind));
+  const all = MORE_FIELDS.filter(([, , , , applies]) => applies(kind, s));
   const set = all.filter(([k]) => isSet(s[k]));
   const unset = all.filter(([k]) => !isSet(s[k]));
   const open = ed.adv.has(i);
@@ -285,7 +318,9 @@ function detailsPane(ed, d, s, i) {
     ${row("Name", H.step.name, control(`${P}.name`, "text", s.name))}
     ${row("What we're doing", H.step.description, control(`${P}.description`, "area", s.description, { placeholder: "what this step does, and why" }))}
     ${row("By the end", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "how things should stand when it's done" }))}
-    ${row("Section", H.step.section, control(`${P}.section`, "text", s.section))}
+    ${row("Section", H.step.section, sectionPick(d, i))}
+    ${d.maintenance_window ? row("Window", H.step.window, control(`${P}.window`, "select", s.window, { choices: [["", "—"], ["open", "opens here (production goes down)"], ["close", "closes here (production is back)"]] })) : ""}
+    ${d.maintenance_window ? row("Planned at", H.step.window_offset, `<span class="with-x">${control(`${P}.window_offset`, "text", s.window_offset, { placeholder: plannedHint(d, i) })}</span>`) : ""}
     ${row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner))}
     ${checkRow([["Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)], ["Dangerous", H.step.dangerous, control(`${P}.dangerous`, "bool", s.dangerous)], ...set.filter((f) => f[2] === "bool").map(box)])}
     ${s.background ? row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })) : ""}
@@ -384,15 +419,16 @@ function testValuesCard(ed, d) {
 }
 
 function sectionsGroup(d) {
-  const names = [...new Set(d.steps.map((s) => s.section).filter(Boolean))];
+  const names = sectionNames(d);
   if (!names.length) return "";
   const info = (n) => (d.sections || []).find((x) => x.name === n) || {};
   return group("Sections", names.map((n) => `<div class="sec-edit" style="grid-column: 1 / -1">
-      <div class="flabel">${esc(n)}</div>
       <div class="fgroup-rows">
+        ${row("Name", H.section.name, `<input data-sec-rename="${esc(n)}" value="${esc(n)}">`)}
         ${row("What it does", H.section.description, `<textarea rows="2" data-sec="${esc(n)}" data-sec-field="description">${esc(info(n).description || "")}</textarea>`)}
         ${row("By the end", H.section.expect, `<textarea rows="2" data-sec="${esc(n)}" data-sec-field="expect">${esc(info(n).expect || "")}</textarea>`)}
-      </div></div>`), { collapsible: true, id: "rb-sections", open: (d.sections || []).length > 0 });
+        ${d.maintenance_window ? row("Planned at", H.section.window_offset, `<input data-sec="${esc(n)}" data-sec-field="window_offset" value="${esc(info(n).window_offset || "")}" placeholder="e.g. -30m, 0, +20m">`) : ""}
+      </div></div>`), { collapsible: true, id: "rb-sections", open: true });
 }
 
 function renderStruct(ed) {
@@ -413,6 +449,12 @@ function renderStruct(ed) {
         ${row("Tags", H.runbook.tags, control("tags", "list", d.tags, { placeholder: "ops, deploy" }))}
         ${row("Libraries", H.runbook.libraries, control("libraries", "list", d.libraries, { placeholder: "aurora-helpers" }))}
       </div>
+      ${group("Maintenance window", [
+        `<p class="muted small" style="grid-column: 1 / -1">${esc(H.runbook.maintenance_window)}</p>`,
+        row("Target length", H.runbook.window_target, control("maintenance_window.target", "text", d.maintenance_window?.target, { placeholder: "e.g. 45m" })),
+        row("Description", H.runbook.window_description, control("maintenance_window.description", "text", d.maintenance_window?.description)),
+        d.maintenance_window ? "" : `<button data-act="add-window" style="grid-column: 1 / -1; justify-self: start">Use a maintenance window</button>`,
+      ], { collapsible: true, id: "rb-window", open: !!d.maintenance_window })}
       ${sectionsGroup(d)}
       ${group("Shell, environment & masking", [
         row("Shell", H.runbook.shell, control("shell", "text", d.shell, { placeholder: "sh" })),
@@ -448,9 +490,9 @@ function renderStruct(ed) {
     </div>
     ${testValuesCard(ed, d)}
     <h3>Steps${helpIcon(H.runbook.steps)}</h3>
-    <ol class="steps struct-steps">${d.steps.map((s, i) => `${sectionHeading(d.steps, i, d.sections)}<li class="step">
+    <ol class="steps struct-steps">${d.steps.map((s, i) => `${sectionHeading(d.steps, i, d.sections)}<li class="step ${inWindow(d.steps, i) ? "in-window" : ""}">
         <div class="step-head" data-act="open" data-i="${i}">
-          <span class="n">${i + 1}</span><span class="name">${esc(s.name || "(unnamed)")} ${stepBadges(s)}</span>
+          <span class="n">${i + 1}</span><span class="name">${esc(s.name || "(unnamed)")} ${stepBadges(s)} ${plannedBadge(d.steps, d.sections, i)}</span>
           <span class="spacer"></span>
           <button class="icon-btn" data-act="run-this" data-i="${i}" title="Run just this step with the test values">▶ Run this</button>
           <button class="icon-btn" data-act="up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
@@ -514,8 +556,39 @@ function renderStruct(ed) {
       let sec = d.sections.find((x) => x.name === t.dataset.sec);
       if (!sec) d.sections.push((sec = { name: t.dataset.sec }));
       sec[t.dataset.secField] = t.value || undefined;
-      d.sections = d.sections.filter((x) => x.description || x.expect);
+      d.sections = d.sections.filter((x) => x.description || x.expect || x.window_offset);
       return;
+    }
+    if (t.matches("[data-sec-rename]") && e.type === "change") {
+      const old = t.dataset.secRename, nw = t.value.trim();
+      if (!nw || nw === old) return renderStruct(ed);
+      if (sectionNames(d).includes(nw) && !confirm(`There's already a section called “${nw}”. Merge “${old}” into it?`)) return renderStruct(ed);
+      // Merging into a section that's already described keeps that description.
+      const merge = (d.sections || []).some((x) => x.name === nw);
+      d.steps.forEach((st) => { if (st.section === old) st.section = nw; });
+      d.sections = (d.sections || []).filter((x) => !(merge && x.name === old));
+      for (const sec of d.sections) if (sec.name === old) sec.name = nw;
+      return renderStruct(ed);
+    }
+    if (t.matches("[data-sec-pick]") && e.type === "change") {
+      let v = t.value;
+      if (v === "__new__") v = (prompt("New section name:") || "").trim();
+      if (v === "__new__" || (t.value === "__new__" && !v)) return renderStruct(ed);
+      d.steps[+t.dataset.i].section = v || undefined;
+      return renderStruct(ed);
+    }
+    if (t.matches("[data-way-kind]") && e.type === "change") {
+      const w = d.steps[+t.dataset.i].ways[+t.dataset.j];
+      const text = w.run ?? w.manual ?? w.checks?.[0]?.run ?? "";
+      delete w.run; delete w.manual; delete w.checks;
+      if (t.value === "run") w.run = text || "echo TODO";
+      if (t.value === "manual") { w.manual = text || "TODO: how to do it by hand"; delete w.tty; }
+      if (t.value === "checks") { w.checks = [{ name: "check 1", run: text || "true" }]; delete w.tty; }
+      return renderStruct(ed);
+    }
+    if (t.matches("[data-pref]") && e.type === "change") {
+      d.steps[+t.dataset.i].ways.forEach((w, k) => { if (k === +t.dataset.j) w.preferred = true; else delete w.preferred; });
+      return renderStruct(ed);
     }
     const rn = t.closest("[data-fn-rename]");
     if (rn) {
@@ -526,14 +599,6 @@ function renderStruct(ed) {
       }
       return renderStruct(ed);
     }
-    const k = t.closest("[data-act-change]");
-    if (k && e.type === "change") {
-      const sub = d.steps[+k.dataset.i].alternatives[+k.dataset.j].steps[+k.dataset.k];
-      const text = sub.run ?? sub.manual ?? "";
-      delete sub.run; delete sub.manual;
-      sub[k.value] = text;
-      return renderStruct(ed);
-    }
     const el = t.closest("[data-path]");
     if (!el) return;
     setPath(d, el.dataset.path, readField(el));
@@ -541,7 +606,7 @@ function renderStruct(ed) {
     // that's now set (or cleared): it moves above the fold (or back).
     const m = el.dataset.path.match(/^steps\.(\d+)\.([a-z_]+)/);
     const moved = m && MORE_FIELDS.some(([k]) => k === m[2]) && !!el.closest(".adv-rest") === isSet(d.steps[+m[1]][m[2]]);
-    if (e.type === "change" && (moved || /\.(name|section|confirm|dangerous|background)$/.test(el.dataset.path))) {
+    if (e.type === "change" && (moved || /\.(name|section|confirm|dangerous|background|window|window_offset|choose|tty)$|^maintenance_window\./.test(el.dataset.path))) {
       const focus = document.activeElement?.dataset?.path;
       renderStruct(ed);
       if (focus) pane.querySelector(`[data-path="${CSS.escape(focus)}"]`)?.focus();
@@ -584,27 +649,50 @@ function renderStruct(ed) {
         return;
       case "kind": {
         // Carry the text over where it makes sense.
-        const text = s.run ?? s.manual ?? s.checks?.[0]?.run ?? s.alternatives?.[0]?.run ?? "";
-        for (const f of ["run", "manual", "checks", "alternatives", "repeat"]) delete s[f];
+        const text = s.run ?? s.manual ?? s.checks?.[0]?.run ?? "";
+        for (const f of ["run", "manual", "checks", "repeat"]) delete s[f];
         if (b.dataset.kind === "run") s.run = text;
         if (b.dataset.kind === "manual") s.manual = text;
         if (b.dataset.kind === "checks") s.checks = [{ name: "check 1", run: text }];
-        if (b.dataset.kind === "alternatives") s.alternatives = [{ name: "option 1", run: text }, { name: "option 2", run: "" }];
         if (b.dataset.kind !== "run") { delete s.background; delete s.stop_after; delete s.tty; }
         break;
       }
-      case "add-check": (s.checks ||= []).push({ name: `check ${s.checks.length + 1}`, run: "" }); break;
-      case "del-check": s.checks.splice(j, 1); break;
-      case "add-alt": (s.alternatives ||= []).push({ name: `option ${s.alternatives.length + 1}`, run: "" }); break;
-      case "del-alt": s.alternatives.splice(j, 1); break;
-      case "alt-kind": {
-        const a = s.alternatives[j];
-        if (b.dataset.kind === "steps") { a.steps = [{ name: "step 1", run: a.run || "" }]; delete a.run; delete a.tty; }
-        else { a.run = a.steps?.[0]?.run || ""; delete a.steps; }
+      case "add-check":
+      case "del-check": {
+        const o = b.dataset.w !== undefined ? s.ways[+b.dataset.w] : s;
+        if (b.dataset.act === "add-check") (o.checks ||= []).push({ name: `check ${o.checks.length + 1}`, run: "" });
+        else o.checks.splice(j, 1);
         break;
       }
-      case "add-sub": s.alternatives[j].steps.push({ name: `step ${s.alternatives[j].steps.length + 1}`, run: "" }); break;
-      case "del-sub": s.alternatives[j].steps.splice(k, 1); break;
+      case "add-way": {
+        if (!s.ways) {
+          // The step's own script, instructions or checks become its first (preferred) way.
+          const k = kindOf(s);
+          const first = { name: WAY_KINDS.find(([v]) => v === k)[1], preferred: true };
+          if (k === "run") { first.run = s.run ?? ""; if (s.tty) first.tty = true; }
+          if (k === "manual") first.manual = s.manual ?? "";
+          if (k === "checks") first.checks = s.checks;
+          for (const f of ["run", "manual", "checks", "tty", "background", "stop_after"]) delete s[f];
+          s.ways = [first, k === "run" ? { name: "Manual", manual: "TODO: how to do it by hand" } : { name: "Scripted", run: "echo TODO" }];
+        } else {
+          s.ways.push({ name: uniqueWayName(s.ways, "Another way"), run: "echo TODO" });
+        }
+        break;
+      }
+      case "del-way": {
+        s.ways.splice(j, 1);
+        if (s.ways.length === 1) {
+          // One way left: it's just the step's script, instructions or checks again.
+          const w = s.ways[0];
+          delete s.ways; delete s.choose;
+          if (w.run !== undefined) s.run = w.run;
+          if (w.manual !== undefined) s.manual = w.manual;
+          if (w.checks) s.checks = w.checks;
+          if (w.tty) s.tty = true;
+        }
+        break;
+      }
+      case "add-window": d.maintenance_window = { target: "" }; break;
       case "add-step":
         d.steps.push({ name: "New step", run: "echo hello", section: d.steps.at(-1)?.section });
         ed.open.add(d.steps.length - 1);

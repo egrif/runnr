@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -55,6 +53,7 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 	}
 	res.Status, res.Started = StatusRunning, time.Now()
 	x.notify(Event{Kind: EventStepStarted, Step: i, Result: x.result(i)})
+	x.openWindow(i)
 
 	confirmed := false
 	if _, before, _ := x.ctl.Get(i); before && x.canPause() {
@@ -83,6 +82,14 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 		return nil
 	}
 	confirmed = confirmed || checked
+
+	orig, way := step, -1
+	if len(orig.Ways) > 0 {
+		if way, err = x.pickWay(ctx, i, orig, -1); err != nil {
+			return x.fail(i, err)
+		}
+		step = x.useWay(i, orig, way)
+	}
 
 	if step.Background && !x.opts.DryRun {
 		return x.startBackground(ctx, i, step, confirmed)
@@ -121,10 +128,60 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 			x.stepDone(i)
 			return nil
 		}
-		if err := x.onFailure(ctx, i, step, a.out); err != errRetry {
+		err := x.onFailure(ctx, i, orig, a.out)
+		if err == errOtherWay {
+			if way, err = x.pickWay(ctx, i, orig, way); err != nil {
+				return x.fail(i, err)
+			}
+			step, confirmed = x.useWay(i, orig, way), false
+			continue
+		}
+		if err != errRetry {
 			return err
 		}
 	}
+}
+
+// pickWay chooses how to do a step with ways: the preferred one, unless
+// it's set to choose (interactive runs) or a way just failed.
+func (x *executor) pickWay(ctx context.Context, i int, step runbook.Step, failed int) (int, error) {
+	if len(step.Ways) > 1 && (step.Choose || failed >= 0) && x.opts.Interactive && !x.opts.DryRun {
+		if c, ok := x.ui.(Chooser); ok {
+			w, err := c.ChooseWay(ctx, x.View(i), failed)
+			if err == nil && (w < 0 || w >= len(step.Ways)) {
+				err = fmt.Errorf("no way %d", w+1)
+			}
+			return w, err
+		}
+	}
+	if failed >= 0 {
+		return 0, errors.New("no one here to choose another way")
+	}
+	return step.PreferredWay(), nil
+}
+
+// useWay is step i done its way w.
+func (x *executor) useWay(i int, step runbook.Step, w int) runbook.Step {
+	way := step.Ways[w]
+	eff := step.WithWay(way)
+	res := &x.run.Steps[i]
+	res.Kind = stepKind(eff)
+	if len(step.Ways) > 1 {
+		res.Way = way.Name
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "way: " + way.Name})
+	}
+	return eff
+}
+
+// openWindow notes the maintenance window opening as step i starts.
+func (x *executor) openWindow(i int) {
+	w := x.run.Window
+	if w == nil || i != w.OpenStep || !w.Opened.IsZero() || x.opts.DryRun {
+		return
+	}
+	w.Opened = time.Now()
+	x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "🔴 maintenance window open: production is down" + targetNote(w)})
+	x.notify(Event{Kind: EventWindow, Step: i, Run: x.snapshot()})
 }
 
 type outcome int
@@ -144,17 +201,13 @@ type attemptResult struct {
 	hard error  // ends the run (template errors, aborts)
 }
 
-// attempt runs a step's body once, recording into res. It's used for
-// top-level steps and for the steps inside an alternative; events go to
-// step i either way.
+// attempt runs a step's body once, recording into res.
 func (x *executor) attempt(ctx context.Context, i int, step runbook.Step, res *StepResult, confirmed bool) attemptResult {
 	switch step.Kind() {
 	case "manual":
 		return x.attemptManual(ctx, i, step, res, step.Manual)
 	case "checks":
 		return x.attemptChecks(ctx, i, step, res, confirmed)
-	case "alternatives":
-		return x.attemptAlternatives(ctx, i, step, res, confirmed)
 	}
 	return x.attemptRun(ctx, i, step, res, confirmed)
 }
@@ -322,126 +375,6 @@ func trimOutput(s string) string {
 		return "…[truncated]\n" + s[len(s)-maxOutput:]
 	}
 	return s
-}
-
-// ---------- alternatives ----------
-
-func (x *executor) attemptAlternatives(ctx context.Context, i int, step runbook.Step, res *StepResult, confirmed bool) attemptResult {
-	if x.opts.DryRun {
-		return attemptResult{kind: outSkipped, note: "dry run"}
-	}
-	chosen := slices.IndexFunc(step.Alternatives, func(a runbook.Alternative) bool { return a.Name == res.Alternative })
-	if chosen < 0 {
-		var err error
-		if chosen, err = x.chooseAlternative(ctx, i, step); err != nil {
-			return attemptResult{hard: err}
-		}
-		if chosen < 0 {
-			return attemptResult{kind: outFailed, err: "no alternative applies"}
-		}
-		res.Alternative = step.Alternatives[chosen].Name
-		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "using: " + res.Alternative})
-	}
-	alt := step.Alternatives[chosen]
-
-	if alt.Run != "" {
-		s := step
-		s.Alternatives, s.Run, s.TTY = nil, alt.Run, alt.TTY
-		return x.attemptRun(ctx, i, s, res, confirmed)
-	}
-
-	// A sequence of steps. A retry resumes at the one that failed.
-	if len(res.Sub) != len(alt.Steps) {
-		res.Sub = make([]StepResult, len(alt.Steps))
-		for j, s := range alt.Steps {
-			res.Sub[j] = StepResult{Index: j, Name: s.Name, Kind: stepKind(s), Status: StatusPending}
-		}
-	}
-	if ok, err := x.confirm(ctx, i, step, x.View(i).Command, confirmed); err != nil {
-		return attemptResult{hard: err}
-	} else if !ok {
-		return attemptResult{kind: outSkipped, note: "declined"}
-	}
-	for j, s := range alt.Steps {
-		s = inherit(step, s)
-		sr := &res.Sub[j]
-		if slices.Contains([]Status{StatusSucceeded, StatusSkipped, StatusForced}, sr.Status) {
-			continue
-		}
-		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: fmt.Sprintf("── %d/%d %s", j+1, len(alt.Steps), s.Name)})
-		if s.When != "" {
-			cond, err := x.render(s.When)
-			if err != nil {
-				return attemptResult{hard: fmt.Errorf("%s: when: %w", s.Name, err)}
-			}
-			if !runbook.Truthy(cond) {
-				sr.Status, sr.Note = StatusSkipped, "condition false"
-				continue
-			}
-		}
-		sr.Status, sr.Started, sr.Error = StatusRunning, time.Now(), ""
-		x.notify(Event{Kind: EventStepProgress, Step: i, Result: x.result(i)})
-		a := x.attempt(ctx, i, s, sr, false)
-		sr.Ended = time.Now()
-		if a.hard != nil {
-			sr.Status = StatusFailed
-			return a
-		}
-		switch a.kind {
-		case outSkipped:
-			sr.Status, sr.Note = StatusSkipped, a.note
-		case outDone:
-			x.apply(s, a.out)
-			sr.Status, sr.Note = StatusSucceeded, a.note
-		default:
-			sr.Status, sr.Error = StatusFailed, x.mask(a.err)
-			if !s.ContinueOnError {
-				x.notify(Event{Kind: EventStepProgress, Step: i, Result: x.result(i)})
-				return attemptResult{kind: outFailed, out: a.out, err: fmt.Sprintf("%d. %s failed: %s", j+1, s.Name, a.err)}
-			}
-		}
-		x.notify(Event{Kind: EventStepProgress, Step: i, Result: x.result(i)})
-		x.save()
-	}
-	return attemptResult{kind: outDone, note: "used: " + alt.Name}
-}
-
-// inherit gives a step inside an alternative its parent's dir, shell and
-// env, where it doesn't set its own.
-func inherit(parent, s runbook.Step) runbook.Step {
-	if s.Dir == "" {
-		s.Dir = parent.Dir
-	}
-	if s.Shell == "" {
-		s.Shell = parent.Shell
-	}
-	if len(parent.Env) > 0 {
-		env := maps.Clone(parent.Env)
-		maps.Copy(env, s.Env)
-		s.Env = env
-	}
-	return s
-}
-
-// chooseAlternative asks the operator, or (unattended) takes the first
-// alternative whose when holds. -1 means none applies.
-func (x *executor) chooseAlternative(ctx context.Context, i int, step runbook.Step) (int, error) {
-	if c, ok := x.ui.(Chooser); ok && x.opts.Interactive {
-		return c.ChooseAlternative(ctx, x.View(i))
-	}
-	for j, a := range step.Alternatives {
-		if a.When == "" {
-			return j, nil
-		}
-		cond, err := x.render(a.When)
-		if err != nil {
-			return -1, fmt.Errorf("alternative %q: when: %w", a.Name, err)
-		}
-		if runbook.Truthy(cond) {
-			return j, nil
-		}
-	}
-	return -1, nil
 }
 
 // ---------- background ----------

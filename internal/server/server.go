@@ -342,7 +342,10 @@ type startReq struct {
 	Vars       map[string]string `json:"vars"`
 	Unattended bool              `json:"unattended"`
 	Yes        bool              `json:"yes"`
-	DryRun     bool              `json:"dry_run"`
+	// UsePreferred acknowledges that steps set to ask which way will use
+	// their preferred way in an unattended run (required if there are any).
+	UsePreferred bool `json:"use_preferred"`
+	DryRun       bool `json:"dry_run"`
 	// From starts at a later step (id, 1-based number or name).
 	From string `json:"from"`
 	// Wait blocks until the run finishes and returns its record.
@@ -358,6 +361,15 @@ type startReq struct {
 	// Previous is a run ID to compare against ("last time"); defaults to the
 	// resumed run, else the runbook's latest run.
 	Previous string `json:"previous"`
+}
+
+// stepList shows step indexes as 1-based numbers.
+func stepList(idx []int) string {
+	var s []string
+	for _, i := range idx {
+		s = append(s, strconv.Itoa(i+1))
+	}
+	return strings.Join(s, ", ")
 }
 
 // toControls converts 1-based API step lists.
@@ -486,6 +498,12 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	if req.Wait && !req.Unattended {
 		writeErr(w, errors.New("wait requires unattended (nobody could answer prompts)"))
 		return
+	}
+	if req.Unattended && !req.UsePreferred && !req.test {
+		if ch := rb.ChoosingSteps(cv.Skip); len(ch) > 0 {
+			writeErr(w, fmt.Errorf("steps %s normally ask which way to do them; unattended, they'll use their preferred way. Send use_preferred: true to go ahead", stepList(ch)))
+			return
+		}
 	}
 	id := engine.NewRunID()
 	ctx, cancel := context.WithCancel(context.Background())

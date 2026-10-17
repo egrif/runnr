@@ -21,6 +21,7 @@ import (
 
 // Terminal is an interactive engine.Interactor on stdin/stdout.
 type Terminal struct {
+	window  *engine.WindowRecord // the maintenance window, once it opens
 	out     io.Writer
 	color   bool
 	total   int
@@ -96,10 +97,16 @@ func (t *Terminal) Notify(e engine.Event) {
 	case engine.EventStepStarted:
 		fmt.Fprintln(t.out, t.header(e.Step, e.Result, false))
 		if t.session != nil {
-			if d := strings.TrimSpace(t.session.View(e.Step).Description); d != "" {
+			v := t.session.View(e.Step)
+			if w := t.windowLine(v); w != "" {
+				fmt.Fprintln(t.out, w)
+			}
+			if d := strings.TrimSpace(v.Description); d != "" {
 				fmt.Fprintln(t.out, t.c("2", "  "+strings.ReplaceAll(d, "\n", "\n  ")))
 			}
 		}
+	case engine.EventWindow:
+		t.window = e.Run.Window
 	case engine.EventOutput:
 		if t.quiet {
 			return
@@ -138,6 +145,13 @@ func (t *Terminal) Notify(e engine.Event) {
 			msg += ": " + e.Run.Error
 		}
 		fmt.Fprintln(t.out, t.c(st.code+";1", msg))
+		if w := e.Run.Window; w != nil && !w.Opened.IsZero() {
+			if w.Closed.IsZero() {
+				fmt.Fprintln(t.out, t.c("31;1", fmt.Sprintf("🔴 The maintenance window is still OPEN (%s so far): production may still be down.", time.Since(w.Opened).Round(time.Second))))
+			} else {
+				fmt.Fprintln(t.out, t.c("1", fmt.Sprintf("Maintenance window: %s%s", w.Closed.Sub(w.Opened).Round(time.Second), targetVs(w, w.Closed.Sub(w.Opened)))))
+			}
+		}
 	}
 }
 
@@ -348,6 +362,51 @@ func (t *Terminal) changeStep(ctx context.Context, idx int) (changed bool, err e
 	}
 }
 
+// windowLine shows where a step stands against the maintenance window:
+// its planned time and, while the window is open, the actual time.
+func (t *Terminal) windowLine(v engine.StepView) string {
+	w := t.window
+	var parts []string
+	if v.Window == runbook.WindowOpen {
+		parts = append(parts, "opens the maintenance window")
+	}
+	if v.Window == runbook.WindowClose {
+		parts = append(parts, "closes the maintenance window")
+	}
+	if v.OffsetSec != nil {
+		p := "planned T" + v.Offset
+		if w != nil && !w.Opened.IsZero() && w.Closed.IsZero() {
+			now := time.Since(w.Opened)
+			drift := now - time.Duration(*v.OffsetSec)*time.Second
+			p += ", now T" + engine.FormatOffset(now.Round(time.Second))
+			if drift > time.Minute {
+				p += fmt.Sprintf(" (%s behind)", strings.TrimPrefix(engine.FormatOffset(drift.Round(time.Minute)), "+"))
+			} else if drift < -time.Minute {
+				p += fmt.Sprintf(" (%s ahead)", strings.TrimPrefix(engine.FormatOffset((-drift).Round(time.Minute)), "+"))
+			}
+		}
+		parts = append(parts, p)
+	} else if w != nil && !w.Opened.IsZero() && w.Closed.IsZero() {
+		parts = append(parts, "window open "+time.Since(w.Opened).Round(time.Second).String()+targetVs(w, time.Since(w.Opened)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return t.c("35", "  ⏱ "+strings.Join(parts, " · "))
+}
+
+// targetVs compares a window length with its target.
+func targetVs(w *engine.WindowRecord, d time.Duration) string {
+	target, err := time.ParseDuration(w.Target)
+	if err != nil {
+		return ""
+	}
+	if d > target {
+		return fmt.Sprintf(" (target %s, %s over)", w.Target, (d - target).Round(time.Second))
+	}
+	return fmt.Sprintf(" (target %s)", w.Target)
+}
+
 // printView shows a step as it would run now.
 func (t *Terminal) printView(v engine.StepView) {
 	fmt.Fprintln(t.out, t.viewText(v, "  "))
@@ -359,7 +418,8 @@ func (t *Terminal) viewText(v engine.StepView, in string) string {
 	for _, f := range []struct {
 		on   bool
 		name string
-	}{{true, v.Kind}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.Dangerous, "⚠ dangerous"}, {v.StopAfter != "", "until " + v.StopAfter}, {v.When != "", "when " + v.When},
+	}{{true, v.Kind}, {v.Choose, "asks which way"}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.Dangerous, "⚠ dangerous"}, {v.StopAfter != "", "until " + v.StopAfter}, {v.When != "", "when " + v.When},
+		{v.Window != "", "window " + v.Window + "s"}, {v.Offset != "", "planned T" + v.Offset},
 		{v.Timeout != "", "timeout " + v.Timeout}, {v.Retries > 0, fmt.Sprintf("retries %d", v.Retries)}} {
 		if f.on {
 			flags = append(flags, f.name)
@@ -761,9 +821,13 @@ func (t *Terminal) Manual(ctx context.Context, idx int, _ runbook.Step, text str
 	return "", "", engine.ErrAborted
 }
 
-func (t *Terminal) OnFailure(ctx context.Context, idx int, _ runbook.Step, _ engine.StepResult) (engine.FailureAction, string, error) {
+func (t *Terminal) OnFailure(ctx context.Context, idx int, step runbook.Step, _ engine.StepResult) (engine.FailureAction, string, error) {
 	opts := map[string]string{"r": "r", "retry": "r", "s": "s", "skip": "s", "f": "f", "force": "f", "a": "a", "abort": "a"}
 	prompt := "Step failed. [r]etry / [s]kip / [f]orce success / [a]bort"
+	if len(step.Ways) > 1 {
+		prompt = "Step failed. [r]etry / [o]ther way / [s]kip / [f]orce success / [a]bort"
+		opts["o"], opts["other"] = "o", "o"
+	}
 	a, err := t.stepPrompt(ctx, idx, prompt, opts, "a")
 	if err != nil {
 		return "", "", err
@@ -780,5 +844,5 @@ func (t *Terminal) OnFailure(ctx context.Context, idx int, _ runbook.Step, _ eng
 			}
 		}
 	}
-	return map[string]engine.FailureAction{"r": engine.FailRetry, "s": engine.FailSkip, "a": engine.FailAbort}[a], "", nil
+	return map[string]engine.FailureAction{"r": engine.FailRetry, "o": engine.FailOtherWay, "s": engine.FailSkip, "a": engine.FailAbort}[a], "", nil
 }

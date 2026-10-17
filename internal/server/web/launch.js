@@ -126,6 +126,13 @@ async function viewLaunch(el, name, mode, runId) {
       step_mode: form.stepmode.checked, skip: nums((i) => !st.include[i]),
       pause_before: nums((i) => st.before.has(i)), pause_after: nums((i) => st.after.has(i)),
     };
+    if (body.unattended) {
+      const ch = rb.steps.map((s, i) => i).filter((i) => st.include[i] && rb.steps[i].choose && (rb.steps[i].ways || []).length > 1);
+      if (ch.length) {
+        if (!confirm(`Steps ${ch.map((i) => `${i + 1} (${rb.steps[i].name})`).join(", ")} normally ask which way to do them. Unattended, they'll use their preferred way. Start anyway?`)) return;
+        body.use_preferred = true;
+      }
+    }
     try {
       const { id } = mode === "resume"
         ? await api("POST", `/api/runs/${enc(runId)}/resume`, body)
@@ -143,7 +150,7 @@ function toggle(set, i) { set.has(i) ? set.delete(i) : set.add(i); }
 function stepKindName(s) {
   if (s.background || s.kind === "background") return "background";
   if (s.checks?.length || s.kind === "checks") return "checks";
-  if (s.alternatives?.length || s.kind === "alternatives") return "alternatives";
+  if ((s.ways || []).length > 1 || s.kind === "ways") return `${(s.ways || []).length || "several"} ways`;
   if (s.manual || s.kind === "manual") return "manual";
   if (s.tty || s.kind === "tty") return "terminal";
   return "command";
@@ -156,10 +163,56 @@ function stepBadges(s) {
     s.repeat && `<span class="badge-k" title="Re-runs the checks until they all pass">repeats</span>`,
     s.confirm && `<span class="badge-k warn" title="Asks before running, even without pauses">confirms on its own</span>`,
     s.dangerous && `<span class="badge-k fail" title="Out of sequence, it needs the step number typed to run">⚠ dangerous</span>`,
+    s.choose && `<span class="badge-k" title="Asks which way each time (unattended: the preferred one)">asks which way</span>`,
+    s.window && `<span class="badge-k fail" title="${s.window === "open" ? "Production goes down when this step starts" : "Production is back when this step finishes"}">window ${s.window}s</span>`,
     s.always && `<span class="badge-k" title="Runs even when starting later or resuming">always</span>`,
     s.when && `<span class="badge-k" title="${esc(s.when)}">conditional</span>`,
     s.continue_on_error && `<span class="badge-k">continue on error</span>`,
   ].filter(Boolean).join(" ");
+}
+
+// ---------- maintenance window ----------
+
+// parseOffset reads a window offset like -30m, +1h15m, 0 (seconds, or null).
+function parseOffset(v) {
+  if (v == null || v === "") return null;
+  const t = String(v).trim().replace(/^\+/, "");
+  if (t === "0") return 0;
+  const m = t.match(/^(-)?((?:\d+(?:\.\d+)?(?:h|m|s))+)$/);
+  if (!m) return null;
+  let sec = 0;
+  for (const [, n, u] of m[2].matchAll(/(\d+(?:\.\d+)?)(h|m|s)/g)) sec += +n * { h: 3600, m: 60, s: 1 }[u];
+  return m[1] ? -sec : sec;
+}
+
+// fmtOffset shows seconds as T-style offsets: -30m, +0, +1h15m.
+function fmtOffset(sec, sign = true) {
+  let s = Math.round(Math.abs(sec));
+  const neg = sec < 0 && s > 0;
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  const body = (h ? `${h}h` : "") + (m ? `${m}m` : "") + (r && !h ? `${r}s` : "") || "0";
+  return (sign ? (neg ? "-" : "+") : neg ? "-" : "") + body;
+}
+
+// plannedOffset is when step i is planned to start (seconds from the window
+// opening): its own window_offset, or its section's for a section's first step.
+function plannedOffset(steps, sections, i) {
+  const s = steps[i];
+  let v = s.window_offset;
+  if (!v && s.section && (i === 0 || steps[i - 1].section !== s.section)) v = (sections || []).find((x) => x.name === s.section)?.window_offset;
+  return parseOffset(v);
+}
+
+// windowSpan: indexes of the steps that open and close the window (-1 if none).
+function windowSpan(steps) {
+  return [steps.findIndex((s) => s.window === "open"), steps.findIndex((s) => s.window === "close")];
+}
+
+const inWindow = (steps, i) => { const [o, c] = windowSpan(steps); return o >= 0 && i >= o && (c < 0 || i <= c); };
+
+function plannedBadge(steps, sections, i) {
+  const p = plannedOffset(steps, sections, i);
+  return p == null ? "" : `<span class="badge-k planned" title="Planned start, relative to the maintenance window opening">T${fmtOffset(p)}</span>`;
 }
 
 function lastTime(r, run) {
@@ -184,11 +237,11 @@ function renderLaunchSteps(st) {
     const r = prev?.steps[i];
     const view = preview?.[i] || s;
     return `${sectionHeading(rb.steps, i, rb.sections)}
-      <li class="step ${st.include[i] ? "" : "dim"}">
+      <li class="step ${st.include[i] ? "" : "dim"} ${inWindow(rb.steps, i) ? "in-window" : ""}">
         <div class="step-head" data-open="${i}">
           <input type="checkbox" data-inc="${i}" ${st.include[i] ? "checked" : ""} title="Include this step">
           <span class="n">${i + 1}</span>
-          <span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""} ${stepBadges(s)}</span>
+          <span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""} ${stepBadges(s)} ${plannedBadge(rb.steps, rb.sections, i)}</span>
           ${r && r.status !== "pending" ? `<span class="last s-${esc(r.status)}" title="Last time: ${esc(r.status)}">${ICONS[r.status]}</span>` : ""}
           <button type="button" class="pill ${st.before.has(i) ? "on" : ""}" data-before="${i}" title="Stop before this step (run / skip / open a shell)">⏸ before</button>
           <button type="button" class="pill ${st.after.has(i) ? "on" : ""}" data-after="${i}" title="Stop after this step to check the result">⏸ after</button>

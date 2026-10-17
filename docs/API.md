@@ -130,9 +130,9 @@ Start without `unattended`, then read `/events`. Each event is
 | `confirm` | `run`, `skip`, `abort` |
 | `danger` (dangerous step out of sequence) | `run` with `note` = the question's `confirm` (the step number; asked again otherwise), `skip`, `abort` |
 | `manual` | `done`, `skip`, `fail`, `abort` (optional `note`) |
-| `failure` | `retry`, `skip`, `abort`, `force` (`note` = required reason; asked again without one) |
+| `failure` | `retry`, `skip`, `abort`, `force` (`note` = required reason; asked again without one), and `way` (try another way) for steps with several ways |
 | `before` | `run`, `skip`, `continue` (stop stepping through), `abort` |
-| `choose` (alternatives) | an alternative's name, or `abort` |
+| `choose` (which way, for steps set to choose or after `way`) | a way's name (the first option is the preferred one), or `abort` |
 | `after` | `continue`, `retry` (run again), `fail` (`note` = what's wrong; then a `failure` question), `abort` |
 
 **Changing steps during a run.** `GET /api/runs/{id}/steps/{n}` returns
@@ -164,15 +164,22 @@ sessions as its `shells`, cleaned of terminal control codes.
 
 `step_finished` events carry `state`: the run's variables, secrets masked.
 `step_progress` events carry a step's `result` while it's still going (each
-attempt of a group of checks; each step of an alternative). A background
+attempt of a group of checks). A background
 step finishes with status `background` and later gets another
 `step_finished` when it stops. Step results may include `checks` (latest
-attempt: `{name, passed, exit_code, output, error}`), `alternative` (the one
-chosen) and `sub` (its steps' results).
+attempt: `{name, passed, exit_code, output, error}`) and `way` (the way it
+was done, for steps with several). Runs of a runbook with a maintenance
+window carry `window: {target, open_step, close_step, opened, closed}`;
+`window` events (with `run`) say when it opens and closes.
+
+Starting an unattended run whose steps include ones set to `choose` needs
+`"use_preferred": true` (they'll use their preferred way); otherwise it's
+refused with the step numbers.
 `controls` events carry the live run's new `controls` after a PUT.
 
 A StepView is `{index, name, section, owner, kind, command, expect, dir, when,
-confirm, always, timeout, retries, outputs, secret_outputs}` with templates
+confirm, always, timeout, retries, outputs, secret_outputs, ways, choose,
+window, offset, offset_sec}` with templates
 filled in (unknown values as `<name>`).
 The run record's `state` holds the same as of the last finished step.
 

@@ -78,7 +78,8 @@ function sectionHeading(steps, i, sections) {
   const s = steps[i].section;
   if (!s || (i > 0 && steps[i - 1].section === s)) return "";
   const info = (sections || []).find((x) => x.name === s);
-  return `<li class="section">${esc(s)}${info?.description ? `<div class="section-desc">${esc(info.description)}</div>` : ""}${info?.expect ? `<div class="section-desc"><b>By the end:</b> ${esc(info.expect)}</div>` : ""}</li>`;
+  const at = parseOffset(info?.window_offset);
+  return `<li class="section">${esc(s)}${at != null ? ` <span class="badge-k planned" title="Planned start, relative to the maintenance window opening">T${fmtOffset(at)}</span>` : ""}${info?.description ? `<div class="section-desc">${esc(info.description)}</div>` : ""}${info?.expect ? `<div class="section-desc"><b>By the end:</b> ${esc(info.expect)}</div>` : ""}</li>`;
 }
 
 function toast(msg) {
@@ -312,6 +313,9 @@ function applyEvent(state, e) {
     case "controls":
       state.controls = e.controls;
       break;
+    case "window":
+      state.run.window = e.run.window;
+      break;
     case "step_progress":
       Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes, log: state.steps[e.step].log });
       break;
@@ -342,6 +346,7 @@ function renderRun(state) {
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${editsBanner(run, state)}
+    ${windowBanner(run)}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
     ${(state.messages || []).map((m) => `<p class="muted">ℹ ${esc(m)}</p>`).join("")}
     ${runningBackground().length ? `<div class="bg-list">${runningBackground().map((s) => `<span class="bg-item">◐ ${esc(s.title.replace(/^background · /, ""))} <button class="link" data-show-bg="${esc(s.id)}">View</button></span>`).join("")}</div>` : ""}
@@ -353,12 +358,12 @@ function renderRun(state) {
       <span class="muted small"> · upcoming steps can be skipped or paused below</span></p>` : ""}
     ${state.question?.step === -1 ? renderQuestion(state.question, run.id) : ""}
     <ol class="steps">${state.steps.map((s, i) => `${sectionHeading(state.steps, i, state.rbSections)}
-      <li class="step ${state.question?.step === i ? "focus" : ""} ${s.note === "before start step" ? "dim" : ""}">
+      <li class="step ${state.question?.step === i ? "focus" : ""} ${s.note === "before start step" ? "dim" : ""} ${state.cfg && inWindow(state.cfg, i) ? "in-window" : ""}">
         <div class="step-head" data-toggle="${i}">
           <span class="icon s-${s.status}">${ICONS[s.status] || ""}</span>
           <span class="n">${i + 1}</span>
           <span class="name">${esc(s.name)} <span class="kind">${esc(s.kind)}</span>${s.edited ? ` <span class="badge-k warn" title="Changed during this run">edited</span>` : ""}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
-          <span class="meta">${[s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}</span>
+          <span class="meta">${[s.way && `way: ${s.way}`, s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}${stepTiming(state, i)}</span>
           ${state.preview?.[i]?.confirm ? `<span class="badge-k warn" title="Asks before running">confirms on its own</span>` : ""}
           ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<span class="last s-${esc(state.prev.steps[i].status)}" title="Last time: ${esc(state.prev.steps[i].status)}">${ICONS[state.prev.steps[i].status]}</span>` : ""}
           ${live && editable(state, i) ? `<button class="pill" data-edit-step="${i}" title="Change this step for this run${state.question?.step === i ? " and run it again" : ""}">✎ edit</button>` : ""}
@@ -415,6 +420,57 @@ function renderRun(state) {
   const q = $(".question");
   if (q) bindQuestion(q, state.question, run.id);
 }
+
+// ---------- maintenance window ----------
+
+// windowBanner: where the run stands against the maintenance window. While
+// it's open the clock ticks (see the timer below).
+function windowBanner(run) {
+  const w = run.window;
+  if (!w) return "";
+  const target = parseOffset(w.target);
+  const tgt = w.target ? ` of ${esc(w.target)} target` : "";
+  if (w.opened && !w.closed) {
+    const active = !["succeeded", "failed", "aborted"].includes(run.status);
+    return `<div class="mw-banner open"><b>🔴 Maintenance window open: production is down</b>
+      <span class="mw-clock" data-since="${esc(w.opened)}" data-target="${target ?? ""}"></span><span class="muted">${tgt}</span>
+      ${active ? "" : `<b>The run has stopped with the window still open.</b>`}</div>`;
+  }
+  if (w.opened && w.closed) {
+    const len = (new Date(w.closed) - new Date(w.opened)) / 1000;
+    const over = target != null && len > target;
+    return `<div class="mw-banner ${over ? "over" : ""}">Maintenance window: <b>${fmtOffset(len, false)}</b>${tgt}${over ? ` <span class="mw-over">(${fmtOffset(len - target, false)} over)</span>` : ""}</div>`;
+  }
+  const span = [w.open_step, w.close_step].filter((x) => x >= 0).map((x) => x + 1).join("–");
+  return `<p class="muted">Maintenance window${span ? ` (steps ${span})` : ""} not open yet${w.target ? ` · target ${esc(w.target)}` : ""}.</p>`;
+}
+
+// stepTiming: a step's planned time against the window, and when it
+// actually started.
+function stepTiming(state, i) {
+  if (!state.cfg) return "";
+  const planned = plannedOffset(state.cfg, state.rbSections, i);
+  const w = state.run.window, s = state.steps[i];
+  if (planned == null) return "";
+  let out = ` · planned T${fmtOffset(planned)}`;
+  if (w?.opened && s.started) {
+    const actual = (new Date(s.started) - new Date(w.opened)) / 1000;
+    const drift = actual - planned;
+    out += ` · started T${fmtOffset(actual)}`;
+    if (Math.abs(drift) >= 60) out += ` <span class="${drift > 0 ? "late" : "early"}">(${fmtOffset(Math.abs(drift), false)} ${drift > 0 ? "late" : "early"})</span>`;
+  }
+  return out;
+}
+
+// One timer ticks every open-window clock on the page.
+setInterval(() => {
+  document.querySelectorAll(".mw-clock[data-since]").forEach((el) => {
+    const sec = (Date.now() - new Date(el.dataset.since)) / 1000;
+    const target = el.dataset.target === "" ? null : +el.dataset.target;
+    el.textContent = `T${fmtOffset(sec)}`;
+    el.classList.toggle("mw-over", target != null && sec > target);
+  });
+}, 1000);
 
 // ---------- editing steps during a run ----------
 
@@ -511,7 +567,7 @@ const QLABELS_BY_TYPE = {
 };
 
 const QLABELS = {
-  run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…",
+  run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…", way: "↪ Try another way…",
   shell: "⌨ Open shell", continue: "Run the rest without pausing",
 };
 
@@ -528,7 +584,7 @@ function renderQuestion(q, runId) {
     if (q.type === "danger") body += `<input type="text" name="note" class="danger-confirm" placeholder="type ${esc(q.confirm)}" autocomplete="off" size="10">`;
     body += q.options.map((o, idx) => `<button data-v="${esc(o)}" ${q.type === "danger" && o === "run" ? "disabled" : ""} class="${q.type === "danger" && o === "run" ? "danger" : idx === 0 ? "primary" : o === "abort" ? "danger" : ""}">${QLABELS_BY_TYPE[q.type]?.[o] || QLABELS[o] || esc(o)}</button>`).join("");
   }
-  let text = q.type === "danger" ? `<p class="danger-why">Type <b>${esc(q.confirm)}</b> (the step number) to run it anyway.</p><pre class="cmd">${esc(q.text)}</pre>`
+  let text = q.type === "choose" ? `<pre class="cmd">${esc(q.text)}</pre>` : q.type === "danger" ? `<p class="danger-why">Type <b>${esc(q.confirm)}</b> (the step number) to run it anyway.</p><pre class="cmd">${esc(q.text)}</pre>`
     : ["confirm", "before"].includes(q.type) ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
   if (q.expect) text += `<div class="expect"><b>Expect:</b> ${esc(q.expect)}</div>`;
   if (q.options?.includes("shell")) text += `<div class="muted">“Open shell” opens a terminal below, with this run's variables loaded and this step's commands beside it. The question stays here for when you're back.</div>`;

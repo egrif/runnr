@@ -199,17 +199,47 @@ func (l *liveRun) StartBackground(idx int, title string) engine.TermConn {
 	return l.startTerm(idx, title, true)
 }
 
-// ChooseAlternative implements engine.Chooser.
-func (l *liveRun) ChooseAlternative(ctx context.Context, v engine.StepView) (int, error) {
-	opts := make([]string, 0, len(v.Alternatives)+1)
-	for _, a := range v.Alternatives {
-		opts = append(opts, a.Name)
+// kindWord names a way's kind for people.
+func kindWord(k string) string {
+	if k == "run" {
+		return "scripted"
 	}
-	a, err := l.askStep(ctx, Question{Type: "choose", Step: v.Index, Title: "How should “" + v.Name + "” be done?", Text: v.Command, Expect: v.Expect, Options: append(opts, "abort")})
+	return k
+}
+
+// ChooseWay implements engine.Chooser: the ways as options, preferred first.
+func (l *liveRun) ChooseWay(ctx context.Context, v engine.StepView, failed int) (int, error) {
+	var opts []string
+	var text strings.Builder
+	order := make([]int, 0, len(v.Ways))
+	for j, w := range v.Ways {
+		if w.Preferred {
+			order = append([]int{j}, order...)
+		} else {
+			order = append(order, j)
+		}
+	}
+	for _, j := range order {
+		w := v.Ways[j]
+		opts = append(opts, w.Name)
+		note := ""
+		if w.Preferred {
+			note += " · preferred"
+		}
+		if j == failed {
+			note += " · just failed"
+		}
+		fmt.Fprintf(&text, "%s (%s%s)\n    %s\n", w.Name, kindWord(w.Kind), note, strings.ReplaceAll(strings.TrimSpace(w.Command), "\n", "\n    "))
+	}
+	title := "How should “" + v.Name + "” be done?"
+	if failed >= 0 {
+		title = "Try “" + v.Name + "” another way"
+	}
+	a, err := l.askStep(ctx, Question{Type: "choose", Step: v.Index, Title: title, Text: text.String(), Expect: v.Expect, Options: append(opts, "abort")})
 	if err != nil {
 		return 0, err
 	}
-	return slices.Index(opts, a.Value), nil
+	return slices.IndexFunc(v.Ways, func(w engine.WayView) bool { return w.Name == a.Value }), nil
 }
 
 // StartTerm implements engine.TermHost with a terminal in the browser:
@@ -351,6 +381,9 @@ func (l *liveRun) Manual(ctx context.Context, idx int, step runbook.Step, text s
 
 func (l *liveRun) OnFailure(ctx context.Context, idx int, step runbook.Step, res engine.StepResult) (engine.FailureAction, string, error) {
 	opts := []string{"retry", "skip", "force", "abort"}
+	if len(step.Ways) > 1 {
+		opts = []string{"retry", "way", "skip", "force", "abort"}
+	}
 	for {
 		a, err := l.askStep(ctx, Question{Type: "failure", Step: idx, Title: "“" + step.Name + "” failed", Text: res.Error, Options: opts})
 		if err != nil {
@@ -361,6 +394,8 @@ func (l *liveRun) OnFailure(ctx context.Context, idx int, step runbook.Step, res
 			return engine.FailRetry, "", nil
 		case "skip":
 			return engine.FailSkip, "", nil
+		case "way":
+			return engine.FailOtherWay, "", nil
 		case "force":
 			if strings.TrimSpace(a.Note) == "" {
 				continue // a reason is required; ask again

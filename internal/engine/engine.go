@@ -60,7 +60,9 @@ type StepResult struct {
 	Shells []string `json:"shells,omitempty"`
 	// Checks holds the latest attempt of a group of checks.
 	Checks []CheckResult `json:"checks,omitempty"`
-	// Alternative is the one chosen; Sub holds its steps' results.
+	// Way is the way the step was done, when it has several.
+	Way string `json:"way,omitempty"`
+	// Alternative and Sub are from runs before ways replaced alternatives.
 	Alternative string       `json:"alternative,omitempty"`
 	Sub         []StepResult `json:"sub,omitempty"`
 	// Edited: the step was changed during the run.
@@ -77,6 +79,8 @@ type Run struct {
 	StartAt        int    `json:"start_at,omitempty"`
 	RunbookVersion int    `json:"runbook_version,omitempty"`
 	Resumes        string `json:"resumes,omitempty"`
+	// Window is the maintenance window, if the runbook has one.
+	Window *WindowRecord `json:"window,omitempty"`
 	// Edits are changes made to steps during the run; EditsSaved is the
 	// runbook version they were saved as (0: not saved yet).
 	Edits      []StepEdit `json:"edits,omitempty"`
@@ -109,6 +113,8 @@ const (
 	// EventStepProgress: a step's result changed without it finishing
 	// (checks attempted, a sub-step done).
 	EventStepProgress EventKind = "step_progress"
+	// EventWindow: the maintenance window opened or closed (Run is set).
+	EventWindow EventKind = "window"
 )
 
 type Event struct {
@@ -138,6 +144,8 @@ const (
 	FailAbort FailureAction = "abort"
 	// FailForce accepts the failure as success; the reason is required.
 	FailForce FailureAction = "force"
+	// FailOtherWay tries the step another way (steps with several ways).
+	FailOtherWay FailureAction = "way"
 )
 
 // StepDecision is the answer to "about to run this step" in step mode.
@@ -230,10 +238,33 @@ type StepView struct {
 	SecretOutputs []string `json:"secret_outputs,omitempty"`
 	Background    bool     `json:"background,omitempty"`
 	StopAfter     string   `json:"stop_after,omitempty"`
-	// Checks and Alternatives are filled in for those kinds of step.
-	Checks       []CheckView `json:"checks,omitempty"`
-	Repeat       string      `json:"repeat,omitempty"`
-	Alternatives []AltView   `json:"alternatives,omitempty"`
+	// Checks are filled in for checks steps; Ways for steps with several.
+	Checks []CheckView `json:"checks,omitempty"`
+	Repeat string      `json:"repeat,omitempty"`
+	Ways   []WayView   `json:"ways,omitempty"`
+	Choose bool        `json:"choose,omitempty"`
+	// Window is open or close; Offset is the planned start relative to
+	// the window opening ("-30m", "+12m"), OffsetSec the same in seconds.
+	Window    string `json:"window,omitempty"`
+	Offset    string `json:"offset,omitempty"`
+	OffsetSec *int   `json:"offset_sec,omitempty"`
+}
+
+// WindowRecord tracks the maintenance window (production down) in a run.
+type WindowRecord struct {
+	Target    string    `json:"target,omitempty"`
+	OpenStep  int       `json:"open_step"`  // -1: none marked
+	CloseStep int       `json:"close_step"` // -1: none marked
+	Opened    time.Time `json:"opened,omitzero"`
+	Closed    time.Time `json:"closed,omitzero"`
+}
+
+// WayView is one way to do a step, as it would run.
+type WayView struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Command   string `json:"command"`
+	Preferred bool   `json:"preferred,omitempty"`
 }
 
 // CheckResult is one check's outcome in the latest attempt.
@@ -248,14 +279,6 @@ type CheckResult struct {
 type CheckView struct {
 	Name    string `json:"name"`
 	Command string `json:"command"`
-}
-
-// AltView is one alternative as it would run: a command, or its steps.
-type AltView struct {
-	Name    string   `json:"name"`
-	When    string   `json:"when,omitempty"`
-	Command string   `json:"command,omitempty"`
-	Steps   []string `json:"steps,omitempty"`
 }
 
 // Session gives an interactor read access to the run it's driving, plus
@@ -295,10 +318,11 @@ type Reviewer interface {
 	Review(ctx context.Context, plan []StepView, c *Controls) error
 }
 
-// Chooser picks which of a step's alternatives to run. Without one (or
-// unattended), the first alternative whose when holds is used.
+// Chooser picks which way to do a step with several (v.Ways), for steps
+// set to choose and after a way fails (failed is its index, else -1).
+// Without one, or unattended, the preferred way is used.
 type Chooser interface {
-	ChooseAlternative(ctx context.Context, v StepView) (int, error)
+	ChooseWay(ctx context.Context, v StepView, failed int) (int, error)
 }
 
 // Stepper is asked before steps set to pause before (or all of them, in
@@ -362,6 +386,14 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 
 	if opts.Previous != nil {
 		x.run.Previous = opts.Previous.ID
+	}
+	if mw := rb.MaintenanceWindow; mw != nil {
+		o, c := rb.WindowSteps()
+		x.run.Window = &WindowRecord{Target: mw.Target, OpenStep: o, CloseStep: c}
+		// Resuming while production is down: the window is still open.
+		if p := opts.Resumed; p != nil && p.Window != nil && !p.Window.Opened.IsZero() && p.Window.Closed.IsZero() {
+			x.run.Window.Opened = p.Window.Opened
+		}
 	}
 	if b, ok := ui.(Binder); ok {
 		b.Bind(x)
@@ -438,6 +470,16 @@ func (x *executor) finish(ctx context.Context, err error) {
 }
 
 var errAborted = errors.New("aborted")
+
+// errOtherWay: the operator wants to try a failed step another way.
+var errOtherWay = errors.New("other way")
+
+func targetNote(w *WindowRecord) string {
+	if w.Target == "" {
+		return ""
+	}
+	return " (target " + w.Target + ")"
+}
 
 // NoteBeforeStart marks steps skipped because the run started later on.
 const NoteBeforeStart = "before start step"
@@ -559,6 +601,8 @@ func (x *executor) onFailure(ctx context.Context, i int, step runbook.Step, out 
 		return x.fail(i, err)
 	}
 	switch action {
+	case FailOtherWay:
+		return errOtherWay
 	case FailForce:
 		if strings.TrimSpace(reason) == "" {
 			return x.fail(i, errors.New("forcing a failed step requires a reason"))
@@ -613,6 +657,12 @@ func (x *executor) fail(i int, err error) error {
 
 func (x *executor) stepDone(i int) {
 	x.run.Steps[i].Ended = time.Now()
+	if w := x.run.Window; w != nil && i == w.CloseStep && !w.Opened.IsZero() && w.Closed.IsZero() &&
+		slices.Contains([]Status{StatusSucceeded, StatusForced, StatusSkipped}, x.run.Steps[i].Status) {
+		w.Closed = x.run.Steps[i].Ended
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: fmt.Sprintf("🟢 maintenance window closed after %s%s", w.Closed.Sub(w.Opened).Round(time.Second), targetNote(w))})
+		x.notify(Event{Kind: EventWindow, Step: i, Run: x.snapshot()})
+	}
 	x.refreshState()
 	x.notify(Event{Kind: EventStepFinished, Step: i, Result: x.result(i), State: x.run.State})
 	x.save()

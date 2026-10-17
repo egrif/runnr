@@ -271,16 +271,13 @@ steps:
       - { name: Queue drained, run: ./queue-depth.sh | grep -qx 0 }
     repeat: { every: 20s, timeout: 10m }   # retry until all pass
   - name: Rotate secrets
-    alternatives:               # pick one when the step runs
-      - name: script
-        run: ./rotate.sh
-      - name: by hand
-        steps:
-          - { name: Edit, manual: Update the secrets in the console. }
-          - { name: Restart, run: ./restart.sh, confirm: true }
+    choose: true                # ask which way each time (else: the preferred)
+    ways:
+      - { name: Scripted, run: ./rotate.sh, preferred: true }
+      - { name: Manual, manual: Update the secrets in the console, then restart. }
 ```
 
-Each step has exactly one of `run` or `manual`. Every input and published
+Each step has exactly one of `run`, `manual`, `checks` or `ways`. Every input and published
 value is available to later steps both as a template variable and as an
 environment variable. `run`, `manual`, `when`, `dir` and `env` values are Go
 templates, with helpers
@@ -321,10 +318,21 @@ show as a ✅/❌ table. With `repeat`, the group re-runs on its own until it
 passes or times out; otherwise a failure offers retry (re-runs the group),
 skip, force or abort.
 
-**Alternatives** are different ways to do one step. You pick one when the
-step runs (unattended runs use the first whose `when` holds). An alternative
-is a command or a short list of steps, which inherit the step's `dir`,
-`shell` and `env`; retrying resumes at the step that failed. One level only.
+**Ways** are different ways to do one step: Scripted, Manual, Checks, or
+any you name. The preferred way runs (always, in unattended runs) unless the
+step has `choose: true`, which asks each time, preferred as the default.
+Starting an unattended run with such steps asks you to confirm
+(`--use-preferred`, or `use_preferred` in the API). When a way fails you can
+**try another way**. The step's other settings (`dir`, `env`, `outputs`,
+`repeat`…) apply whichever way runs.
+
+**Maintenance window.** `maintenance_window: {target: 45m}` describes the time
+production is down: mark the step where it goes down `window: open` and the
+one where it's back `window: close`. `window_offset` on sections and steps
+(`-30m`, `0`, `+12m`) is when they're planned to start relative to the
+window opening. Plans show T-30m, T+0, T+12m; runs show a live window clock
+against the target and each step's planned and actual time; history keeps
+the real downtime, and a run that stops with the window open says so.
 
 The GUI's **Runbook format help** page describes every field, and the
 structured editor shows the same text on each field's ⓘ.

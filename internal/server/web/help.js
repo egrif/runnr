@@ -17,6 +17,9 @@ const FIELD_HELP = {
     libraries: "Function libraries this runbook uses: their functions can be called in every step and in shells opened from runnr.",
     functions: "This runbook's own shell functions (name, description, body). They win over a library function of the same name.",
     steps: "What the runbook does, in order.",
+    maintenance_window: "The time production is down. Mark the step where it goes down (window: open) and the one where it's back (window: close); target is how long it should take, e.g. 45m. Runs show a live clock against the target and record the real downtime.",
+    window_target: "How long production is expected (or allowed) to be down, e.g. 45m.",
+    window_description: "What the window is, e.g. the announced outage.",
   },
   input: {
     name: "Variable name: letters, digits and _. Steps use it as {{.name}} or $name.",
@@ -27,11 +30,15 @@ const FIELD_HELP = {
     secret: "Hidden as you type, masked in output and history, and never stored: asked again on resume.",
   },
   step: {
-    kind: "Command: a shell script. Manual: instructions for a person. Checks: several commands that must all pass. Alternatives: different ways to do the step, picked when it runs.",
+    kind: "Scripted: a shell script. Manual: instructions for a person. Checks: several commands that must all pass. Add another way to offer several (e.g. Scripted and Manual).",
+    ways: "Different ways to do the step, each with a name: Scripted, Manual, Checks, or your own name. The preferred one is used unless the step asks which; if a way fails you can try another.",
+    choose: "Ask which way each time it runs (the preferred one is the default). Unattended runs use the preferred way, after you confirm when starting.",
+    preferred: "The way used by default, and always in unattended runs.",
+    window: "Opens: production goes down when this step starts. Closes: production is back when it finishes.",
+    window_offset: "When this step is planned to start, relative to the window opening: -30m (before), 0, +12m. A section's first step uses the section's if it has none.",
     run: "Shell script to run. Templates like {{.input}} are filled in first; every input and published value is also an environment variable ($name).",
     manual: "Instructions for the operator, who marks the step done, skipped or failed. Templates are filled in.",
     checks: "Commands that each pass if they exit 0. Every check runs on each attempt (it doesn't stop at the first failure); the step passes when all pass.",
-    alternatives: "Ways to do this step. The operator picks one when the step runs; unattended runs use the first whose “when” holds. Each is a command or a short list of steps.",
     name: "Shown in the plan, prompts and history.",
     description: "What we're doing in this step, and why. Shown when reviewing, stepping through and in Details.",
     id: "Optional short identifier, for --from, stop_after and references. Letters, digits, _.",
@@ -63,6 +70,7 @@ const FIELD_HELP = {
     name: "A section name used by steps (their section field).",
     description: "What this group of steps does.",
     expect: "How things should stand at the end of the section.",
+    window_offset: "When the section is planned to start, relative to the maintenance window opening: -30m, 0, +20m.",
   },
   collection: {
     name: "The collection's identifier.",
@@ -79,12 +87,13 @@ const FIELD_HELP = {
     name: "What the check confirms, shown in the ✅/❌ table.",
     run: "Command that exits 0 when the check passes. Its output is kept for failing checks.",
   },
-  alternative: {
-    name: "Shown when choosing.",
-    when: "Template; unattended runs pick the first alternative where this holds (or that has none).",
-    run: "A command, for a one-command alternative.",
-    tty: "The command needs a keyboard.",
-    steps: "A short list of steps instead of one command. Retrying resumes at the step that failed. They inherit the step's directory, shell and environment.",
+  way: {
+    name: "Shown when choosing: Scripted, Manual, or your own name.",
+    preferred: "The default way, and the one unattended runs use (the first if none is marked).",
+    run: "A shell script (a Scripted way).",
+    manual: "Instructions for a person (a Manual way).",
+    checks: "Commands that must all pass (with the step's repeat).",
+    tty: "The script needs a keyboard.",
   },
 };
 
@@ -128,7 +137,7 @@ function viewHelp() {
     <p class="muted">A runbook is a YAML file (or the structured editor's form). This page describes every field. In the editor, hover the ⓘ next to a field for the same text.</p>
     <nav class="help-toc">
       <a href="#help-top">Runbook</a> · <a href="#help-inputs">Inputs</a> · <a href="#help-steps">Steps</a> ·
-      <a href="#help-kinds">Kinds of step</a> · <a href="#help-templates">Templates &amp; state</a> ·
+      <a href="#help-kinds">Kinds of step</a> · <a href="#help-window">Maintenance window</a> · <a href="#help-templates">Templates &amp; state</a> ·
       <a href="#help-functions">Functions &amp; libraries</a> · <a href="#help-masking">Masking</a> · <a href="#help-running">Running</a> · <a href="#help-example">Example</a>
     </nav>
 
@@ -169,8 +178,8 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
     ${helpTable("input", [["name"], ["description"], ["default"], ["choices"], ["required"], ["secret"]])}
 
     <h2 id="help-steps">Steps</h2>
-    <p>Every step has a <code>name</code> and exactly one of <code>run</code>, <code>manual</code>, <code>checks</code> or <code>alternatives</code>. The rest is optional.</p>
-    ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["confirm"], ["dangerous"], ["always"], ["when"], ["continue_on_error"],
+    <p>Every step has a <code>name</code> and exactly one of <code>run</code>, <code>manual</code>, <code>checks</code> or <code>ways</code>. The rest is optional.</p>
+    ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["confirm"], ["dangerous"], ["choose"], ["window"], ["window_offset"], ["always"], ["when"], ["continue_on_error"],
       ["tty"], ["background"], ["stop_after"], ["timeout"], ["retries"], ["retry_delay"], ["dir"], ["step_shell", "shell"], ["step_env", "env"],
       ["outputs"], ["secret_outputs", "secret_outputs"], ["capture"], ["unattended"]])}
 
@@ -214,23 +223,33 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
     <p>${esc(FIELD_HELP.step.checks)} Without <code>repeat</code>, a failing group asks what to do: retry re-runs every check. With it, the group re-runs on its own every <code>every</code> until all pass, giving up after <code>timeout</code>.</p>
     ${helpTable("check", [["name"], ["run"]])}
 
-    <h3>Alternatives</h3>
+    <h3>Several ways</h3>
     <pre class="cmd">- name: Secrets → HAProxy
-  alternatives:
-    - name: secret-swap script
+  choose: true            # ask which, each time (otherwise: the preferred one)
+  ways:
+    - name: Scripted
       run: ./secret-swap.rb --to haproxy --apply
-    - name: by hand with lotus
-      steps:
-        - name: Edit the secrets
-          run: lotus secrets edit
-          tty: true
-        - name: Review
-          manual: Check the URLs.
-        - name: Commit
-          run: lotus session commit
-          confirm: true</pre>
-    <p>${esc(FIELD_HELP.step.alternatives)} One level only: steps inside an alternative can't have alternatives or run in the background.</p>
-    ${helpTable("alternative", [["name"], ["when"], ["run"], ["tty"], ["steps"]])}
+      preferred: true
+    - name: Manual
+      manual: lotus secrets edit, check the URLs, lotus session commit
+    - name: lotus by hand
+      run: lotus secrets edit
+      tty: true</pre>
+    <p>${esc(FIELD_HELP.step.ways)} ${esc(FIELD_HELP.step.choose)} The step's other settings (dir, env, outputs, repeat…) apply whichever way runs.</p>
+    ${helpTable("way", [["name"], ["preferred"], ["run"], ["manual"], ["checks"], ["tty"]])}
+
+    <h2 id="help-window">Maintenance window</h2>
+    <pre class="cmd">maintenance_window:
+  target: 45m
+sections:
+  - {name: Prep, window_offset: -30m}
+  - {name: Cutover, window_offset: 0}
+steps:
+  - {name: Maintenance mode ON, section: Cutover, window: open, run: …}
+  - {name: Promote, window_offset: +10m, manual: …}
+  - {name: Maintenance mode OFF, window: close, run: …}</pre>
+    <p>${esc(FIELD_HELP.runbook.maintenance_window)}</p>
+    <p>${esc(FIELD_HELP.step.window_offset)} Planned times show as T-30m, T+0, T+10m in the plan; while the window is open each step shows how far ahead or behind it is. A run that stops with the window open says so plainly: production may still be down.</p>
 
     <h2 id="help-templates">Templates &amp; state</h2>
     <p><code>run</code>, <code>manual</code>, <code>expect</code>, <code>when</code>, <code>dir</code> and <code>env</code> are Go templates: <code>{{.name}}</code> is a value; helpers are <code>default</code>, <code>upper</code>, <code>lower</code>, <code>trim</code>, <code>contains</code> and <code>quote</code> (shell-quote). An unknown name is an error.</p>
@@ -246,7 +265,7 @@ functions:
     body: |
       until curl -fsS "$1" >/dev/null; do sleep 5; done</pre>
     ${helpTable("library", [["name"], ["description"], ["functions"]])}
-    <p>Every step can call them (commands, checks, alternatives, background steps), and shells opened from runnr have them too, loaded after your own shell config. Elsewhere: <code>eval "$(runnr lib export aurora-helpers)"</code>. A run fails to start if a library it uses is missing. The run's functions are also in <code>$RUNNR_FUNCTIONS</code> to source by hand.</p>
+    <p>Every step can call them (commands, checks, every way, background steps), and shells opened from runnr have them too, loaded after your own shell config. Elsewhere: <code>eval "$(runnr lib export aurora-helpers)"</code>. A run fails to start if a library it uses is missing. The run's functions are also in <code>$RUNNR_FUNCTIONS</code> to source by hand.</p>
 
     <h2 id="help-masking">Masking</h2>
     <p>Secret inputs and <code>secret_outputs</code> are hidden wherever they appear: output, commands, errors, state, history and terminals in the browser. When a pattern recognises a secret, only the credential part is hidden (<code>postgres://app:****@db/app</code>); otherwise all of it (<code>****</code>). Built-in patterns cover URL passwords, Bearer tokens and AWS secret keys; add your own with <code>sensitive</code>:</p>
@@ -257,9 +276,9 @@ functions:
 
     <h2 id="help-running">Running</h2>
     <ul>
-      <li><b>Interactive</b>: review the plan (skip steps, pause before or after any of them), then run. It stops for confirmations, manual steps, choices between alternatives and failures (retry / skip / force with a reason / abort).</li>
+      <li><b>Interactive</b>: review the plan (skip steps, pause before or after any of them), then run. It stops for confirmations, manual steps, steps set to ask which way, and failures (retry / another way / skip / force with a reason / abort).</li>
       <li><b>Step through</b>: stop before every step: run, skip, carry on without stopping, or abort.</li>
-      <li><b>Unattended</b>: no questions. Confirmations need auto-approve, manual and terminal steps follow <code>unattended</code>, alternatives use <code>when</code>, and any failure stops the run.</li>
+      <li><b>Unattended</b>: no questions. Confirmations need auto-approve, manual and terminal steps follow <code>unattended</code>, steps with several ways use the preferred one (starting asks you to confirm that for steps set to ask), and any failure stops the run.</li>
       <li>At any question: open a <b>shell</b> with the run's variables and the step's commands beside it, add a <b>note</b>, see the <b>state</b>, or view a background step.</li>
       <li><b>Change a step mid-run</b>: <b>✎ edit</b> on the current step or a later one (CLI: <b>[c]hange step</b>). A step waiting on a question starts again with the change. It's only in that run until you <b>Save to runbook</b>.</li>
       <li><b>Dangerous steps</b> (<code>dangerous: true</code>) run like any other in sequence. Out of sequence (earlier steps skipped, a later start, Run this, a runbook file) they list what didn't run and wait for you to type the step number; a resume counts the steps the earlier run finished.</li>
