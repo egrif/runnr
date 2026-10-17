@@ -31,8 +31,8 @@ proxy) off-host.
 | GET | `/api/runbooks/{name}/versions` | | `[{version, created_at, bytes}]`, newest first |
 | GET | `/api/runbooks/{name}/versions/{n}` | | `{version, raw}` |
 | POST | `/api/validate` | YAML | `{ok, error?}` |
-| POST | `/api/parse` | YAML | `{ok, runbook?, error?}`: the structured form |
-| POST | `/api/format` | runbook JSON | `{ok, raw?, error?}`: YAML (validated; comments aren't kept) |
+| POST | `/api/parse` | YAML | `{ok, runbook?, comments?, error?}`: the structured form, and the YAML's comments by field path (`"steps.3.run"`, `"steps.3"` for the item, `""` for the file) |
+| POST | `/api/format` | runbook JSON, or `{runbook, comments}` | `{ok, raw?, error?}`: YAML (validated), with the comments put back on their fields |
 | POST | `/api/preview` | `{runbook \| raw, vars, from_run?}` | `{steps: [StepView]}`: what each step would do with these inputs (and that run's state) |
 
 Send `If-Match: <version>` with `PUT` to get `409 Conflict` instead of
@@ -52,6 +52,8 @@ Membership (these change only the `runbooks` list, keeping the rest of the YAML)
 | POST | `/api/collections/{name}/runbooks` | `{runbooks: [...], create?}` | append runbooks (which must exist); `create` makes the collection |
 | DELETE | `/api/collections/{name}/runbooks/{runbook}` | | take a runbook out (it stays in runnr) |
 | POST | `/api/runbooks/{name}/move` | `{to, from?}` | move into `to` (created if needed), out of `from`, or out of the one collection it's in |
+| PUT | `/api/collections/{name}/runbooks` | `{runbooks: [...]}` | replace the list (e.g. to reorder); runbooks new to it must exist |
+| PATCH | `/api/collections/{name}` | `{name?, description?, expect?}` | change those fields in place (empty removes description/expect) |
 
 ## Schedules
 

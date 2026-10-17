@@ -4,14 +4,15 @@
 // them (POST /api/parse, /api/format), so both views follow the same rules.
 
 function renderEditor(el, raw, name, initialError, version, updatedAt) {
-  const ed = { mode: "yaml", doc: null, open: new Set(), hasComments: /^\s*#/m.test(raw), name,
-    test: { vars: {}, extra: {}, setup: true }, secretVars: {} };
+  const ed = { mode: "yaml", doc: null, name, test: { vars: {}, extra: {}, setup: true }, secretVars: {},
+    // Per-step state, keyed by the step itself so reordering can't mix it up.
+    open: new Set(), adv: new Set(), runs: new Map(), wayTab: new WeakMap(), secOpen: new Set(), comments: new WeakMap() };
   if (name) api("GET", `/api/runbooks/${enc(name)}/test-values`).then((tv) => { ed.test = tv; if (ed.mode === "struct") renderStruct(ed); }).catch(() => {});
   el.innerHTML = `
     <div class="row editor-bar">
       <button class="primary" id="save">Save</button>
       <button id="validate">Validate</button>
-      <div class="seg"><button id="as-yaml" class="on">YAML</button><button id="as-struct">Structured</button></div>
+      <div class="seg"><button id="as-struct">Structured</button><button id="as-yaml" class="on">YAML</button></div>
       ${version ? `<span class="muted">version ${version} · saved ${new Date(updatedAt).toLocaleString()}</span>` : ""}
       <span class="spacer"></span>
       ${name ? `<button class="danger" id="delete">Delete</button>` : ""}
@@ -33,7 +34,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
   // currentYAML returns the YAML for whichever view is showing.
   const currentYAML = async () => {
     if (ed.mode === "yaml") return { ok: true, raw: ta.value };
-    return api("POST", "/api/format", cleanDoc(ed.doc));
+    return formatDoc(ed);
   };
   const validate = async () => {
     const y = await currentYAML();
@@ -45,9 +46,11 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
       const res = await api("POST", "/api/parse", ta.value, true);
       if (!res.ok) return show({ ok: false, error: `Fix the YAML before switching:\n${res.error}` });
       ed.doc = res.runbook;
+      ed.comments = new WeakMap();
+      attachComments(ed, res.comments || {});
       renderStruct(ed);
     } else {
-      const res = await api("POST", "/api/format", cleanDoc(ed.doc));
+      const res = await formatDoc(ed);
       if (!res.ok) return show(res);
       ta.value = res.raw;
     }
@@ -78,8 +81,6 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
     try {
       const y = await currentYAML();
       if (!y.ok) return show(y);
-      if (ed.mode === "struct" && ed.hasComments &&
-        !confirm("Saving from the structured view rewrites the YAML, so its comments will be dropped. Save anyway?")) return;
       const rb = name
         ? await api("PUT", `/api/runbooks/${enc(name)}`, y.raw, true, { "If-Match": String(version) })
         : await api("POST", `/api/runbooks${$("#new-col")?.value ? `?collection=${enc($("#new-col").value)}` : ""}`, y.raw, true);
@@ -92,6 +93,8 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
         : e.message });
     }
   };
+  // Open in the structured view unless the YAML has to be fixed first.
+  if (!initialError) setMode("struct").catch((e) => toast(e.message));
   if (name) $("#delete").onclick = async () => {
     if (!confirm(`Delete runbook "${name}"?`)) return;
     await api("DELETE", `/api/runbooks/${enc(name)}`);
@@ -104,6 +107,120 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
 // ---------- structured view ----------
 
 const H = FIELD_HELP;
+
+// ---------- comments ----------
+// Comments from the YAML are kept with the object they're on (a step, a
+// way, the runbook…) under the field name, or "#" for the item itself, so
+// they move with it. They're turned back into YAML paths when formatting.
+
+function attachComments(ed, comments) {
+  const d = ed.doc;
+  for (const [path, text] of Object.entries(comments)) {
+    const segs = path ? path.split(".") : [];
+    let obj = d, field = "#";
+    if (segs.length) {
+      const last = segs.at(-1);
+      const parent = segs.length > 1 ? getPath(d, segs.slice(0, -1).join(".")) : d;
+      if (/^\d+$/.test(last)) { obj = parent?.[+last]; field = "#"; } else { obj = parent; field = last; }
+    }
+    if (!obj || typeof obj !== "object") { obj = d; field = "#"; }
+    setComment(ed, obj, field, [getComment(ed, obj, field), text].filter(Boolean).join("\n"));
+  }
+}
+
+const getComment = (ed, obj, field) => (obj && ed.comments.get(obj)?.[field]) || "";
+function setComment(ed, obj, field, text) {
+  const c = ed.comments.get(obj) || {};
+  if (text.trim()) c[field] = text.trim(); else delete c[field];
+  ed.comments.set(obj, c);
+}
+const hasComments = (ed, obj) => Object.values(ed.comments.get(obj) || {}).some(Boolean);
+
+// collectComments turns the comments back into YAML paths.
+function collectComments(ed) {
+  const out = {};
+  const walk = (o, path) => {
+    if (!o || typeof o !== "object") return;
+    for (const [f, t] of Object.entries(ed.comments.get(o) || {})) {
+      if (!t) continue;
+      const key = f === "#" ? path : path ? `${path}.${f}` : f;
+      out[key] = out[key] ? `${out[key]}\n${t}` : t;
+    }
+    if (Array.isArray(o)) o.forEach((v, i) => walk(v, path ? `${path}.${i}` : String(i)));
+    else for (const [k, v] of Object.entries(o)) walk(v, path ? `${path}.${k}` : k);
+  };
+  walk(ed.doc, "");
+  return out;
+}
+
+function formatDoc(ed) {
+  // A section no step is in any more isn't written (its entry stays here,
+  // in case a step moves back into it).
+  const used = new Set(ed.doc.steps.map((s) => s.section).filter(Boolean));
+  const doc = cleanDoc({ ...ed.doc, sections: (ed.doc.sections || []).filter((x) => used.has(x.name)) });
+  const comments = collectComments(ed);
+  // Comment paths for sections are by position: renumber them for the written list.
+  const kept = (ed.doc.sections || []).map((x, i) => [i, used.has(x.name)]);
+  const renum = {};
+  for (const [path, text] of Object.entries(comments)) {
+    const m = path.match(/^sections\.(\d+)(\..*)?$/);
+    if (!m) { renum[path] = text; continue; }
+    const k = kept.filter(([i, keep]) => keep && i < +m[1]).length;
+    if (kept[+m[1]]?.[1]) renum[`sections.${k}${m[2] || ""}`] = text;
+  }
+  return api("POST", "/api/format", { runbook: doc, comments: renum });
+}
+
+// The editor being drawn, so row() can offer a comment on each field.
+let curEd = null;
+
+// cmtBtn is the 💬 beside a field: hover to read its comment, click to edit.
+// target is [object, field], or a function returning one (for objects made
+// on demand, like a section's description entry).
+function cmtBtn(target) {
+  const ed = curEd;
+  if (!ed) return "";
+  const [obj, field] = typeof target === "function" ? target(false) : target;
+  const text = getComment(ed, obj, field);
+  ed.cmtTargets.push(target);
+  return `<button type="button" class="cmt ${text ? "has" : ""}" data-cmt="${ed.cmtTargets.length - 1}" ${text ? `data-tip="${esc(text)}"` : `title="Add a comment"`}>💬</button>`;
+}
+
+// cmtForPath finds the comment target for a control's data-path.
+function cmtForPath(path) {
+  const d = curEd?.doc;
+  if (!d) return "";
+  const segs = path.split(".");
+  const field = segs.pop();
+  const parent = segs.length ? getPath(d, segs.join(".")) : d;
+  if (!parent || typeof parent !== "object" || /^\d+$/.test(field)) return "";
+  // An empty field isn't written to the YAML, so there's nowhere to keep a comment.
+  if (!isSet(parent[field]) && !getComment(curEd, parent, field)) return "";
+  return cmtBtn([parent, field]);
+}
+
+function editComment(ed, target) {
+  const [obj, field] = typeof target === "function" ? target(true) : target;
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step cmt-dialog";
+  dlg.innerHTML = `<h3>Comment</h3><p class="muted small">Saved as a YAML comment above ${field === "#" ? "this item" : `<code>${esc(field)}</code>`}.</p>
+    <textarea rows="5">${esc(getComment(ed, obj, field))}</textarea>
+    <div class="row"><button class="primary" data-ok>Save</button><button data-cancel>Cancel</button><span class="spacer"></span>
+      ${getComment(ed, obj, field) ? `<button class="danger" data-rm>Delete</button>` : ""}</div>`;
+  document.body.append(dlg);
+  dlg.onclose = () => dlg.remove();
+  const done = (text) => { setComment(ed, obj, field, text); dlg.close(); renderStruct(ed); $("#struct-pane").dispatchEvent(new Event("input")); };
+  dlg.querySelector("[data-ok]").onclick = () => done(dlg.querySelector("textarea").value);
+  dlg.querySelector("[data-cancel]").onclick = () => dlg.close();
+  dlg.querySelector("[data-rm]")?.addEventListener("click", () => done(""));
+  dlg.showModal();
+  dlg.querySelector("textarea").focus();
+}
+
+// Each step gets a stable id for the page (the run pane is found by it).
+const stepIds = new WeakMap();
+let stepSeq = 0;
+const uidOf = (s) => { if (!stepIds.has(s)) stepIds.set(s, ++stepSeq); return stepIds.get(s); };
 
 function cleanDoc(doc) {
   // Drop empty values so they don't show up in the YAML.
@@ -148,9 +265,11 @@ function control(path, kind, val, opts = {}) {
   return `<input data-path="${p}" value="${esc(val ?? "")}"${ph}>`;
 }
 
-// row is a label (with its ⓘ) beside its input; rows in a group align.
+// row is a label (with its ⓘ, and in the editor its 💬) beside its input;
+// rows in a group align.
 function row(label, help, ctl) {
-  return `<label class="frow"><span class="flabel">${esc(label)}${helpIcon(help)}</span>${ctl}</label>`;
+  const path = curEd && (ctl.match(/data-path="([^"]+)"/) || [])[1];
+  return `<label class="frow"><span class="flabel">${esc(label)}${helpIcon(help)}${path ? cmtForPath(path.replace(/&quot;/g, '"')) : ""}</span>${ctl}</label>`;
 }
 
 // group is a set of rows; collapsible groups start open if they hold values.
@@ -202,32 +321,38 @@ function wayBody(o, P, kind, i, w) {
 }
 
 // stepLeft is the main body of a step: its script, instructions or checks,
-// or its ways when there are several.
-function stepLeft(s, i) {
+// or its ways (as tabs) when there are several.
+function stepLeft(ed, s, i) {
   const P = `steps.${i}`;
+  const label = (o, kind) => {
+    const [l, help] = { run: ["Script", H.step.run], manual: ["Instructions", H.step.manual], checks: ["Checks", H.step.checks] }[kind];
+    return `<div class="flabel">${l}${helpIcon(help)}${kind !== "checks" ? cmtBtn([o, kind]) : ""}</div>`;
+  };
   if (!s.ways) {
     const kind = kindOf(s);
     const seg = `<div class="seg kind-seg">${WAY_KINDS.map(([k, l]) =>
       `<button data-act="kind" data-kind="${k}" data-i="${i}" class="${kind === k ? "on" : ""}">${l}</button>`).join("")}${helpIcon(H.step.kind)}</div>`;
-    const label = { run: ["Script", H.step.run], manual: ["Instructions", H.step.manual], checks: ["Checks", H.step.checks] }[kind];
-    return `${seg}<div class="flabel">${label[0]}${helpIcon(label[1])}</div>${wayBody(s, P, kind, i)}
-      <div class="row add-way-row"><button data-act="add-way" data-i="${i}">+ Add another way</button>${helpIcon(H.step.ways)}</div>`;
+    return `<div class="row way-bar">${seg}<span class="spacer"></span><button class="link" data-act="add-way" data-i="${i}">+ Add another way</button>${helpIcon(H.step.ways)}</div>
+      ${label(s, kind)}${wayBody(s, P, kind, i)}`;
   }
   const pref = Math.max(0, s.ways.findIndex((w) => w.preferred));
-  return `<div class="row ways-head"><span class="flabel">Ways${helpIcon(H.step.ways)}</span><span class="spacer"></span>
-      <label class="check">${control(`${P}.choose`, "bool", s.choose)}<span>Ask which way each time</span>${helpIcon(H.step.choose)}</label></div>
-    ${s.ways.map((w, j) => {
-      const W = `${P}.ways.${j}`, k = wayKind(w);
-      return `<div class="sub-card way-card ${j === pref ? "preferred" : ""}">
-        <div class="row">${control(`${W}.name`, "text", w.name, { placeholder: "name, e.g. Scripted" })}
-          <select data-way-kind data-i="${i}" data-j="${j}">${WAY_KINDS.map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select>
-          <label class="check" title="${esc(H.way.preferred)}"><input type="radio" name="pref-${i}" data-pref data-i="${i}" data-j="${j}" ${j === pref ? "checked" : ""}><span>preferred</span></label>
-          ${k === "run" ? `<label class="check">${control(`${W}.tty`, "bool", w.tty)}<span>terminal</span></label>` : ""}
-          <button class="icon-btn danger" data-act="del-way" data-i="${i}" data-j="${j}" title="Remove this way">✕</button></div>
-        ${wayBody(w, W, k, i, j)}
-      </div>`;
-    }).join("")}
-    <button data-act="add-way" data-i="${i}">+ Add a way</button>`;
+  const tab = Math.min(ed.wayTab.get(s) ?? pref, s.ways.length - 1);
+  const w = s.ways[tab], W = `${P}.ways.${tab}`, k = wayKind(w);
+  return `<div class="way-tabs">
+      ${s.ways.map((x, j) => `<button class="way-tab ${j === tab ? "on" : ""}" data-act="way-tab" data-i="${i}" data-j="${j}" title="${j === pref ? "Preferred: used unless the step asks which" : ""}">${esc(x.name || "(unnamed)")}${j === pref ? " ★" : ""}</button>`).join("")}
+      <button class="way-tab add" data-act="add-way" data-i="${i}" title="${esc(H.step.ways)}">＋</button>
+      <span class="spacer"></span>
+      <label class="check">${control(`${P}.choose`, "bool", s.choose)}<span>Ask which way each time</span>${helpIcon(H.step.choose)}</label>
+    </div>
+    <div class="way-panel">
+      <div class="row way-props">${control(`${W}.name`, "text", w.name, { placeholder: "name, e.g. Scripted" })}${cmtBtn([w, "#"])}
+        <select data-way-kind data-i="${i}" data-j="${tab}">${WAY_KINDS.map(([v, l]) => `<option value="${v}" ${v === k ? "selected" : ""}>${l}</option>`).join("")}</select>
+        <label class="check" title="${esc(H.way.preferred)}"><input type="checkbox" data-pref data-i="${i}" data-j="${tab}" ${tab === pref ? "checked disabled" : ""}><span>preferred</span></label>
+        ${k === "run" ? `<label class="check">${control(`${W}.tty`, "bool", w.tty)}<span>terminal</span></label>` : ""}
+        <span class="spacer"></span>
+        <button class="icon-btn danger" data-act="del-way" data-i="${i}" data-j="${tab}" title="Remove this way">✕</button></div>
+      ${label(w, k)}${wayBody(w, W, k, i, tab)}
+    </div>`;
 }
 
 // uniqueWayName returns base, or base 2, base 3… not used by the step's ways.
@@ -237,15 +362,14 @@ function uniqueWayName(ways, base) {
   return name;
 }
 
-// sectionPick is a step's section dropdown. "(none)" is only offered before
-// any section starts: a step without one belongs to the section above it.
+// sectionPick moves a step to another section (to the end of it), or
+// starts a new section at this step.
 function sectionPick(d, i) {
   const s = d.steps[i];
-  const none = i === 0 || !d.steps[i - 1].section;
-  return `<select data-sec-pick data-i="${i}">
-    ${none || !s.section ? `<option value="" ${s.section ? "" : "selected"}>(none)</option>` : ""}
-    ${sectionNames(d).map((n) => `<option ${n === s.section ? "selected" : ""}>${esc(n)}</option>`).join("")}
-    <option value="__new__">+ New section…</option></select>`;
+  return `<select data-sec-pick data-i="${i}" title="Move this step to another section">
+    ${s.section ? "" : `<option value="" selected>(none)</option>`}
+    ${sectionNames(d).map((n) => `<option value="${esc(n)}" ${n === s.section ? "selected" : ""}>${esc(n)}</option>`).join("")}
+    <option value="__new__">+ New section from this step…</option></select>`;
 }
 
 // offsetPair is a planned-time field plus the input (if any) that overrides it.
@@ -318,7 +442,7 @@ function detailsPane(ed, d, s, i) {
   const all = MORE_FIELDS.filter(([, , , , applies]) => applies(kind, s));
   const set = all.filter(([k]) => isSet(s[k]));
   const unset = all.filter(([k]) => !isSet(s[k]));
-  const open = ed.adv.has(i);
+  const open = ed.adv.has(s);
   const rest = open ? [...new Set(unset.map((f) => f[5]))].map((g) =>
     `<div class="adv-title">${esc(g)}</div>${fields(unset.filter((f) => f[5] === g))}`).join("") : "";
   // One grid, so every input lines up.
@@ -339,8 +463,8 @@ function detailsPane(ed, d, s, i) {
 
 // The Run this pane: runs just this step (with the edits as they are now),
 // optionally after the setup steps, with the runbook's test values.
-function runPane(ed, i) {
-  const r = ed.runs.get(i);
+function runPane(ed, s, i) {
+  const r = ed.runs.get(s);
   if (!r) return "";
   const lines = r.lines.map((l) => `<span class="${esc(l.stream)}">${esc(l.text)}</span>`).join("\n");
   return `<div class="run-pane">
@@ -356,11 +480,12 @@ function runPane(ed, i) {
 }
 
 async function runThis(ed, i) {
-  const old = ed.runs.get(i);
+  const s = ed.doc.steps[i];
+  const old = ed.runs.get(s);
   old?.es?.close();
-  const y = await api("POST", "/api/format", cleanDoc(ed.doc));
+  const y = await formatDoc(ed);
   const r = { id: null, lines: [], status: "running", question: null, error: y.ok ? "" : y.error };
-  ed.runs.set(i, r);
+  ed.runs.set(s, r);
   if (!y.ok) { r.status = "failed"; return renderStruct(ed); }
   try {
     // Inputs without a test value use their default (blank secrets are asked for).
@@ -396,19 +521,20 @@ async function runThis(ed, i) {
         r.es.close();
         break;
     }
-    updateRunPane(ed, i);
+    updateRunPane(ed, s);
   };
 }
 
 // updateRunPane redraws just the run pane, so typing elsewhere isn't disturbed.
-function updateRunPane(ed, i) {
-  const el = $(`#struct-pane .run-slot[data-i="${i}"]`);
+function updateRunPane(ed, s) {
+  const el = $(`#struct-pane .run-slot[data-uid="${uidOf(s)}"]`);
   if (!el) return;
-  el.innerHTML = runPane(ed, i);
+  const i = ed.doc.steps.indexOf(s);
+  el.innerHTML = runPane(ed, s, i);
   const log = el.querySelector(".run-log");
   if (log) log.scrollTop = log.scrollHeight;
   const q = el.querySelector(".question");
-  if (q) bindQuestion(q, ed.runs.get(i).question, ed.runs.get(i).id);
+  if (q) bindQuestion(q, ed.runs.get(s).question, ed.runs.get(s).id);
 }
 
 // testValuesCard: inputs and extra variables used by Run this.
@@ -426,31 +552,107 @@ function testValuesCard(ed, d) {
   </details>`;
 }
 
-function sectionsGroup(d) {
-  const names = sectionNames(d);
-  if (!names.length) return "";
-  const info = (n) => (d.sections || []).find((x) => x.name === n) || {};
-  return group("Sections", names.map((n) => `<div class="sec-edit" style="grid-column: 1 / -1">
-      <div class="fgroup-rows">
-        ${row("Name", H.section.name, `<input data-sec-rename="${esc(n)}" value="${esc(n)}">`)}
-        ${row("What it does", H.section.description, `<textarea rows="2" data-sec="${esc(n)}" data-sec-field="description">${esc(info(n).description || "")}</textarea>`)}
-        ${row("By the end", H.section.expect, `<textarea rows="2" data-sec="${esc(n)}" data-sec-field="expect">${esc(info(n).expect || "")}</textarea>`)}
-        ${d.maintenance_window ? row("Planned at", H.section.window_offset, `<span class="offset-pair"><input data-sec="${esc(n)}" data-sec-field="window_offset" value="${esc(info(n).window_offset || "")}" placeholder="e.g. -30m, 0, +20m">
-          <select data-sec="${esc(n)}" data-sec-field="offset_input" title="${esc(H.step.offset_input)}"><option value="">no override</option>${(d.inputs || []).filter((x) => x.name).map((x) => `<option value="${esc(x.name)}" ${x.name === info(n).offset_input ? "selected" : ""}>input: ${esc(x.name)}</option>`).join("")}</select></span>`) : ""}
-      </div></div>`), { collapsible: true, id: "rb-sections", open: true });
+// secEntry is a section's sections: entry (description, expect, planned
+// time, comments), made when first needed.
+function secEntry(d, name, create) {
+  let e = (d.sections || []).find((x) => x.name === name);
+  if (!e && create) (d.sections ||= []).push((e = { name }));
+  return e;
+}
+
+// blocksOf splits the steps into runs that share a section.
+function blocksOf(d) {
+  const blocks = [];
+  d.steps.forEach((s, i) => {
+    const sec = s.section || "";
+    if (blocks.length && blocks.at(-1).section === sec) blocks.at(-1).end = i;
+    else blocks.push({ section: sec, start: i, end: i });
+  });
+  return blocks;
+}
+
+// outline is the steps, grouped under their sections' headings. Steps and
+// sections can be dragged by their ⠿ handles.
+function outline(ed, d) {
+  const mw = !!d.maintenance_window;
+  const inputs = (d.inputs || []).filter((x) => x.name);
+  return `<div class="outline" id="outline">
+    <div class="drop-zone" data-drop="top">Drop here: before every section (no section)</div>
+    ${blocksOf(d).map((b) => {
+      const steps = d.steps.slice(b.start, b.end + 1).map((s, k) => stepItem(ed, d, s, b.start + k)).join("");
+      if (!b.section) return `<div class="sec-block nosec"><ol class="steps struct-steps">${steps}</ol></div>`;
+      const n = b.section, info = secEntry(d, n, false) || {};
+      const open = ed.secOpen.has(n);
+      const target = (field) => (create) => [secEntry(d, n, create) || {}, field];
+      return `<div class="sec-block" data-block="${b.start}">
+        <div class="sec-head" data-head="${b.start}">
+          <span class="grip" draggable="true" data-grip="sec" data-start="${b.start}" data-end="${b.end}" title="Drag to move the section">⠿</span>
+          <input class="sec-name" data-sec-rename="${esc(n)}" value="${esc(n)}" size="${Math.max(10, n.length + 2)}" title="${esc(H.section.name)}">${cmtBtn(target("#"))}
+          ${mw ? `<span class="sec-at" title="${esc(H.section.window_offset)}">T <input data-sec="${esc(n)}" data-sec-field="window_offset" value="${esc(info.window_offset || "")}" placeholder="e.g. 0">
+            <select data-sec="${esc(n)}" data-sec-field="offset_input" title="${esc(H.step.offset_input)}"><option value="">no override</option>${inputs.map((x) => `<option value="${esc(x.name)}" ${x.name === info.offset_input ? "selected" : ""}>input: ${esc(x.name)}</option>`).join("")}</select></span>` : ""}
+          <button class="link sec-toggle" data-act="sec-toggle" data-sec="${esc(n)}">${open ? "▾" : "▸"} ${info.description || info.expect ? "About" : "+ About"}</button>
+          ${!open && info.description ? `<span class="muted small sec-preview">${esc(info.description.split("\n")[0])}</span>` : ""}
+          <span class="spacer"></span>
+          <span class="muted small">${b.end - b.start + 1} step${b.end > b.start ? "s" : ""}</span>
+          <button class="icon-btn" data-act="sec-add-step" data-i="${b.end}" title="Add a step at the end of this section">＋</button>
+          <button class="icon-btn danger" data-act="sec-ungroup" data-i="${b.start}" title="Remove this heading (its steps join the section above)">✕</button>
+        </div>
+        ${open ? `<div class="sec-details">
+          <label><span class="flabel">What it does${helpIcon(H.section.description)}${cmtBtn(target("description"))}</span><textarea rows="2" data-sec="${esc(n)}" data-sec-field="description">${esc(info.description || "")}</textarea></label>
+          <label><span class="flabel">By the end${helpIcon(H.section.expect)}${cmtBtn(target("expect"))}</span><textarea rows="2" data-sec="${esc(n)}" data-sec-field="expect">${esc(info.expect || "")}</textarea></label>
+        </div>` : ""}
+        <ol class="steps struct-steps">${steps}</ol>
+        <div class="drop-zone small" data-drop-after="${b.end}">Drop here: end of ${esc(n)}</div>
+      </div>`;
+    }).join("")}
+    <div class="drop-zone" data-drop="end">Drop here: at the end</div>
+  </div>
+  <div class="row outline-actions"><button data-act="add-step">+ Add step</button><button data-act="add-section">+ Add section</button>
+    <span class="muted small">Drag ⠿ to reorder steps and sections, or to move a step into another section.</span></div>`;
+}
+
+function stepItem(ed, d, s, i) {
+  const r = ed.runs.get(s);
+  return `<li class="step ${inWindow(d.steps, i) ? "in-window" : ""}" data-step="${i}">
+    <div class="step-head" data-act="open" data-i="${i}">
+      <span class="grip" draggable="true" data-grip="step" data-i="${i}" title="Drag to move the step">⠿</span>
+      <span class="n">${i + 1}</span><span class="name">${esc(s.name || "(unnamed)")} ${stepBadges(s)} ${plannedBadge(d.steps, d.sections, i)}</span>${cmtBtn([s, "#"])}
+      <span class="spacer"></span>
+      <button class="icon-btn" data-act="run-this" data-i="${i}" title="Run just this step with the test values">▶ Run this</button>
+      <button class="icon-btn" data-act="up" data-i="${i}" title="Move up (into the section above, from the top of a section)" ${i === 0 ? "disabled" : ""}>↑</button>
+      <button class="icon-btn" data-act="down" data-i="${i}" title="Move down (into the section below, from the end of a section)" ${i === d.steps.length - 1 ? "disabled" : ""}>↓</button>
+      <button class="icon-btn" data-act="dup" data-i="${i}" title="Duplicate">⧉</button>
+      <button class="icon-btn danger" data-act="del" data-i="${i}" title="Delete">✕</button>
+    </div>
+    ${ed.open.has(s) ? `<div class="step-body step-edit">
+      <div class="se-details" style="width:${ed.widths[0] ? ed.widths[0] + "px" : r ? "30%" : "38%"}">${detailsPane(ed, d, s, i)}</div>
+      <div class="split" data-split="0" title="Drag to resize"></div>
+      <div class="se-command">${stepLeft(ed, s, i)}</div>
+      ${r ? `<div class="split" data-split="1" title="Drag to resize"></div>
+        <div class="se-run run-slot" data-uid="${uidOf(s)}" style="width:${ed.widths[1] ? ed.widths[1] + "px" : "34%"}">${runPane(ed, s, i)}</div>` : ""}
+    </div>` : ""}
+  </li>`;
+}
+
+// moveStep takes step from to just before index to (in the list without
+// it), into section sec.
+function moveStep(d, from, to, sec) {
+  const [s] = d.steps.splice(from, 1);
+  s.section = sec || undefined;
+  d.steps.splice(Math.max(0, Math.min(to, d.steps.length)), 0, s);
 }
 
 function renderStruct(ed) {
   const d = ed.doc;
   d.inputs ||= [];
   d.steps ||= [];
-  ed.adv ||= new Set();
-  ed.runs ||= new Map();
   ed.widths ||= [null, null]; // px once dragged; proportional until then
+  ed.cmtTargets = [];
+  curEd = ed;
   const pane = $("#struct-pane");
-  pane.innerHTML = `
+  const html = `
     <div class="card">
-      <h3>Runbook</h3>
+      <h3>Runbook${cmtBtn([d, "#"])}</h3>
       <div class="fgroup-rows">
         ${row("Name", H.runbook.name, control("name", "text", d.name))}
         ${row("What it's for", H.runbook.description, control("description", "area", d.description, { rows: 3 }))}
@@ -464,7 +666,6 @@ function renderStruct(ed) {
         d.maintenance_window ? row("Target length", H.runbook.window_target, offsetPair(d, "maintenance_window.target", d.maintenance_window?.target, "maintenance_window.target_input", d.maintenance_window?.target_input, "e.g. 45m")) : "",
         d.maintenance_window ? row("Description", H.runbook.window_description, control("maintenance_window.description", "text", d.maintenance_window?.description)) : "",
       ], { collapsible: true, id: "rb-window", open: ed.windowOpen ?? !!d.maintenance_window })}
-      ${sectionsGroup(d)}
       ${group("Shell, environment & masking", [
         row("Shell", H.runbook.shell, control("shell", "text", d.shell, { placeholder: "sh" })),
         row("Environment", H.runbook.env, control("env", "kv", d.env, { placeholder: "KEY=value" })),
@@ -499,33 +700,18 @@ function renderStruct(ed) {
     </div>
     ${testValuesCard(ed, d)}
     <h3>Steps${helpIcon(H.runbook.steps)}</h3>
-    <ol class="steps struct-steps">${d.steps.map((s, i) => `${sectionHeading(d.steps, i, d.sections)}<li class="step ${inWindow(d.steps, i) ? "in-window" : ""}">
-        <div class="step-head" data-act="open" data-i="${i}">
-          <span class="n">${i + 1}</span><span class="name">${esc(s.name || "(unnamed)")} ${stepBadges(s)} ${plannedBadge(d.steps, d.sections, i)}</span>
-          <span class="spacer"></span>
-          <button class="icon-btn" data-act="run-this" data-i="${i}" title="Run just this step with the test values">▶ Run this</button>
-          <button class="icon-btn" data-act="up" data-i="${i}" title="Move up" ${i === 0 ? "disabled" : ""}>↑</button>
-          <button class="icon-btn" data-act="down" data-i="${i}" title="Move down" ${i === d.steps.length - 1 ? "disabled" : ""}>↓</button>
-          <button class="icon-btn" data-act="dup" data-i="${i}" title="Duplicate">⧉</button>
-          <button class="icon-btn danger" data-act="del" data-i="${i}" title="Delete">✕</button>
-        </div>
-        ${ed.open.has(i) ? `<div class="step-body step-edit">
-          <div class="se-details" style="width:${ed.widths[0] ? ed.widths[0] + "px" : ed.runs.has(i) ? "30%" : "38%"}">${detailsPane(ed, d, s, i)}</div>
-          <div class="split" data-split="0" title="Drag to resize"></div>
-          <div class="se-command">${stepLeft(s, i)}</div>
-          ${ed.runs.has(i) ? `<div class="split" data-split="1" title="Drag to resize"></div>
-            <div class="se-run run-slot" data-i="${i}" style="width:${ed.widths[1] ? ed.widths[1] + "px" : "34%"}">${runPane(ed, i)}</div>` : ""}
-        </div>` : ""}
-      </li>`).join("")}</ol>
-    <button data-act="add-step">+ Add step</button>`;
+    ${outline(ed, d)}`;
+  curEd = null;
+  pane.innerHTML = html;
 
   pane.querySelectorAll(".run-slot").forEach((el) => {
     const log = el.querySelector(".run-log");
     if (log) log.scrollTop = log.scrollHeight;
     const q = el.querySelector(".question");
-    const r = ed.runs.get(+el.dataset.i);
+    const r = ed.runs.get(d.steps.find((x) => uidOf(x) === +el.dataset.uid));
     if (q && r?.question) bindQuestion(q, r.question, r.id);
   });
+  bindDrag(ed, pane);
   const mw = pane.querySelector('[data-group="rb-window"]');
   if (mw) mw.ontoggle = () => (ed.windowOpen = mw.open);
   const tv = pane.querySelector("details.test-values");
@@ -567,7 +753,7 @@ function renderStruct(ed) {
       let sec = d.sections.find((x) => x.name === t.dataset.sec);
       if (!sec) d.sections.push((sec = { name: t.dataset.sec }));
       sec[t.dataset.secField] = t.value || undefined;
-      d.sections = d.sections.filter((x) => x.description || x.expect || x.window_offset || x.offset_input);
+      d.sections = d.sections.filter((x) => x.description || x.expect || x.window_offset || x.offset_input || hasComments(ed, x));
       return;
     }
     if (t.matches("[data-mw-toggle]") && e.type === "change") {
@@ -586,7 +772,7 @@ function renderStruct(ed) {
       delete d.maintenance_window;
       d.steps.forEach((st) => fields.forEach((f) => delete st[f]));
       (d.sections || []).forEach((x) => { delete x.window_offset; delete x.offset_input; });
-      d.sections = (d.sections || []).filter((x) => x.description || x.expect);
+      d.sections = (d.sections || []).filter((x) => x.description || x.expect || hasComments(ed, x));
       return renderStruct(ed);
     }
     if (t.matches("[data-sec-rename]") && e.type === "change") {
@@ -601,10 +787,16 @@ function renderStruct(ed) {
       return renderStruct(ed);
     }
     if (t.matches("[data-sec-pick]") && e.type === "change") {
-      let v = t.value;
-      if (v === "__new__") v = (prompt("New section name:") || "").trim();
-      if (v === "__new__" || (t.value === "__new__" && !v)) return renderStruct(ed);
-      d.steps[+t.dataset.i].section = v || undefined;
+      const i = +t.dataset.i;
+      if (t.value === "__new__") {
+        const v = (prompt("New section name (it starts at this step):") || "").trim();
+        if (v) d.steps[i].section = v;
+        return renderStruct(ed);
+      }
+      // Move it to the end of the (last block of the) chosen section.
+      const last = d.steps.map((x) => x.section || "").lastIndexOf(t.value);
+      const to = last < 0 ? d.steps.length : last >= i ? last : last + 1;
+      moveStep(d, i, to, t.value);
       return renderStruct(ed);
     }
     if (t.matches("[data-way-kind]") && e.type === "change") {
@@ -617,6 +809,7 @@ function renderStruct(ed) {
       return renderStruct(ed);
     }
     if (t.matches("[data-pref]") && e.type === "change") {
+      ed.wayTab.set(d.steps[+t.dataset.i], +t.dataset.j);
       d.steps[+t.dataset.i].ways.forEach((w, k) => { if (k === +t.dataset.j) w.preferred = true; else delete w.preferred; });
       return renderStruct(ed);
     }
@@ -643,37 +836,58 @@ function renderStruct(ed) {
     }
   };
   pane.onclick = (e) => {
+    const c = e.target.closest("[data-cmt]");
+    if (c) {
+      e.preventDefault();
+      e.stopPropagation();
+      return editComment(ed, ed.cmtTargets[+c.dataset.cmt]);
+    }
     const b = e.target.closest("[data-act]");
     if (!b || b.tagName === "SELECT" || e.target.closest(".question")) return;
     e.preventDefault();
     e.stopPropagation();
     const i = +b.dataset.i, j = +b.dataset.j, k = +b.dataset.k;
     const s = d.steps[i];
-    const swap = (a, c) => {
-      [d.steps[a], d.steps[c]] = [d.steps[c], d.steps[a]];
-      for (const m of [ed.runs]) {
-        const va = m.get(a), vc = m.get(c);
-        m.delete(a); m.delete(c);
-        if (va) m.set(c, va);
-        if (vc) m.set(a, vc);
-      }
-      for (const set of [ed.open, ed.adv]) {
-        const oa = set.has(a), oc = set.has(c);
-        set.delete(a); set.delete(c);
-        if (oa) set.add(c);
-        if (oc) set.add(a);
-      }
+    // up/down move within a section; from its top (or bottom) a step moves
+    // into the section above (or below).
+    const move = (dir) => {
+      const nb = d.steps[i + dir];
+      if (!nb) return;
+      if ((nb.section || "") === (s.section || "")) [d.steps[i], d.steps[i + dir]] = [nb, s];
+      else s.section = nb.section;
     };
     switch (b.dataset.act) {
-      case "open": toggle(ed.open, i); break;
-      case "up": swap(i, i - 1); break;
-      case "down": swap(i, i + 1); break;
+      case "open": toggle(ed.open, s); break;
+      case "up": move(-1); break;
+      case "down": move(1); break;
       case "dup": d.steps.splice(i + 1, 0, structuredClone({ ...s, id: undefined, name: `${s.name} (copy)` })); break;
-      case "del": if (!confirm(`Delete step ${i + 1} (${s.name})?`)) return; d.steps.splice(i, 1); ed.open.clear(); ed.runs.clear(); ed.adv.clear(); break;
-      case "adv": toggle(ed.adv, i); break;
-      case "run-this": ed.open.add(i); return runThis(ed, i);
-      case "stop-run": { const r = ed.runs.get(i); if (r?.id) api("POST", `/api/runs/${enc(r.id)}/cancel`).catch(() => {}); return; }
-      case "close-run": ed.runs.get(i)?.es?.close(); ed.runs.delete(i); break;
+      case "del": if (!confirm(`Delete step ${i + 1} (${s.name})?`)) return; ed.runs.get(s)?.es?.close(); d.steps.splice(i, 1); break;
+      case "adv": toggle(ed.adv, s); break;
+      case "run-this": ed.open.add(s); return runThis(ed, i);
+      case "stop-run": { const r = ed.runs.get(s); if (r?.id) api("POST", `/api/runs/${enc(r.id)}/cancel`).catch(() => {}); return; }
+      case "close-run": ed.runs.get(s)?.es?.close(); ed.runs.delete(s); break;
+      case "way-tab": ed.wayTab.set(s, j); break;
+      case "sec-toggle": toggle(ed.secOpen, b.dataset.sec); break;
+      case "sec-add-step": {
+        const ns = { name: "New step", run: "echo hello", section: s.section };
+        d.steps.splice(i + 1, 0, ns);
+        ed.open.add(ns);
+        break;
+      }
+      case "sec-ungroup": {
+        if (!confirm(`Remove the heading “${s.section}”? Its steps join the section above.`)) return;
+        const name = s.section, above = i > 0 ? d.steps[i - 1].section : undefined;
+        for (let k = i; k < d.steps.length && d.steps[k].section === name; k++) d.steps[k].section = above;
+        break;
+      }
+      case "add-section": {
+        const name = (prompt("New section name:") || "").trim();
+        if (!name) return;
+        const ns = { name: "New step", run: "echo hello", section: name };
+        d.steps.push(ns);
+        ed.open.add(ns);
+        break;
+      }
       case "save-test":
         api("PUT", `/api/runbooks/${enc(ed.name)}/test-values`, ed.test).then(() => toast("Test values saved")).catch((err) => toast(err.message));
         return;
@@ -707,10 +921,13 @@ function renderStruct(ed) {
         } else {
           s.ways.push({ name: uniqueWayName(s.ways, "Another way"), run: "echo TODO" });
         }
+        ed.wayTab.set(s, s.ways.length - 1);
         break;
       }
       case "del-way": {
+        if (!confirm(`Remove the way “${s.ways[j].name}”?`)) return;
         s.ways.splice(j, 1);
+        ed.wayTab.set(s, 0);
         if (s.ways.length === 1) {
           // One way left: it's just the step's script, instructions or checks again.
           const w = s.ways[0];
@@ -722,10 +939,12 @@ function renderStruct(ed) {
         }
         break;
       }
-      case "add-step":
-        d.steps.push({ name: "New step", run: "echo hello", section: d.steps.at(-1)?.section });
-        ed.open.add(d.steps.length - 1);
+      case "add-step": {
+        const ns = { name: "New step", run: "echo hello", section: d.steps.at(-1)?.section };
+        d.steps.push(ns);
+        ed.open.add(ns);
         break;
+      }
       case "add-input": d.inputs.push({ name: "" }); break;
       case "del-input": d.inputs.splice(i, 1); break;
       case "add-fn": {
@@ -738,5 +957,90 @@ function renderStruct(ed) {
       case "del-fn": delete d.functions[b.dataset.fn]; break;
     }
     renderStruct(ed);
+  };
+}
+
+// ---------- drag and drop ----------
+// Steps drop before or after another step (joining its section), on a
+// section heading (first in that section), at the end of a section, or at
+// the very top (no section) or end. Sections drop on another heading
+// (before it) or at the end.
+
+function bindDrag(ed, pane) {
+  const d = ed.doc;
+  let drag = null, mark = null;
+  const clear = () => { mark?.classList.remove("drop-before", "drop-after", "drop-on"); mark = null; };
+  const target = (e) => {
+    if (!drag) return null;
+    const zone = e.target.closest("[data-drop],[data-drop-after]");
+    if (zone) {
+      if (drag.type === "sec" && !zone.dataset.drop) return null;
+      if (drag.type === "sec" && zone.dataset.drop === "top") return null;
+      return { el: zone, cls: "drop-on", zone };
+    }
+    const head = e.target.closest("[data-head]");
+    if (head) {
+      if (drag.type === "sec" && +head.dataset.head === drag.start) return null;
+      return { el: head, cls: drag.type === "sec" ? "drop-before" : "drop-on", head: +head.dataset.head };
+    }
+    const li = e.target.closest("li[data-step]");
+    if (li && drag.type === "step") {
+      const i = +li.dataset.step;
+      if (i === drag.i) return null;
+      const r = li.getBoundingClientRect();
+      const after = e.clientY > r.top + Math.min(r.height, 44) / 2;
+      return { el: li, cls: after ? "drop-after" : "drop-before", step: i, after };
+    }
+    return null;
+  };
+  pane.ondragstart = (e) => {
+    const g = e.target.closest?.("[data-grip]");
+    if (!g) return;
+    drag = g.dataset.grip === "sec" ? { type: "sec", start: +g.dataset.start, end: +g.dataset.end } : { type: "step", i: +g.dataset.i };
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", "");
+    pane.classList.add("dragging-" + drag.type);
+    const li = g.closest(drag.type === "sec" ? ".sec-block" : "li");
+    if (li) e.dataTransfer.setDragImage(li, 20, 16);
+  };
+  pane.ondragover = (e) => {
+    const t = target(e);
+    clear();
+    if (!t) return;
+    e.preventDefault();
+    mark = t.el;
+    mark.classList.add(t.cls);
+  };
+  pane.ondragleave = (e) => { if (!pane.contains(e.relatedTarget)) clear(); };
+  pane.ondragend = () => { clear(); drag = null; pane.classList.remove("dragging-step", "dragging-sec"); };
+  pane.ondrop = (e) => {
+    const t = target(e);
+    clear();
+    pane.classList.remove("dragging-step", "dragging-sec");
+    if (!t) return;
+    e.preventDefault();
+    const steps = d.steps;
+    if (drag.type === "step") {
+      const from = drag.i, moving = steps[from];
+      let anchor, before = true, sec;
+      if (t.step !== undefined) { anchor = steps[t.step]; before = !t.after; sec = anchor.section; }
+      else if (t.head !== undefined) { anchor = steps[t.head]; sec = anchor.section; }
+      else if (t.zone.dataset.dropAfter !== undefined) { anchor = steps[+t.zone.dataset.dropAfter]; before = false; sec = anchor.section; }
+      else if (t.zone.dataset.drop === "top") { anchor = steps[0]; sec = undefined; }
+      else { anchor = steps.at(-1); before = false; sec = anchor.section; }
+      if (anchor === moving) return renderStruct(ed);
+      steps.splice(from, 1);
+      const at = steps.indexOf(anchor) + (before ? 0 : 1);
+      moving.section = sec || undefined;
+      steps.splice(at, 0, moving);
+    } else {
+      const block = steps.slice(drag.start, drag.end + 1);
+      const anchor = t.head !== undefined ? steps[t.head] : null;
+      steps.splice(drag.start, block.length);
+      steps.splice(anchor ? steps.indexOf(anchor) : steps.length, 0, ...block);
+    }
+    drag = null;
+    renderStruct(ed);
+    pane.dispatchEvent(new Event("input"));
   };
 }

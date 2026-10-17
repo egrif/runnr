@@ -188,3 +188,44 @@ func (s *Store) MoveRunbook(runbookName, from, to string, create bool) (moved st
 	}
 	return from, nil
 }
+
+// SetCollectionRunbooks replaces a collection's runbook list (any order);
+// runbooks new to it must exist.
+func (s *Store) SetCollectionRunbooks(name string, runbooks []string) (int, error) {
+	v, _, err := s.EditCollectionRunbooks(name, false, func(list []string) ([]string, error) {
+		seen := map[string]bool{}
+		for _, r := range runbooks {
+			if seen[r] {
+				return nil, fmt.Errorf("runbook %q is listed twice", r)
+			}
+			seen[r] = true
+			if !slices.Contains(list, r) && !s.Exists(r) {
+				return nil, fmt.Errorf("runbook %q: %w", r, ErrNotFound)
+			}
+		}
+		return runbooks, nil
+	})
+	return v, err
+}
+
+// UpdateCollection changes a collection's name, description or expect
+// (nil leaves one as it is), keeping the rest of its YAML.
+func (s *Store) UpdateCollection(name string, newName, description, expect *string) (string, int, error) {
+	d, err := s.LoadCollection(name)
+	if err != nil {
+		return "", 0, err
+	}
+	raw := []byte(d.Raw)
+	for key, v := range map[string]*string{"name": newName, "description": description, "expect": expect} {
+		if v == nil {
+			continue
+		}
+		if key == "name" && strings.TrimSpace(*v) == "" {
+			return "", 0, errors.New("a collection needs a name")
+		}
+		if raw, err = runbook.SetCollectionField(raw, key, strings.TrimSpace(*v)); err != nil {
+			return "", 0, err
+		}
+	}
+	return s.SaveCollection(raw, SaveOpts{OldName: name, BaseVersion: d.Version})
+}

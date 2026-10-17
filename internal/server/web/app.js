@@ -119,7 +119,7 @@ function renderSidebar() {
     members.forEach((r) => grouped.add(r.name));
     const shown = members.filter(matches);
     if (!shown.length && q) continue;
-    html += `<li class="col-head"><a href="#/collections/${enc(c.name)}" title="${esc(c.collection?.description || "")}">${esc(c.name)}</a></li>${shown.map(item).join("")}`;
+    html += `<li class="col-head"><a href="#/collections" title="${esc(c.collection?.description || "")}">${esc(c.name)}</a></li>${shown.map(item).join("")}`;
   }
   const rest = runbooks.filter((r) => !grouped.has(r.name) && matches(r));
   if (rest.length) html += (collections.length ? `<li class="col-head muted">Other runbooks</li>` : "") + rest.map(item).join("");

@@ -119,7 +119,7 @@ function helpIcon(text) {
     tip.style.top = (below ? r.bottom + 6 : Math.max(8, r.top - 6 - t.height)) + "px";
   };
   const hide = () => tip?.remove();
-  const at = (e) => e.target.closest?.(".info[data-tip]");
+  const at = (e) => e.target.closest?.(".info[data-tip], .cmt[data-tip]");
   document.addEventListener("mouseover", (e) => { const el = at(e); if (el) show(el); });
   document.addEventListener("mouseout", (e) => { if (at(e)) hide(); });
   document.addEventListener("focusin", (e) => { const el = at(e); if (el) show(el); });

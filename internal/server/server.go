@@ -77,6 +77,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/collections/{name}", s.deleteCollection)
 	mux.HandleFunc("POST /api/collections/validate", s.validateCollection)
 	mux.HandleFunc("POST /api/collections/{name}/runbooks", s.addToCollection)
+	mux.HandleFunc("PUT /api/collections/{name}/runbooks", s.setCollectionRunbooks)
+	mux.HandleFunc("PATCH /api/collections/{name}", s.patchCollection)
 	mux.HandleFunc("DELETE /api/collections/{name}/runbooks/{runbook}", s.removeFromCollection)
 	mux.HandleFunc("POST /api/runbooks/{name}/move", s.moveRunbook)
 	mux.HandleFunc("GET /api/schedules", s.listSchedules)
@@ -726,17 +728,30 @@ func (s *Server) parse(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "runbook": rb})
+	comments, _ := runbook.ExtractComments(raw)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "runbook": rb, "comments": comments})
 }
 
-// format turns the structured form back into YAML.
+// format turns the structured form back into YAML. The body is the
+// runbook, or {runbook, comments} to put comments back on their fields.
 func (s *Server) format(w http.ResponseWriter, r *http.Request) {
-	var rb runbook.Runbook
-	if err := decode(r, &rb); err != nil {
+	body, err := readBody(r)
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	raw, err := runbook.Format(&rb)
+	var wrapped struct {
+		Runbook  *runbook.Runbook `json:"runbook"`
+		Comments runbook.Comments `json:"comments"`
+	}
+	var rb runbook.Runbook
+	if json.Unmarshal(body, &wrapped) == nil && wrapped.Runbook != nil {
+		rb = *wrapped.Runbook
+	} else if err := json.Unmarshal(body, &rb); err != nil {
+		writeErr(w, err)
+		return
+	}
+	raw, err := runbook.FormatWithComments(&rb, wrapped.Comments)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
 		return
@@ -1224,6 +1239,44 @@ func (s *Server) addToCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"version": ver, "created": created})
+}
+
+// setCollectionRunbooks replaces the list (body {"runbooks": [...]}), e.g.
+// to reorder it.
+func (s *Server) setCollectionRunbooks(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Runbooks []string `json:"runbooks"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	ver, err := s.st.SetCollectionRunbooks(r.PathValue("name"), body.Runbooks)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": ver})
+}
+
+// patchCollection changes name, description or expect (fields left out
+// stay as they are).
+func (s *Server) patchCollection(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+		Expect      *string `json:"expect"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	name, ver, err := s.st.UpdateCollection(r.PathValue("name"), body.Name, body.Description, body.Expect)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "version": ver})
 }
 
 func (s *Server) removeFromCollection(w http.ResponseWriter, r *http.Request) {

@@ -421,3 +421,69 @@ dialog.edit-step .row { margin-top: 8px; gap: 8px; }
 .offset-pair select { max-width: 45%; font-size: 12px; }
 .section .badge-k { text-transform: none; letter-spacing: 0; }
 .badge-k.planned.ignored { text-decoration: line-through; opacity: .6; }
+
+/* Comments on fields */
+.cmt { background: none; border: none; padding: 0 2px; margin-left: 2px; font-size: 12px; cursor: pointer; opacity: 0; filter: grayscale(1); line-height: 1; }
+.frow:hover .cmt, .step-head:hover .cmt, .sec-head:hover .cmt, .way-props:hover .cmt, h3:hover .cmt, .flabel:hover .cmt { opacity: .45; }
+.cmt.has { opacity: 1 !important; filter: none; }
+.cmt:focus-visible { opacity: 1; }
+.cmt-dialog textarea { width: 100%; min-height: 0 !important; }
+
+/* Outline: sections inline with their steps */
+.outline { display: flex; flex-direction: column; gap: 6px; }
+.sec-block { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: 8px; padding: 6px 8px 8px; background: var(--panel); }
+.sec-block.nosec { border: none; padding: 0; background: none; }
+.sec-head { display: flex; align-items: center; gap: 8px; padding: 2px 0 6px; border-bottom: 1px dashed var(--border); margin-bottom: 6px; flex-wrap: wrap; }
+.sec-head .sec-name { font-weight: 700; font-size: 14px; border: 1px solid transparent; background: transparent; padding: 2px 6px; width: auto; max-width: 60%; }
+.sec-head .sec-name:hover, .sec-head .sec-name:focus { border-color: var(--border); background: var(--bg); }
+.sec-at { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }
+.sec-at input { width: 80px; padding: 2px 6px; }
+.sec-at select { font-size: 12px; padding: 2px 4px; }
+.sec-preview { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec-details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin: 0 0 8px; }
+.sec-details label { display: flex; flex-direction: column; gap: 2px; }
+.sec-details textarea { width: 100%; }
+@media (max-width: 800px) { .sec-details { grid-template-columns: 1fr; } }
+.sec-block .struct-steps { margin: 0; }
+.grip { cursor: grab; color: var(--muted); padding: 0 4px; user-select: none; font-size: 14px; }
+.grip:active { cursor: grabbing; }
+/* Drop zones keep their size, so starting a drag doesn't move anything. */
+.drop-zone { height: 22px; line-height: 18px; border: 2px dashed transparent; border-radius: 6px; text-align: center; font-size: 12px; color: transparent; }
+.drop-zone.small { height: 8px; line-height: 4px; font-size: 0; margin-top: 2px; }
+.dragging-step .drop-zone, .dragging-sec .drop-zone[data-drop="end"] { border-color: var(--border); color: var(--muted); }
+.drop-zone.drop-on { border-color: var(--accent); color: var(--accent); background: var(--bg); }
+.sec-head.drop-on { outline: 2px solid var(--accent); border-radius: 6px; }
+.drop-before { box-shadow: 0 -3px 0 0 var(--accent) !important; }
+.drop-after { box-shadow: 0 3px 0 0 var(--accent) !important; }
+.outline-actions { gap: 8px; margin-top: 8px; }
+
+/* Ways as tabs */
+.way-bar { gap: 8px; margin-bottom: 6px; }
+.way-bar .kind-seg { margin-bottom: 0; }
+.way-tabs { display: flex; align-items: flex-end; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 0; flex-wrap: wrap; }
+.way-tab { border: 1px solid var(--border); border-bottom: none; border-radius: 6px 6px 0 0; background: var(--bg); padding: 4px 12px; font-size: 13px; color: var(--muted); margin-bottom: -1px; }
+.way-tab.on { background: var(--panel); color: var(--text); font-weight: 600; border-bottom: 1px solid var(--panel); }
+.way-tab.add { color: var(--accent); }
+.way-tabs .check { margin-left: auto; padding-bottom: 4px; }
+.way-panel { border: 1px solid var(--border); border-top: none; border-radius: 0 0 8px 8px; padding: 8px; background: var(--panel); }
+.way-props { gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+.way-props input:not([type=checkbox]) { flex: 0 1 220px; }
+.offset-pair { flex-wrap: wrap; } .offset-pair select { max-width: 100%; }
+
+/* Collections board */
+.col-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; align-items: start; }
+.col-card { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.col-card.loose { background: transparent; border-style: dashed; }
+.col-head-row { gap: 8px; }
+.col-name { font-weight: 700; font-size: 15px; border: 1px solid transparent; background: transparent; padding: 2px 6px; flex: 1; min-width: 0; }
+.col-name:hover, .col-name:focus { border-color: var(--border); background: var(--bg); }
+.col-field { width: 100%; font-size: 13px; resize: vertical; }
+.col-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.col-list li { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: grab; min-width: 0; }
+.col-list li a { font-weight: 600; white-space: nowrap; }
+.col-list .rb-line { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-drop { border: 2px dashed transparent; border-radius: 6px; padding: 4px; text-align: center; font-size: 12px; color: transparent; }
+.col-board.dragging .col-drop { border-color: var(--border); color: var(--muted); }
+.col-drop.drop-on { border-color: var(--accent) !important; color: var(--accent) !important; }
+.col-card select { font-size: 12px; }
+kbd { font-size: 11px; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; background: var(--bg); }

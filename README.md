@@ -178,8 +178,16 @@ multi-day procedures, abort at a "wait" step and resume later.
   unsaved edits in a third pane (the earlier `always` steps first if you
   like; nothing after it runs), using the runbook's **test values** (inputs and
   extra variables; secret inputs stay in the browser). Test runs aren't
-  recorded. The panes are resizable. The structured view saves by
-  regenerating the YAML, so YAML comments are dropped (it asks first).
+  recorded. The panes are resizable. The editor opens in the structured view
+  (YAML is a click away). Steps sit under their **section headings**, each a
+  compact line (name, planned time, ▸ About for its description); drag ⠿ to
+  reorder steps and sections or move a step into another section. A step's
+  **ways** are tabs. **Comments**: 💬 beside a field shows its YAML comment
+  on hover and edits it on click; they're saved as YAML comments on that
+  field and move with it.
+- **Collections** is a board: a card per collection, editable in place.
+  Drag a runbook to another card to move it (Alt/⌥ to add it there too),
+  within a card to reorder, or to "Not in a collection" to take it out.
 - **Collections** group runbooks in the sidebar, with what they're for.
 - History, versions, notes.
 

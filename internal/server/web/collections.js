@@ -22,13 +22,13 @@ function pickedCol(v) {
   return n;
 }
 
-// membership shows which collections a runbook is in, with remove, move and add.
+// membership shows which collections a runbook is in (✕ takes it out) and
+// lets you add it to another. Moving and reordering are on the Collections page.
 function membership(name) {
   const inCols = collections.filter((c) => c.collection?.runbooks.includes(name)).map((c) => c.name);
-  return `<div class="membership">
-    ${inCols.map((c) => `<span class="tag">in <a href="#/collections/${enc(c)}">${esc(c)}</a> <button class="link small-x" data-col-remove="${esc(c)}" title="Take it out of ${esc(c)} (the runbook stays)">✕</button></span>`).join("")}
-    ${inCols.length ? colPicker("col-move", "Move to…", inCols) : ""}
-    ${colPicker("col-add", inCols.length ? "Also add to…" : "Add to collection…", inCols)}
+  return `<div class="membership"><span class="muted small">Collections:</span>
+    ${inCols.length ? inCols.map((c) => `<span class="tag"><a href="#/collections">${esc(c)}</a> <button class="link small-x" data-col-remove="${esc(c)}" title="Take it out of ${esc(c)} (the runbook stays)">✕</button></span>`).join("") : `<span class="muted small">none</span>`}
+    ${colPicker("col-add", "+ Add to…", inCols)}
   </div>`;
 }
 
@@ -60,19 +60,136 @@ function bindMembership(el, name, after) {
   };
 }
 
+// viewCollections is a board: a card per collection with its runbooks,
+// plus the runbooks in none. Drag a runbook to another card to move it
+// (hold Alt/Option to add it there as well), or within a card to reorder.
 async function viewCollections() {
   await loadCollections();
+  const inAny = new Set(collections.flatMap((c) => c.collection?.runbooks || []));
+  const byName = new Map(runbooks.map((r) => [r.name, r]));
+  const item = (r, col) => {
+    const rb = byName.get(r);
+    return `<li draggable="true" data-rb="${esc(r)}" data-from="${esc(col)}">
+      <span class="grip">⠿</span><a href="#/runbooks/${enc(r)}" draggable="false">${esc(r)}</a>
+      <span class="muted small rb-line">${esc(rb ? (rb.description || "").split("\n")[0] : "(no such runbook)")}</span>
+      ${col ? `<button class="icon-btn small-x" data-remove="${esc(r)}" data-col="${esc(col)}" title="Take it out of ${esc(col)} (the runbook stays)">✕</button>` : ""}
+    </li>`;
+  };
+  const card = (c) => {
+    const col = c.collection;
+    const others = runbooks.filter((r) => !col?.runbooks.includes(r.name));
+    return `<div class="card col-card" data-card="${esc(c.name)}">
+      <div class="row col-head-row">
+        <input class="col-name" data-col-name="${esc(c.name)}" value="${esc(c.name)}" title="Rename">
+        <span class="muted small">${col ? `${col.runbooks.length} runbook${col.runbooks.length === 1 ? "" : "s"}` : ""}</span>
+        <span class="spacer"></span>
+        <a class="small" href="#/collections/${enc(c.name)}" title="Edit the YAML">YAML</a>
+        <button class="icon-btn danger" data-delete-col="${esc(c.name)}" title="Delete the collection (its runbooks stay)">🗑</button>
+      </div>
+      ${col ? `<textarea class="col-field" rows="2" data-col-field="description" data-col="${esc(c.name)}" placeholder="What this group of runbooks is for">${esc(col.description || "")}</textarea>
+        <textarea class="col-field" rows="1" data-col-field="expect" data-col="${esc(c.name)}" placeholder="By the end: how things stand once they've all run">${esc(col.expect || "")}</textarea>
+        <ol class="col-list" data-list="${esc(c.name)}">${col.runbooks.map((r) => item(r, c.name)).join("")}</ol>
+        <div class="col-drop" data-list-end="${esc(c.name)}">Drop a runbook here</div>
+        ${others.length ? `<select data-add-to="${esc(c.name)}"><option value="">+ Add a runbook…</option>${others.map((r) => `<option>${esc(r.name)}</option>`).join("")}</select>` : ""}`
+        : `<p class="error-text">${esc(c.error)}</p>`}
+    </div>`;
+  };
+  const loose = runbooks.filter((r) => !inAny.has(r.name));
   main.innerHTML = `
     <div class="row"><h1>Collections</h1><span class="spacer"></span><button class="primary" id="new-col">+ New collection</button></div>
-    <p class="muted">Groups of runbooks that belong together (say, the prep, cutover and fallback runbooks of one migration), with what they're for. The sidebar lists runbooks by collection.</p>
-    ${collections.length ? collections.map((c) => `<div class="card col-card" data-col="${esc(c.name)}">
-      <h3>${esc(c.name)}</h3>
-      ${c.collection ? `<p>${esc(c.collection.description || "")}</p>
-        ${c.collection.expect ? `<p class="muted"><b>By the end:</b> ${esc(c.collection.expect)}</p>` : ""}
-        <ol>${c.collection.runbooks.map((r) => `<li><a href="#/runbooks/${enc(r)}">${esc(r)}</a></li>`).join("")}</ol>` : `<p class="error-text">${esc(c.error)}</p>`}
-    </div>`).join("") : `<div class="empty">No collections yet.</div>`}`;
-  $("#new-col").onclick = () => (location.hash = "#/collections/new");
-  main.querySelectorAll("[data-col] h3").forEach((h) => (h.onclick = () => (location.hash = `#/collections/${enc(h.closest("[data-col]").dataset.col)}`)));
+    <p class="muted">Groups of runbooks that belong together (say, the prep, cutover and fallback runbooks of one migration). Drag a runbook to another collection to <b>move</b> it, hold <kbd>Alt</kbd>/<kbd>⌥</kbd> as you drop to <b>add</b> it there too, or drag within a collection to reorder. Names and descriptions save as you edit them.</p>
+    <div class="col-board">
+      ${collections.map(card).join("")}
+      <div class="card col-card loose" data-card="">
+        <div class="row col-head-row"><b>Not in a collection</b><span class="muted small">${loose.length}</span></div>
+        <p class="muted small">Drop a runbook here to take it out of its collection.</p>
+        <ol class="col-list" data-list="">${loose.map((r) => item(r.name, "")).join("")}</ol>
+        <div class="col-drop" data-list-end="">Drop here</div>
+      </div>
+    </div>`;
+  const reload = async (msg) => { if (msg) toast(msg); await loadRunbooks(); viewCollections(); };
+  const fail = (e) => { toast(e.message); reload(); };
+
+  $("#new-col").onclick = async () => {
+    const n = (prompt("Name for the new collection (lowercase letters, digits, '.', '_' or '-'):") || "").trim();
+    if (!n) return;
+    try { await api("POST", "/api/collections", `name: ${n}\nrunbooks: []\n`, true); reload(`Created ${n}`); } catch (e) { toast(e.message); }
+  };
+  main.querySelectorAll("[data-col-name]").forEach((el) => (el.onchange = () => {
+    const nw = el.value.trim();
+    api("PATCH", `/api/collections/${enc(el.dataset.colName)}`, { name: nw }).then(() => reload(`Renamed to ${nw}`)).catch(fail);
+  }));
+  main.querySelectorAll("[data-col-field]").forEach((el) => (el.onchange = () => {
+    api("PATCH", `/api/collections/${enc(el.dataset.col)}`, { [el.dataset.colField]: el.value }).then(() => toast("Saved")).catch(fail);
+  }));
+  main.querySelectorAll("[data-delete-col]").forEach((b) => (b.onclick = async () => {
+    if (!confirm(`Delete collection “${b.dataset.deleteCol}”? Its runbooks stay.`)) return;
+    api("DELETE", `/api/collections/${enc(b.dataset.deleteCol)}`).then(() => reload("Deleted")).catch(fail);
+  }));
+  main.querySelectorAll("[data-remove]").forEach((b) => (b.onclick = () => {
+    api("DELETE", `/api/collections/${enc(b.dataset.col)}/runbooks/${enc(b.dataset.remove)}`).then(() => reload(`Took ${b.dataset.remove} out of ${b.dataset.col}`)).catch(fail);
+  }));
+  main.querySelectorAll("[data-add-to]").forEach((sel) => (sel.onchange = () => {
+    if (!sel.value) return;
+    api("POST", `/api/collections/${enc(sel.dataset.addTo)}/runbooks`, { runbooks: [sel.value] }).then(() => reload(`Added ${sel.value}`)).catch(fail);
+  }));
+
+  // Drag and drop.
+  let drag = null, mark = null;
+  const clear = () => { mark?.classList.remove("drop-before", "drop-after", "drop-on"); mark = null; };
+  const board = $(".col-board");
+  const target = (e) => {
+    const li = e.target.closest(".col-list li");
+    if (li && li.dataset.rb !== drag?.rb) {
+      const r = li.getBoundingClientRect();
+      return { el: li, list: li.closest("[data-list]").dataset.list, before: li.dataset.rb, after: e.clientY > r.top + r.height / 2 };
+    }
+    const end = e.target.closest("[data-list-end]") || e.target.closest(".col-card")?.querySelector("[data-list-end]");
+    return end ? { el: end, list: end.dataset.listEnd } : null;
+  };
+  board.ondragstart = (e) => {
+    const li = e.target.closest?.("li[data-rb]");
+    if (!li) return;
+    drag = { rb: li.dataset.rb, from: li.dataset.from };
+    e.dataTransfer.effectAllowed = "copyMove";
+    e.dataTransfer.setData("text/plain", drag.rb);
+    board.classList.add("dragging");
+  };
+  board.ondragover = (e) => {
+    if (!drag) return;
+    const t = target(e);
+    clear();
+    if (!t) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = e.altKey && t.list && t.list !== drag.from ? "copy" : "move";
+    mark = t.el;
+    mark.classList.add(t.before ? (t.after ? "drop-after" : "drop-before") : "drop-on");
+  };
+  board.ondragend = () => { clear(); drag = null; board.classList.remove("dragging"); };
+  board.ondrop = async (e) => {
+    const t = drag && target(e);
+    clear();
+    board.classList.remove("dragging");
+    if (!t) return;
+    e.preventDefault();
+    const { rb, from } = drag;
+    drag = null;
+    try {
+      if (t.list === "") {
+        if (from) { await api("DELETE", `/api/collections/${enc(from)}/runbooks/${enc(rb)}`); return reload(`Took ${rb} out of ${from}`); }
+        return;
+      }
+      const cur = collections.find((c) => c.name === t.list)?.collection?.runbooks || [];
+      const list = cur.filter((x) => x !== rb);
+      let at = t.before ? list.indexOf(t.before) + (t.after ? 1 : 0) : list.length;
+      if (at < 0) at = list.length;
+      list.splice(at, 0, rb);
+      await api("PUT", `/api/collections/${enc(t.list)}/runbooks`, { runbooks: list });
+      const copy = e.altKey && from && from !== t.list;
+      if (from && from !== t.list && !copy) await api("DELETE", `/api/collections/${enc(from)}/runbooks/${enc(rb)}`);
+      reload(from === t.list ? "Reordered" : copy ? `Added ${rb} to ${t.list}` : from ? `Moved ${rb} to ${t.list}` : `Added ${rb} to ${t.list}`);
+    } catch (err) { fail(err); }
+  };
 }
 
 async function viewCollection(name) {
@@ -81,7 +198,8 @@ async function viewCollection(name) {
     : await api("GET", `/api/collections/${enc(name)}`);
   const c = d.collection;
   main.innerHTML = `
-    <h1>${isNew ? "New collection" : esc(name)}</h1>
+    <p><a href="#/collections">← Collections</a></p>
+    <h1>${isNew ? "New collection" : esc(name)} <span class="muted small">YAML</span></h1>
     ${c ? `<p>${esc(c.description || "")}</p>${c.expect ? `<p class="muted"><b>By the end:</b> ${esc(c.expect)}</p>` : ""}
       <ol class="col-runbooks">${c.runbooks.map((r) => {
         const rb = runbooks.find((x) => x.name === r);

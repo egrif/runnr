@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -97,4 +98,58 @@ func SetCollectionRunbooks(raw []byte, names []string) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// SetCollectionField sets a top-level scalar field of a collection's YAML
+// (name, description, expect), or removes it if value is empty, keeping
+// the rest of the YAML (comments included) as it was.
+func SetCollectionField(raw []byte, key, value string) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, errors.New("collection isn't a YAML mapping")
+	}
+	m := doc.Content[0]
+	at := -1
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			at = i
+		}
+	}
+	switch {
+	case value == "" && at >= 0:
+		m.Content = append(m.Content[:at], m.Content[at+2:]...)
+	case value == "":
+	case at >= 0:
+		v := m.Content[at+1]
+		v.Kind, v.Tag, v.Value, v.Content = yaml.ScalarNode, "!!str", value, nil
+		v.Style = 0
+		if strings.Contains(value, "\n") {
+			v.Style = yaml.LiteralStyle
+		}
+	default:
+		// New fields go before runbooks: name, description, expect, runbooks.
+		pos := len(m.Content)
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			if m.Content[i].Value == "runbooks" || (key == "description" && m.Content[i].Value == "expect") {
+				pos = i
+				break
+			}
+		}
+		v := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
+		if strings.Contains(value, "\n") {
+			v.Style = yaml.LiteralStyle
+		}
+		k := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}
+		m.Content = append(m.Content[:pos], append([]*yaml.Node{k, v}, m.Content[pos:]...)...)
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), enc.Close()
 }
