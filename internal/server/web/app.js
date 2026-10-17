@@ -128,6 +128,7 @@ function renderSidebar() {
   $("#help-link").classList.toggle("active", location.hash === "#/help");
   $("#libs-link").classList.toggle("active", location.hash.startsWith("#/libraries"));
   $("#cols-link").classList.toggle("active", location.hash.startsWith("#/collections"));
+  $("#sched-link").classList.toggle("active", location.hash.startsWith("#/schedule"));
 }
 
 $("#filter").addEventListener("input", renderSidebar);
@@ -150,6 +151,7 @@ async function route() {
     if (h === "#/help") return viewHelp();
     if (h === "#/libraries") return await viewLibraries();
     if (h === "#/collections") return await viewCollections();
+    if (h === "#/schedule") return await viewSchedule();
     if ((m = h.match(/^#\/collections\/([^/]+)$/))) return await viewCollection(decodeURIComponent(m[1]));
     if ((m = h.match(/^#\/libraries\/([^/]+)$/))) return await viewLibrary(decodeURIComponent(m[1]));
     return viewHome();
@@ -188,7 +190,7 @@ async function viewRunbook(name, tab, query) {
   bindMembership(main, name, () => route());
   if (tab === "edit" || !rb) return renderEditor($("#tab"), data.raw, name, data.error, data.version, data.updated_at);
   const mode = query.get("resume") ? "resume" : query.get("rerun") ? "rerun" : "run";
-  await viewLaunch($("#tab"), name, mode, query.get("resume") || query.get("rerun") || "");
+  await viewLaunch($("#tab"), name, mode, query.get("resume") || query.get("rerun") || "", query.get("schedule") || "");
 }
 
 // stepDetails shows what a step does: code, expected outcome, outputs.
@@ -449,7 +451,9 @@ function windowBanner(run) {
 // actually started.
 function stepTiming(state, i) {
   if (!state.cfg) return "";
-  const planned = plannedOffset(state.cfg, state.rbSections, i);
+  // The preview has the run's inputs applied (they can override offsets).
+  const pv = state.preview?.[i];
+  const planned = pv ? pv.offset_sec ?? null : plannedOffset(state.cfg, state.rbSections, i);
   const w = state.run.window, s = state.steps[i];
   if (planned == null) return "";
   let out = ` · planned T${fmtOffset(planned)}`;

@@ -419,6 +419,13 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		err = x.resolveInputs(ctx)
 	}
 	if err == nil {
+		// Inputs can override the window's target and planned offsets.
+		err = rb.CheckWindowInputs(x.vars)
+		if x.run.Window != nil {
+			x.run.Window.Target = rb.WindowTarget(x.vars)
+		}
+	}
+	if err == nil {
 		x.restoreState()
 		x.refreshState()
 		if r, ok := ui.(Reviewer); ok && opts.Review && !opts.ShellOnly {

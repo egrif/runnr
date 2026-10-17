@@ -25,7 +25,7 @@ func (x *executor) View(i int) StepView {
 	}
 	v.Background, v.StopAfter = s.Background, s.StopAfter
 	v.Choose, v.Window = s.Choose, s.Window
-	if d, ok := x.rb.PlannedOffset(i); ok {
+	if d, ok := x.rb.PlannedOffset(i, x.vars); ok {
 		sec := int(d.Seconds())
 		v.Offset, v.OffsetSec = FormatOffset(d), &sec
 	}

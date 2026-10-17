@@ -58,14 +58,18 @@ type Section struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	Expect      string `yaml:"expect,omitempty" json:"expect,omitempty"`
 	// WindowOffset is when the section is planned to start, relative to
-	// the maintenance window opening (e.g. -30m, 0, +12m).
+	// the maintenance window opening (e.g. -30m, 0, +12m). OffsetInput
+	// names an input that overrides it when given a value.
 	WindowOffset string `yaml:"window_offset,omitempty" json:"window_offset,omitempty"`
+	OffsetInput  string `yaml:"offset_input,omitempty" json:"offset_input,omitempty"`
 }
 
 // MaintenanceWindow describes the planned production downtime.
 type MaintenanceWindow struct {
 	// Target is how long it's expected (or allowed) to last, e.g. 45m.
+	// TargetInput names an input that overrides it when given a value.
 	Target      string `yaml:"target,omitempty" json:"target,omitempty"`
+	TargetInput string `yaml:"target_input,omitempty" json:"target_input,omitempty"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
@@ -139,6 +143,8 @@ type Step struct {
 	// opening (e.g. -30m, +12m).
 	Window       string `yaml:"window,omitempty" json:"window,omitempty"`
 	WindowOffset string `yaml:"window_offset,omitempty" json:"window_offset,omitempty"`
+	// OffsetInput names an input that overrides WindowOffset when given a value.
+	OffsetInput string `yaml:"offset_input,omitempty" json:"offset_input,omitempty"`
 
 	// Alternatives was replaced by Ways; it's kept only to say so.
 	Alternatives yaml.Node `yaml:"alternatives,omitempty" json:"-"`
@@ -236,23 +242,121 @@ func ParseOffset(v string) (time.Duration, error) {
 	return time.ParseDuration(strings.TrimPrefix(t, "+"))
 }
 
+// offsetOf is an offset field, unless its override input has a value in vars.
+func offsetOf(literal, input string, vars map[string]string) string {
+	if v := strings.TrimSpace(vars[input]); input != "" && v != "" {
+		return v
+	}
+	return literal
+}
+
 // PlannedOffset is when step i is planned to start relative to the window
-// opening: its own window_offset, or its section's for a section's first step.
-func (rb *Runbook) PlannedOffset(i int) (time.Duration, bool) {
+// opening: its own offset, or its section's for a section's first step.
+// Inputs named by offset_input override the offsets they're on.
+func (rb *Runbook) PlannedOffset(i int, vars map[string]string) (time.Duration, bool) {
 	st := rb.Steps[i]
-	v := st.WindowOffset
-	if v == "" && st.Section != "" && (i == 0 || rb.Steps[i-1].Section != st.Section) {
-		for _, sec := range rb.Sections {
-			if sec.Name == st.Section {
-				v = sec.WindowOffset
-			}
-		}
+	v := offsetOf(st.WindowOffset, st.OffsetInput, vars)
+	if v == "" && rb.sectionStarts(i) {
+		v = rb.SectionOffset(st.Section, vars)
 	}
 	if v == "" {
 		return 0, false
 	}
 	d, err := ParseOffset(v)
 	return d, err == nil
+}
+
+// sectionStarts reports whether step i is its section's first step.
+func (rb *Runbook) sectionStarts(i int) bool {
+	st := rb.Steps[i]
+	return st.Section != "" && (i == 0 || rb.Steps[i-1].Section != st.Section)
+}
+
+// SectionOffset is a section's planned start ("" if it has none).
+func (rb *Runbook) SectionOffset(name string, vars map[string]string) string {
+	for _, sec := range rb.Sections {
+		if sec.Name == name {
+			return offsetOf(sec.WindowOffset, sec.OffsetInput, vars)
+		}
+	}
+	return ""
+}
+
+// WindowTarget is the maintenance window's target length ("" if none).
+func (rb *Runbook) WindowTarget(vars map[string]string) string {
+	if rb.MaintenanceWindow == nil {
+		return ""
+	}
+	return offsetOf(rb.MaintenanceWindow.Target, rb.MaintenanceWindow.TargetInput, vars)
+}
+
+// CheckWindowInputs checks that inputs overriding window offsets or the
+// target hold valid durations.
+func (rb *Runbook) CheckWindowInputs(vars map[string]string) error {
+	var errs []error
+	check := func(input string, target bool) {
+		v := strings.TrimSpace(vars[input])
+		if input == "" || v == "" {
+			return
+		}
+		if target {
+			if d, err := time.ParseDuration(v); err != nil || d <= 0 {
+				errs = append(errs, fmt.Errorf("input %s: %q isn't a window length like 45m", input, v))
+			}
+		} else if _, err := ParseOffset(v); err != nil {
+			errs = append(errs, fmt.Errorf("input %s: %q isn't an offset like -30m, 0 or +12m", input, v))
+		}
+	}
+	if mw := rb.MaintenanceWindow; mw != nil {
+		check(mw.TargetInput, true)
+	}
+	for _, sec := range rb.Sections {
+		check(sec.OffsetInput, false)
+	}
+	for _, st := range rb.Steps {
+		check(st.OffsetInput, false)
+	}
+	return errors.Join(errs...)
+}
+
+// TimelineEntry is a planned point in a runbook's maintenance window:
+// the window itself (Kind "window", with its target length), a section's
+// start, or a step's start, relative to the window opening.
+type TimelineEntry struct {
+	Kind   string        `json:"kind"` // window | section | step
+	Name   string        `json:"name"`
+	Step   int           `json:"step"` // step index (sections: their first step)
+	Offset time.Duration `json:"offset_ns"`
+	Length time.Duration `json:"length_ns,omitempty"` // window only
+}
+
+// Timeline lists the window and every section and step with a planned
+// start (steps only where they set one, not where they take their
+// section's), in order.
+func (rb *Runbook) Timeline(vars map[string]string) []TimelineEntry {
+	var out []TimelineEntry
+	if rb.MaintenanceWindow == nil {
+		return nil
+	}
+	w := TimelineEntry{Kind: "window", Name: "Maintenance window"}
+	w.Step, _ = rb.WindowSteps()
+	if d, err := time.ParseDuration(rb.WindowTarget(vars)); err == nil {
+		w.Length = d
+	}
+	out = append(out, w)
+	for i, st := range rb.Steps {
+		if rb.sectionStarts(i) {
+			if d, err := ParseOffset(rb.SectionOffset(st.Section, vars)); err == nil && rb.SectionOffset(st.Section, vars) != "" {
+				out = append(out, TimelineEntry{Kind: "section", Name: st.Section, Step: i, Offset: d})
+			}
+		}
+		if v := offsetOf(st.WindowOffset, st.OffsetInput, vars); v != "" {
+			if d, err := ParseOffset(v); err == nil {
+				out = append(out, TimelineEntry{Kind: "step", Name: st.Name, Step: i, Offset: d})
+			}
+		}
+	}
+	return out
 }
 
 // ChoosingSteps lists the steps (indexes) set to ask which way, leaving
@@ -478,6 +582,27 @@ func (rb *Runbook) validateWindow() []error {
 		add("the step closing the maintenance window comes before the one opening it")
 	} else if c >= 0 && o < 0 {
 		add("a step closes the maintenance window, but none opens it")
+	}
+	inputs := map[string]bool{}
+	for _, in := range rb.Inputs {
+		inputs[in.Name] = true
+	}
+	checkInput := func(where, name string) {
+		if name != "" {
+			used = true
+			if !inputs[name] {
+				add("%s: offset_input %q isn't an input of this runbook", where, name)
+			}
+		}
+	}
+	for i, st := range rb.Steps {
+		checkInput(fmt.Sprintf("steps[%d] (%s)", i, st.Name), st.OffsetInput)
+	}
+	for i, sec := range rb.Sections {
+		checkInput(fmt.Sprintf("sections[%d] (%s)", i, sec.Name), sec.OffsetInput)
+	}
+	if mw := rb.MaintenanceWindow; mw != nil && mw.TargetInput != "" && !inputs[mw.TargetInput] {
+		add("maintenance_window: target_input %q isn't an input of this runbook", mw.TargetInput)
 	}
 	if (used || opens+closes > 0) && rb.MaintenanceWindow == nil {
 		add("window and window_offset need a maintenance_window (e.g. maintenance_window: {target: 45m})")

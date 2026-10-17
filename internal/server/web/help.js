@@ -36,6 +36,7 @@ const FIELD_HELP = {
     preferred: "The way used by default, and always in unattended runs.",
     window: "Opens: production goes down when this step starts. Closes: production is back when it finishes.",
     window_offset: "When this step is planned to start, relative to the window opening: -30m (before), 0, +12m. A section's first step uses the section's if it has none.",
+    offset_input: "An input that overrides this planned time (or the window's target) when a run or schedule gives it a value, e.g. a longer cutoff in production.",
     run: "Shell script to run. Templates like {{.input}} are filled in first; every input and published value is also an environment variable ($name).",
     manual: "Instructions for the operator, who marks the step done, skipped or failed. Templates are filled in.",
     checks: "Commands that each pass if they exit 0. Every check runs on each attempt (it doesn't stop at the first failure); the step passes when all pass.",
@@ -239,17 +240,21 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
     ${helpTable("way", [["name"], ["preferred"], ["run"], ["manual"], ["checks"], ["tty"]])}
 
     <h2 id="help-window">Maintenance window</h2>
-    <pre class="cmd">maintenance_window:
+    <pre class="cmd">inputs:
+  - {name: env, choices: [staging, production]}
+  - {name: t_promote, description: when to promote, e.g. +25m in production}
+maintenance_window:
   target: 45m
 sections:
   - {name: Prep, window_offset: -30m}
   - {name: Cutover, window_offset: 0}
 steps:
   - {name: Maintenance mode ON, section: Cutover, window: open, run: …}
-  - {name: Promote, window_offset: +10m, manual: …}
+  - {name: Promote, window_offset: +10m, offset_input: t_promote, manual: …}
   - {name: Maintenance mode OFF, window: close, run: …}</pre>
     <p>${esc(FIELD_HELP.runbook.maintenance_window)}</p>
-    <p>${esc(FIELD_HELP.step.window_offset)} Planned times show as T-30m, T+0, T+10m in the plan; while the window is open each step shows how far ahead or behind it is. A run that stops with the window open says so plainly: production may still be down.</p>
+    <p>${esc(FIELD_HELP.step.window_offset)} ${esc(FIELD_HELP.step.offset_input)} (<code>offset_input</code> on sections and steps, <code>target_input</code> on the window.) Planned times show as T-30m, T+0, T+10m in the plan; while the window is open each step shows how far ahead or behind it is. A run that stops with the window open says so plainly: production may still be down.</p>
+    <p><b>Scheduling.</b> Plan runs ahead under <a href="#/schedule">Schedule</a> (or <code>runnr schedule add</code>): pick when the window opens and the run's inputs; the calendar and agenda show each window and the planned starts of its sections and steps. Nothing starts on its own; <i>Start this run…</i> opens the launch page with those inputs.</p>
 
     <h2 id="help-templates">Templates &amp; state</h2>
     <p><code>run</code>, <code>manual</code>, <code>expect</code>, <code>when</code>, <code>dir</code> and <code>env</code> are Go templates: <code>{{.name}}</code> is a value; helpers are <code>default</code>, <code>upper</code>, <code>lower</code>, <code>trim</code>, <code>contains</code> and <code>quote</code> (shell-quote). An unknown name is an error.</p>

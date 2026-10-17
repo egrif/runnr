@@ -1,6 +1,7 @@
 package runbook
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -161,7 +162,7 @@ steps:
 		ok bool
 	}{{-30 * time.Minute, true}, {-10 * time.Minute, true}, {0, true}, {25 * time.Minute, true}}
 	for i, w := range want {
-		if d, ok := rb.PlannedOffset(i); d != w.d || ok != w.ok {
+		if d, ok := rb.PlannedOffset(i, nil); d != w.d || ok != w.ok {
 			t.Errorf("step %d: %v %v, want %v %v", i+1, d, ok, w.d, w.ok)
 		}
 	}
@@ -180,6 +181,44 @@ steps:
 		if _, err := Parse([]byte(y)); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+func TestOffsetInputsAndTimeline(t *testing.T) {
+	rb, err := Parse([]byte(`name: a
+inputs: [{name: t_cut}, {name: mw_len}]
+maintenance_window: {target: 30m, target_input: mw_len}
+sections: [{name: Prep, window_offset: -30m}, {name: Cut, window_offset: "0"}]
+steps:
+  - {name: p1, section: Prep, run: x}
+  - {name: down, section: Cut, run: x, window: open}
+  - {name: cutoff, run: x, window_offset: +5m, offset_input: t_cut}
+  - {name: up, run: x, window: close}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := rb.PlannedOffset(2, nil); d != 5*time.Minute {
+		t.Fatalf("default offset %s", d)
+	}
+	vars := map[string]string{"t_cut": "+12m", "mw_len": "1h"}
+	if d, _ := rb.PlannedOffset(2, vars); d != 12*time.Minute || rb.WindowTarget(vars) != "1h" {
+		t.Fatalf("overridden: %s %s", d, rb.WindowTarget(vars))
+	}
+	tl := rb.Timeline(vars)
+	var got []string
+	for _, e := range tl {
+		got = append(got, fmt.Sprintf("%s:%s:%s", e.Kind, e.Name, e.Offset))
+	}
+	want := "window:Maintenance window:0s section:Prep:-30m0s section:Cut:0s step:cutoff:12m0s"
+	if strings.Join(got, " ") != want || tl[0].Length != time.Hour || tl[0].Step != 1 {
+		t.Fatalf("timeline %v (length %s)", got, tl[0].Length)
+	}
+	if err := rb.CheckWindowInputs(map[string]string{"t_cut": "soon"}); err == nil {
+		t.Fatal("bad override should fail")
+	}
+	if _, err := Parse([]byte("name: a\nmaintenance_window: {}\nsteps: [{name: a, run: x, offset_input: nope}]")); err == nil {
+		t.Fatal("unknown offset_input should fail")
 	}
 }
 

@@ -79,6 +79,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/collections/{name}/runbooks", s.addToCollection)
 	mux.HandleFunc("DELETE /api/collections/{name}/runbooks/{runbook}", s.removeFromCollection)
 	mux.HandleFunc("POST /api/runbooks/{name}/move", s.moveRunbook)
+	mux.HandleFunc("GET /api/schedules", s.listSchedules)
+	mux.HandleFunc("POST /api/schedules", s.saveSchedule)
+	mux.HandleFunc("GET /api/schedules/{id}", s.getSchedule)
+	mux.HandleFunc("PUT /api/schedules/{id}", s.saveSchedule)
+	mux.HandleFunc("DELETE /api/schedules/{id}", s.deleteSchedule)
 	mux.HandleFunc("GET /api/libraries", s.listLibraries)
 	mux.HandleFunc("POST /api/libraries", s.createLibrary)
 	mux.HandleFunc("GET /api/libraries/{name}", s.getLibrary)
@@ -1131,6 +1136,70 @@ func (s *Server) putTestValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tv)
+}
+
+// ---------- schedules ----------
+
+// listSchedules returns planned runs laid out in time (?from=RFC 3339
+// leaves out ones entirely before it).
+func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
+	var from time.Time
+	if v := r.URL.Query().Get("from"); v != "" {
+		var err error
+		if from, err = time.Parse(time.RFC3339, v); err != nil {
+			writeErr(w, fmt.Errorf("from must be RFC 3339, e.g. 2026-11-01T00:00:00Z"))
+			return
+		}
+	}
+	ag, err := s.st.Agenda(from)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ag)
+}
+
+func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
+	sc, err := s.st.GetSchedule(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sc)
+}
+
+// saveSchedule creates (POST) or replaces (PUT /{id}) a schedule.
+func (s *Server) saveSchedule(w http.ResponseWriter, r *http.Request) {
+	var sc store.Schedule
+	if err := decode(r, &sc); err != nil {
+		writeErr(w, err)
+		return
+	}
+	code := http.StatusCreated
+	if id := r.PathValue("id"); id != "" {
+		old, err := s.st.GetSchedule(id)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		sc.ID, sc.CreatedAt, code = id, old.CreatedAt, http.StatusOK
+		if sc.CreatedBy == "" {
+			sc.CreatedBy = old.CreatedBy
+		}
+	}
+	if err := s.st.SaveSchedule(&sc); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, code, sc)
+}
+
+func (s *Server) deleteSchedule(w http.ResponseWriter, r *http.Request) {
+	if err := s.st.DeleteSchedule(r.PathValue("id")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------- collections ----------

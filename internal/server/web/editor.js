@@ -248,6 +248,14 @@ function sectionPick(d, i) {
     <option value="__new__">+ New section…</option></select>`;
 }
 
+// offsetPair is a planned-time field plus the input (if any) that overrides it.
+function offsetPair(d, path, value, inputPath, input, placeholder) {
+  const names = (d.inputs || []).map((x) => x.name).filter(Boolean);
+  return `<span class="offset-pair">${control(path, "text", value, { placeholder })}
+    <select data-path="${esc(inputPath)}" title="${esc(H.step.offset_input)}"><option value="">no override</option>
+      ${names.map((n) => `<option value="${esc(n)}" ${n === input ? "selected" : ""}>input: ${esc(n)}</option>`).join("")}</select></span>`;
+}
+
 // plannedHint: what a step's planned time is without its own (from its section).
 function plannedHint(d, i) {
   const p = plannedOffset(d.steps.map((s, k) => (k === i ? { ...s, window_offset: "" } : s)), d.sections, i);
@@ -320,7 +328,7 @@ function detailsPane(ed, d, s, i) {
     ${row("By the end", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "how things should stand when it's done" }))}
     ${row("Section", H.step.section, sectionPick(d, i))}
     ${d.maintenance_window ? row("Window", H.step.window, control(`${P}.window`, "select", s.window, { choices: [["", "—"], ["open", "opens here (production goes down)"], ["close", "closes here (production is back)"]] })) : ""}
-    ${d.maintenance_window ? row("Planned at", H.step.window_offset, `<span class="with-x">${control(`${P}.window_offset`, "text", s.window_offset, { placeholder: plannedHint(d, i) })}</span>`) : ""}
+    ${d.maintenance_window ? row("Planned at", H.step.window_offset, offsetPair(d, `${P}.window_offset`, s.window_offset, `${P}.offset_input`, s.offset_input, plannedHint(d, i))) : ""}
     ${row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner))}
     ${checkRow([["Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)], ["Dangerous", H.step.dangerous, control(`${P}.dangerous`, "bool", s.dangerous)], ...set.filter((f) => f[2] === "bool").map(box)])}
     ${s.background ? row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })) : ""}
@@ -427,7 +435,8 @@ function sectionsGroup(d) {
         ${row("Name", H.section.name, `<input data-sec-rename="${esc(n)}" value="${esc(n)}">`)}
         ${row("What it does", H.section.description, `<textarea rows="2" data-sec="${esc(n)}" data-sec-field="description">${esc(info(n).description || "")}</textarea>`)}
         ${row("By the end", H.section.expect, `<textarea rows="2" data-sec="${esc(n)}" data-sec-field="expect">${esc(info(n).expect || "")}</textarea>`)}
-        ${d.maintenance_window ? row("Planned at", H.section.window_offset, `<input data-sec="${esc(n)}" data-sec-field="window_offset" value="${esc(info(n).window_offset || "")}" placeholder="e.g. -30m, 0, +20m">`) : ""}
+        ${d.maintenance_window ? row("Planned at", H.section.window_offset, `<span class="offset-pair"><input data-sec="${esc(n)}" data-sec-field="window_offset" value="${esc(info(n).window_offset || "")}" placeholder="e.g. -30m, 0, +20m">
+          <select data-sec="${esc(n)}" data-sec-field="offset_input" title="${esc(H.step.offset_input)}"><option value="">no override</option>${(d.inputs || []).filter((x) => x.name).map((x) => `<option value="${esc(x.name)}" ${x.name === info(n).offset_input ? "selected" : ""}>input: ${esc(x.name)}</option>`).join("")}</select></span>`) : ""}
       </div></div>`), { collapsible: true, id: "rb-sections", open: true });
 }
 
@@ -451,7 +460,7 @@ function renderStruct(ed) {
       </div>
       ${group("Maintenance window", [
         `<p class="muted small" style="grid-column: 1 / -1">${esc(H.runbook.maintenance_window)}</p>`,
-        row("Target length", H.runbook.window_target, control("maintenance_window.target", "text", d.maintenance_window?.target, { placeholder: "e.g. 45m" })),
+        row("Target length", H.runbook.window_target, offsetPair(d, "maintenance_window.target", d.maintenance_window?.target, "maintenance_window.target_input", d.maintenance_window?.target_input, "e.g. 45m")),
         row("Description", H.runbook.window_description, control("maintenance_window.description", "text", d.maintenance_window?.description)),
         d.maintenance_window ? "" : `<button data-act="add-window" style="grid-column: 1 / -1; justify-self: start">Use a maintenance window</button>`,
       ], { collapsible: true, id: "rb-window", open: !!d.maintenance_window })}
@@ -556,7 +565,7 @@ function renderStruct(ed) {
       let sec = d.sections.find((x) => x.name === t.dataset.sec);
       if (!sec) d.sections.push((sec = { name: t.dataset.sec }));
       sec[t.dataset.secField] = t.value || undefined;
-      d.sections = d.sections.filter((x) => x.description || x.expect || x.window_offset);
+      d.sections = d.sections.filter((x) => x.description || x.expect || x.window_offset || x.offset_input);
       return;
     }
     if (t.matches("[data-sec-rename]") && e.type === "change") {
@@ -606,7 +615,7 @@ function renderStruct(ed) {
     // that's now set (or cleared): it moves above the fold (or back).
     const m = el.dataset.path.match(/^steps\.(\d+)\.([a-z_]+)/);
     const moved = m && MORE_FIELDS.some(([k]) => k === m[2]) && !!el.closest(".adv-rest") === isSet(d.steps[+m[1]][m[2]]);
-    if (e.type === "change" && (moved || /\.(name|section|confirm|dangerous|background|window|window_offset|choose|tty)$|^maintenance_window\./.test(el.dataset.path))) {
+    if (e.type === "change" && (moved || /\.(name|section|confirm|dangerous|background|window|window_offset|offset_input|choose|tty)$|^maintenance_window\./.test(el.dataset.path))) {
       const focus = document.activeElement?.dataset?.path;
       renderStruct(ed);
       if (focus) pane.querySelector(`[data-path="${CSS.escape(focus)}"]`)?.focus();

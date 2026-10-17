@@ -440,3 +440,38 @@ func TestCollectionMembershipOverHTTP(t *testing.T) {
 		t.Fatalf("after add/remove: %v", in)
 	}
 }
+
+func TestSchedulesOverHTTP(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+
+	rb := "name: mw\ninputs: [{name: t_cut}]\nmaintenance_window: {target: 20m}\nsteps:\n  - {name: down, run: x, window: open}\n  - {name: cut, run: x, window_offset: +5m, offset_input: t_cut}\n  - {name: up, run: x, window: close}\n"
+	if r := do(t, "POST", ts.URL+"/api/runbooks", rb, nil); r.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d", r.StatusCode)
+	}
+	r := do(t, "POST", ts.URL+"/api/schedules", `{"runbook":"mw","at":"2030-01-02T22:00:00Z","title":"cutover","inputs":{"t_cut":"+9m"}}`, nil)
+	var sc store.Schedule
+	json.NewDecoder(r.Body).Decode(&sc)
+	if r.StatusCode != http.StatusCreated || sc.ID == "" {
+		t.Fatalf("schedule: %d", r.StatusCode)
+	}
+	if r := do(t, "POST", ts.URL+"/api/schedules", `{"runbook":"mw","at":"2030-01-02T22:00:00Z","inputs":{"t_cut":"soon"}}`, nil); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad override: %d", r.StatusCode)
+	}
+	r = do(t, "GET", ts.URL+"/api/schedules?from=2030-01-01T00:00:00Z", "", nil)
+	var ag []store.PlannedRun
+	json.NewDecoder(r.Body).Decode(&ag)
+	if len(ag) != 1 || len(ag[0].Entries) != 2 || ag[0].Entries[1].Offset != "+9m" || ag[0].Entries[0].End == nil {
+		t.Fatalf("agenda %+v", ag)
+	}
+	if r := do(t, "PUT", ts.URL+"/api/schedules/"+sc.ID, `{"runbook":"mw","at":"2030-01-03T22:00:00Z","title":"moved"}`, nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("update: %d", r.StatusCode)
+	}
+	if got, _ := st.GetSchedule(sc.ID); got.Title != "moved" || got.At.Day() != 3 {
+		t.Fatalf("after update %+v", got)
+	}
+	if r := do(t, "DELETE", ts.URL+"/api/schedules/"+sc.ID, "", nil); r.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete: %d", r.StatusCode)
+	}
+}

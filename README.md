@@ -46,6 +46,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr lib list/show/new/edit/import/delete/versions` | Manage function libraries |
 | `runnr collection list/show/new/edit/import/delete` | Group runbooks that belong together, with what they're for |
 | `runnr collection add <col> <runbook>...` / `remove <col> <runbook>...` | Put runbooks in a collection (`--create` to make it) or take them out (they stay in runnr) |
+| `runnr schedule add/list/rm` | Plan runs ahead; `list` prints the agenda |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
 | `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin, `-c <collection>` to add them to a collection) |
@@ -330,9 +331,20 @@ Starting an unattended run with such steps asks you to confirm
 production is down: mark the step where it goes down `window: open` and the
 one where it's back `window: close`. `window_offset` on sections and steps
 (`-30m`, `0`, `+12m`) is when they're planned to start relative to the
-window opening. Plans show T-30m, T+0, T+12m; runs show a live window clock
+window opening; `offset_input` (and `target_input` on the window) names an
+input that overrides it when given a value, e.g. a longer cutoff in
+production. Plans show T-30m, T+0, T+12m; runs show a live window clock
 against the target and each step's planned and actual time; history keeps
 the real downtime, and a run that stops with the window open says so.
+
+**Schedule.** Plan runs ahead: `runnr schedule add <runbook> --at "2026-11-01
+22:00" -v env=prod` (for a runbook with a window, the time is when it
+opens), or **Schedule…** on the launch page. The GUI's **Schedule** page shows
+a calendar and an agenda of planned runs with their windows and, as you
+choose, the planned starts of sections and steps, or just the next run;
+`runnr schedule list [--detail windows|sections|steps] [--next]` prints the
+agenda. Nothing starts on its own yet: **Start this run…** opens the launch
+page with the schedule's inputs.
 
 The GUI's **Runbook format help** page describes every field, and the
 structured editor shows the same text on each field's ⓘ.

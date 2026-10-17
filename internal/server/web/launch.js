@@ -7,9 +7,10 @@
 const DONE = ["succeeded", "skipped", "forced"];
 const enc = encodeURIComponent;
 
-async function viewLaunch(el, name, mode, runId) {
+async function viewLaunch(el, name, mode, runId, scheduleId) {
   const data = await api("GET", `/api/runbooks/${enc(name)}`);
   const rb = data.runbook;
+  const plan = scheduleId ? await api("GET", `/api/schedules/${enc(scheduleId)}`).catch(() => null) : null;
   let prev = null;
   if (runId) {
     prev = (await api("GET", `/api/runs/${enc(runId)}`)).run;
@@ -29,6 +30,7 @@ async function viewLaunch(el, name, mode, runId) {
 
   const inputs = rb.inputs || [];
   const prefill = (i) => {
+    if (plan?.inputs?.[i.name]) return plan.inputs[i.name];
     const v = prev && mode !== "run" ? prev.inputs?.[i.name] : undefined;
     return v && v !== "****" ? v : "";
   };
@@ -47,6 +49,7 @@ async function viewLaunch(el, name, mode, runId) {
   const what = { run: "Run", rerun: "Run again", resume: "Resume" }[mode];
   const lastLink = prev ? `<a href="#/runs/${enc(prev.id)}">${esc(prev.id)}</a> (${esc(prev.status)})` : "";
   el.innerHTML = `
+    ${plan ? `<div class="banner">Starting the run scheduled for ${new Date(plan.at).toLocaleString()}${plan.title ? `: <b>${esc(plan.title)}</b>` : ""}, with its inputs.</div>` : ""}
     ${mode !== "run" ? `<div class="banner">${what} of run ${lastLink}${mode === "resume" ? " — steps that already finished are left out; tick any you want to run again." : " with the same inputs."}</div>` : ""}
     <form id="run-form">
       <div class="card">
@@ -70,7 +73,8 @@ async function viewLaunch(el, name, mode, runId) {
       </div>
       <p class="muted small">Click a step to see what it will do, what it did in earlier runs (History) and how it's set up (Details). Untick to skip it; ⏸ before / after stops there so you can check.</p>
       <ol class="steps" id="launch-steps"></ol>
-      <div class="row start-bar"><button class="primary" type="submit" id="start"></button></div>
+      <div class="row start-bar"><button class="primary" type="submit" id="start"></button>
+        ${mode === "run" ? `<button type="button" id="schedule-btn" title="Plan this run for later, with these inputs">Schedule…</button>` : ""}</div>
     </form>`;
 
   const form = $("#run-form");
@@ -140,6 +144,7 @@ async function viewLaunch(el, name, mode, runId) {
       location.hash = `#/runs/${id}`;
     } catch (e) { toast(e.message); }
   });
+  $("#schedule-btn") && ($("#schedule-btn").onclick = () => scheduleDialog({ runbook: rb.name, inputs: vars() }));
   bindSide($("#launch-steps"), draw);
   draw();
   refreshPreview();
@@ -211,8 +216,12 @@ function windowSpan(steps) {
 const inWindow = (steps, i) => { const [o, c] = windowSpan(steps); return o >= 0 && i >= o && (c < 0 || i <= c); };
 
 function plannedBadge(steps, sections, i) {
-  const p = plannedOffset(steps, sections, i);
-  return p == null ? "" : `<span class="badge-k planned" title="Planned start, relative to the maintenance window opening">T${fmtOffset(p)}</span>`;
+  return offsetBadge(plannedOffset(steps, sections, i));
+}
+
+// offsetBadge shows a planned start (seconds from the window opening).
+function offsetBadge(sec) {
+  return sec == null ? "" : `<span class="badge-k planned" title="Planned start, relative to the maintenance window opening">T${fmtOffset(sec)}</span>`;
 }
 
 function lastTime(r, run) {
@@ -241,7 +250,7 @@ function renderLaunchSteps(st) {
         <div class="step-head" data-open="${i}">
           <input type="checkbox" data-inc="${i}" ${st.include[i] ? "checked" : ""} title="Include this step">
           <span class="n">${i + 1}</span>
-          <span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""} ${stepBadges(s)} ${plannedBadge(rb.steps, rb.sections, i)}</span>
+          <span class="name">${esc(s.name)}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""} ${stepBadges(s)} ${preview ? offsetBadge(preview[i]?.offset_sec) : plannedBadge(rb.steps, rb.sections, i)}</span>
           ${r && r.status !== "pending" ? `<span class="last s-${esc(r.status)}" title="Last time: ${esc(r.status)}">${ICONS[r.status]}</span>` : ""}
           <button type="button" class="pill ${st.before.has(i) ? "on" : ""}" data-before="${i}" title="Stop before this step (run / skip / open a shell)">⏸ before</button>
           <button type="button" class="pill ${st.after.has(i) ? "on" : ""}" data-after="${i}" title="Stop after this step to check the result">⏸ after</button>

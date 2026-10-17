@@ -26,7 +26,7 @@ func stores(t *testing.T) map[string]*Store {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, tbl := range []string{"runbooks", "runbook_versions", "runs", "collections", "collection_versions"} {
+		for _, tbl := range []string{"runbooks", "runbook_versions", "runs", "collections", "collection_versions", "schedules"} {
 			if _, err := pg.db.Exec("DELETE FROM " + tbl); err != nil {
 				t.Fatal(err)
 			}
