@@ -54,7 +54,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |
 | `runnr rerun <run-id>` | Run again with an earlier run's inputs, comparing each step with what it did then |
 | `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped |
-| `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open `$SHELL` with that environment |
+| `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open a shell (the runbook's `shell`, else `$SHELL`) with that environment |
 | `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
 | `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail |
 | `runnr history prune --older-than 90d` | Delete old finished runs |
@@ -136,7 +136,8 @@ At any step prompt you can also:
 - **`l`**: what this step did last time (status, command, output, notes).
 - **`e`**: show the run's state: every variable so far, credentials masked.
 - **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
-- **`!`**: open your `$SHELL` with the run's environment (inputs, values
+- **`!`**: open a shell (the runbook's `shell`, so pasted commands behave as
+  they do in the steps; else your `$SHELL`) with the run's environment (inputs, values
   published so far, `env:`), in the step's `dir`, with the step's commands
   shown beside it (above it in the CLI) to run or adapt. Investigate, fix
   things, `exit` to come back to the same prompt; the session is recorded

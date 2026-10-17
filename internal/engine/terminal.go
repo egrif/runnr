@@ -228,12 +228,15 @@ func termName() string {
 	return "xterm-256color"
 }
 
-func userShell(fallback string) string {
+// interactiveShellName is the shell opened for the operator: the runbook's
+// shell, so what's pasted from its steps behaves as it does in them, else
+// their own $SHELL.
+func interactiveShellName(runbookShell string) string {
+	if runbookShell != "" {
+		return runbookShell
+	}
 	if s := os.Getenv("SHELL"); s != "" {
 		return s
-	}
-	if fallback != "" {
-		return fallback
 	}
 	return "sh"
 }

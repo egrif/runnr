@@ -812,7 +812,8 @@ func shellCmd(s func() *store.Store) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "shell <runbook|file|run-id>",
 		Short: "Run a runbook's setup steps, then open a shell with that environment",
-		Long: `Runs only the steps marked 'always' (the setup) and opens your $SHELL with
+		Long: `Runs only the steps marked 'always' (the setup) and opens a shell (the
+runbook's shell, else your $SHELL) with
 everything they published, plus inputs and the runbook's env, in the
 environment. Nothing is recorded in history.
 

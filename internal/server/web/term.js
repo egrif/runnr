@@ -47,7 +47,8 @@ function termDrawer() {
     if (s && !s.ended && confirm(`End “${s.title}”? Anything still running in it is hung up.`)) sendTerm(s, { end: true });
   };
   d.querySelector(".term-copy").onclick = async () => {
-    try { await navigator.clipboard.writeText(d.querySelector(".term-cmd").textContent); toast("Copied"); }
+    const { text, wrapped } = pasteable(d.querySelector(".term-cmd").textContent);
+    try { await navigator.clipboard.writeText(text); toast(wrapped ? "Copied, inside ( … ) so its set -e/-u don't stay on in this shell" : "Copied"); }
     catch { toast("Select the text and copy it"); }
   };
   d.querySelector(".term-tabs").onclick = (e) => {
@@ -56,6 +57,15 @@ function termDrawer() {
   };
   window.addEventListener("resize", () => { if (!d.hidden) activeSession()?.fit.fit(); });
   return d;
+}
+
+// pasteable wraps commands that turn on shell options (set -e, -u,
+// pipefail...) in a subshell, so pasting them into an interactive shell
+// doesn't leave the options on: set -e there closes the shell at the first
+// failing command, and -u breaks prompt and cd hooks.
+function pasteable(cmd) {
+  const sets = /^\s*(set\s+(-[a-zA-Z]*[eu]|-o\s+(errexit|nounset|pipefail))|setopt\b)/m.test(cmd);
+  return sets ? { text: `(\n${cmd.replace(/\n+$/, "")}\n)\n`, wrapped: true } : { text: cmd, wrapped: false };
 }
 
 const activeSession = () => term.sessions.get(term.active);

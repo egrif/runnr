@@ -52,10 +52,11 @@ func (x *executor) setupFunctions() error {
 
 func (x *executor) Functions() []FuncInfo { return x.functions }
 
-// interactiveShell is the operator's $SHELL, set up so the run's functions
-// are loaded after their own config. done cleans up afterwards.
+// interactiveShell is the runbook's shell (else the operator's $SHELL),
+// interactive, with their config for it loaded and then the run's
+// functions. done cleans up afterwards.
 func (x *executor) interactiveShell() (cmd *exec.Cmd, env []string, done func(), err error) {
-	sh := userShell(x.rb.Shell)
+	sh := interactiveShellName(x.rb.Shell)
 	done = func() {}
 	if x.funcFile == "" {
 		return exec.Command(sh), nil, done, nil
