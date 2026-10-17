@@ -82,23 +82,12 @@ func (x *executor) wayCommand(s runbook.Step, w runbook.Way, v *StepView) string
 	return b.String()
 }
 
-// FormatOffset shows a window offset as -30m, +0, +1h15m.
+// FormatOffset shows a window offset as -2w, -30m, +0, +1d4h.
 func FormatOffset(d time.Duration) string {
-	sign := "+"
 	if d < 0 {
-		sign, d = "-", -d
+		return runbook.FormatSpan(d)
 	}
-	s := d.Round(time.Second).String() // e.g. 1h0m0s, 30m0s, 45s, 0s
-	if strings.HasSuffix(s, "m0s") {
-		s = strings.TrimSuffix(s, "0s")
-	}
-	if strings.HasSuffix(s, "h0m") {
-		s = strings.TrimSuffix(s, "0m")
-	}
-	if s == "0s" {
-		s = "0"
-	}
-	return sign + s
+	return "+" + runbook.FormatSpan(d)
 }
 
 func (x *executor) Controls() *Controls  { return x.ctl }

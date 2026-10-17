@@ -35,7 +35,12 @@ function entriesOf(r) {
 }
 
 function entryLabel(e) {
-  if (e.kind === "window") return `🔴 Maintenance window${e.end ? ` until ${hhmm(new Date(e.end))}` : ""}`;
+  if (e.kind === "window") {
+    if (!e.end) return "🔴 Maintenance window";
+    const end = new Date(e.end), sameDay = dayKey(end) === dayKey(new Date(e.at));
+    const until = sameDay ? hhmm(end) : end.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return `🔴 Maintenance window until ${until} <span class="muted">(${fmtOffset((end - new Date(e.at)) / 1000, false)})</span>`;
+  }
   if (e.kind === "section") return `▸ ${esc(e.name)} <span class="muted">T${esc(e.offset)}</span>`;
   if (e.kind === "step") return `· ${e.step + 1}. ${esc(e.name)} <span class="muted">T${esc(e.offset)}</span>`;
   return "▶ starts";

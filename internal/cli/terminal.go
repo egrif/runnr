@@ -397,7 +397,7 @@ func (t *Terminal) windowLine(v engine.StepView) string {
 
 // targetVs compares a window length with its target.
 func targetVs(w *engine.WindowRecord, d time.Duration) string {
-	target, err := time.ParseDuration(w.Target)
+	target, err := runbook.ParseSpan(w.Target)
 	if err != nil {
 		return ""
 	}

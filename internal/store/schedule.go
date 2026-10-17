@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/egrif/runnr/internal/runbook"
 )
 
 func init() {
@@ -201,19 +203,8 @@ func firstLine(s string) string {
 }
 
 func offsetString(d time.Duration) string {
-	sign := "+"
 	if d < 0 {
-		sign, d = "-", -d
+		return runbook.FormatSpan(d)
 	}
-	s := d.String()
-	if strings.HasSuffix(s, "m0s") {
-		s = strings.TrimSuffix(s, "0s")
-	}
-	if strings.HasSuffix(s, "h0m") {
-		s = strings.TrimSuffix(s, "0m")
-	}
-	if s == "0s" {
-		s = "0"
-	}
-	return sign + s
+	return "+" + runbook.FormatSpan(d)
 }

@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
 )
 
@@ -150,7 +150,11 @@ func printAgenda(ag []store.PlannedRun, level int) {
 			case e.Kind == "window":
 				w := "🔴 maintenance window opens"
 				if e.End != nil {
-					w += fmt.Sprintf(" · until %s (%s)", e.End.Local().Format("15:04"), strings.TrimPrefix(engine.FormatOffset(e.End.Sub(e.At)), "+"))
+					until := e.End.Local().Format("15:04")
+					if e.End.Local().YearDay() != e.At.Local().YearDay() || e.End.Year() != e.At.Year() {
+						until = e.End.Local().Format("Mon 2 Jan 15:04")
+					}
+					w += fmt.Sprintf(" · until %s (%s)", until, runbook.FormatSpan(e.End.Sub(e.At)))
 				}
 				line(e.At, t.c("31", "  "+w))
 			case e.Kind == "section" && level >= 1:

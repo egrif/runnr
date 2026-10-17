@@ -178,25 +178,27 @@ function stepBadges(s) {
 
 // ---------- maintenance window ----------
 
-// parseOffset reads a window offset like -30m, +1h15m, 0 (seconds, or null).
+// parseOffset reads a window offset like -2w, -30m, +1d4h, 0 (seconds, or null).
 function parseOffset(v) {
   if (v == null || v === "") return null;
   const t = String(v).trim().replace(/^\+/, "");
   if (t === "0") return 0;
-  const m = t.match(/^(-)?((?:\d+(?:\.\d+)?(?:h|m|s))+)$/);
+  const m = t.match(/^(-)?((?:\d+(?:\.\d+)?(?:w|d|h|m|s))+)$/);
   if (!m) return null;
   let sec = 0;
-  for (const [, n, u] of m[2].matchAll(/(\d+(?:\.\d+)?)(h|m|s)/g)) sec += +n * { h: 3600, m: 60, s: 1 }[u];
+  for (const [, n, u] of m[2].matchAll(/(\d+(?:\.\d+)?)(w|d|h|m|s)/g)) sec += +n * { w: 604800, d: 86400, h: 3600, m: 60, s: 1 }[u];
   return m[1] ? -sec : sec;
 }
 
-// fmtOffset shows seconds as T-style offsets: -30m, +0, +1h15m.
+// fmtOffset shows seconds as T-style offsets: -2w, -30m, +0, +1d4h.
 function fmtOffset(sec, sign = true) {
   let s = Math.round(Math.abs(sec));
   const neg = sec < 0 && s > 0;
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
-  const body = (h ? `${h}h` : "") + (m ? `${m}m` : "") + (r && !h ? `${r}s` : "") || "0";
-  return (sign ? (neg ? "-" : "+") : neg ? "-" : "") + body;
+  let body = "";
+  for (const [u, n] of [["w", 604800], ["d", 86400], ["h", 3600], ["m", 60], ["s", 1]]) {
+    if (s >= n) { body += `${Math.floor(s / n)}${u}`; s %= n; }
+  }
+  return (sign ? (neg ? "-" : "+") : neg ? "-" : "") + (body || "0");
 }
 
 // plannedOffset is when step i is planned to start (seconds from the window

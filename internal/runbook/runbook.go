@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -232,14 +233,71 @@ func (s Step) WithWay(w Way) Step {
 	return s
 }
 
-// ParseOffset reads a window offset: a signed duration such as -30m,
-// +1h15m or 0.
-func ParseOffset(v string) (time.Duration, error) {
+// ParseSpan reads a length of time that can run to days and weeks:
+// combinations of w, d, h, m and s, e.g. 2w, 1d12h, 45m, 1h30m.
+// (A day is 24h, a week 7d; m is minutes.)
+func ParseSpan(v string) (time.Duration, error) {
 	t := strings.TrimSpace(v)
+	if t == "" {
+		return 0, errors.New("empty")
+	}
 	if t == "0" {
 		return 0, nil
 	}
-	return time.ParseDuration(strings.TrimPrefix(t, "+"))
+	if !spanFullRe.MatchString(t) {
+		return 0, fmt.Errorf("%q isn't a time like 2w, 3d, 1d12h or 45m", v)
+	}
+	m := spanRe.FindAllStringSubmatch(t, -1)
+	var d time.Duration
+	for _, x := range m {
+		n, err := strconv.ParseFloat(x[1], 64)
+		if err != nil {
+			return 0, err
+		}
+		d += time.Duration(n * float64(spanUnits[x[2]]))
+	}
+	return d, nil
+}
+
+var (
+	spanRe     = regexp.MustCompile(`(\d+(?:\.\d+)?)(w|d|h|ms|m|s)`)
+	spanFullRe = regexp.MustCompile(`^(?:\d+(?:\.\d+)?(?:w|d|h|ms|m|s))+$`)
+	spanUnits  = map[string]time.Duration{"w": 7 * 24 * time.Hour, "d": 24 * time.Hour, "h": time.Hour, "m": time.Minute, "s": time.Second, "ms": time.Millisecond}
+)
+
+// ParseOffset reads a window offset: a signed span such as -2w, -30m,
+// +1d4h or 0.
+func ParseOffset(v string) (time.Duration, error) {
+	t := strings.TrimSpace(v)
+	neg := strings.HasPrefix(t, "-")
+	d, err := ParseSpan(strings.TrimLeft(t, "+-"))
+	if neg {
+		d = -d
+	}
+	return d, err
+}
+
+// FormatSpan shows a length of time in weeks, days, hours, minutes and
+// seconds, largest first: 2w, 1d12h, 1h15m, 45s, 0.
+func FormatSpan(d time.Duration) string {
+	if d < 0 {
+		return "-" + FormatSpan(-d)
+	}
+	d = d.Round(time.Second)
+	var b strings.Builder
+	for _, u := range []struct {
+		name string
+		d    time.Duration
+	}{{"w", 7 * 24 * time.Hour}, {"d", 24 * time.Hour}, {"h", time.Hour}, {"m", time.Minute}, {"s", time.Second}} {
+		if n := d / u.d; n > 0 {
+			fmt.Fprintf(&b, "%d%s", n, u.name)
+			d -= n * u.d
+		}
+	}
+	if b.Len() == 0 {
+		return "0"
+	}
+	return b.String()
 }
 
 // offsetOf is an offset field, unless its override input has a value in vars.
@@ -300,11 +358,11 @@ func (rb *Runbook) CheckWindowInputs(vars map[string]string) error {
 			return
 		}
 		if target {
-			if d, err := time.ParseDuration(v); err != nil || d <= 0 {
-				errs = append(errs, fmt.Errorf("input %s: %q isn't a window length like 45m", input, v))
+			if d, err := ParseSpan(v); err != nil || d <= 0 {
+				errs = append(errs, fmt.Errorf("input %s: %q isn't a window length like 45m or 2d", input, v))
 			}
 		} else if _, err := ParseOffset(v); err != nil {
-			errs = append(errs, fmt.Errorf("input %s: %q isn't an offset like -30m, 0 or +12m", input, v))
+			errs = append(errs, fmt.Errorf("input %s: %q isn't an offset like -2w, -30m, 0 or +12m", input, v))
 		}
 	}
 	if mw := rb.MaintenanceWindow; mw != nil {
@@ -340,7 +398,7 @@ func (rb *Runbook) Timeline(vars map[string]string) []TimelineEntry {
 	}
 	w := TimelineEntry{Kind: "window", Name: "Maintenance window"}
 	w.Step, _ = rb.WindowSteps()
-	if d, err := time.ParseDuration(rb.WindowTarget(vars)); err == nil {
+	if d, err := ParseSpan(rb.WindowTarget(vars)); err == nil {
 		w.Length = d
 	}
 	out = append(out, w)
@@ -563,7 +621,7 @@ func (rb *Runbook) validateWindow() []error {
 		if st.WindowOffset != "" {
 			used = true
 			if _, err := ParseOffset(st.WindowOffset); err != nil {
-				add("steps[%d] (%s): window_offset %q must be a duration like -30m, 0 or +12m", i, st.Name, st.WindowOffset)
+				add("steps[%d] (%s): window_offset %q must be like -2w, -30m, 0, +12m or +1d", i, st.Name, st.WindowOffset)
 			}
 		}
 	}
@@ -571,7 +629,7 @@ func (rb *Runbook) validateWindow() []error {
 		if sec.WindowOffset != "" {
 			used = true
 			if _, err := ParseOffset(sec.WindowOffset); err != nil {
-				add("sections[%d] (%s): window_offset %q must be a duration like -30m, 0 or +12m", i, sec.Name, sec.WindowOffset)
+				add("sections[%d] (%s): window_offset %q must be like -2w, -30m, 0, +12m or +1d", i, sec.Name, sec.WindowOffset)
 			}
 		}
 	}
@@ -608,8 +666,8 @@ func (rb *Runbook) validateWindow() []error {
 		add("window and window_offset need a maintenance_window (e.g. maintenance_window: {target: 45m})")
 	}
 	if mw := rb.MaintenanceWindow; mw != nil && mw.Target != "" {
-		if d, err := time.ParseDuration(mw.Target); err != nil || d <= 0 {
-			add("maintenance_window: target %q must be a duration like 45m", mw.Target)
+		if d, err := ParseSpan(mw.Target); err != nil || d <= 0 {
+			add("maintenance_window: target %q must be a length like 45m, 6h or 2d", mw.Target)
 		}
 	}
 	return errs

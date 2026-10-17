@@ -327,10 +327,11 @@ Starting an unattended run with such steps asks you to confirm
 **try another way**. The step's other settings (`dir`, `env`, `outputs`,
 `repeat`…) apply whichever way runs.
 
-**Maintenance window.** `maintenance_window: {target: 45m}` describes the time
+**Maintenance window.** `maintenance_window: {target: 45m}` (or `6h`, `2d`) describes the time
 production is down: mark the step where it goes down `window: open` and the
 one where it's back `window: close`. `window_offset` on sections and steps
-(`-30m`, `0`, `+12m`) is when they're planned to start relative to the
+(`-2w`, `-30m`, `0`, `+12m`, `+1d4h`: w weeks, d days, h hours, m minutes)
+is when they're planned to start relative to the
 window opening; `offset_input` (and `target_input` on the window) names an
 input that overrides it when given a value, e.g. a longer cutoff in
 production. Plans show T-30m, T+0, T+12m; runs show a live window clock

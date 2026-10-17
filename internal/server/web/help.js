@@ -18,7 +18,7 @@ const FIELD_HELP = {
     functions: "This runbook's own shell functions (name, description, body). They win over a library function of the same name.",
     steps: "What the runbook does, in order.",
     maintenance_window: "The time production is down. Mark the step where it goes down (window: open) and the one where it's back (window: close); target is how long it should take, e.g. 45m. Runs show a live clock against the target and record the real downtime.",
-    window_target: "How long production is expected (or allowed) to be down, e.g. 45m.",
+    window_target: "How long production is expected (or allowed) to be down, e.g. 45m, 6h, 2d.",
     window_description: "What the window is, e.g. the announced outage.",
   },
   input: {
@@ -35,7 +35,7 @@ const FIELD_HELP = {
     choose: "Ask which way each time it runs (the preferred one is the default). Unattended runs use the preferred way, after you confirm when starting.",
     preferred: "The way used by default, and always in unattended runs.",
     window: "Opens: production goes down when this step starts. Closes: production is back when it finishes.",
-    window_offset: "When this step is planned to start, relative to the window opening: -30m (before), 0, +12m. A section's first step uses the section's if it has none.",
+    window_offset: "When this step is planned to start, relative to the window opening: -2w, -30m (before), 0, +12m, +1d4h (w weeks, d days, h hours, m minutes). A section's first step uses the section's if it has none.",
     offset_input: "An input that overrides this planned time (or the window's target) when a run or schedule gives it a value, e.g. a longer cutoff in production.",
     run: "Shell script to run. Templates like {{.input}} are filled in first; every input and published value is also an environment variable ($name).",
     manual: "Instructions for the operator, who marks the step done, skipped or failed. Templates are filled in.",
@@ -71,7 +71,7 @@ const FIELD_HELP = {
     name: "A section name used by steps (their section field).",
     description: "What this group of steps does.",
     expect: "How things should stand at the end of the section.",
-    window_offset: "When the section is planned to start, relative to the maintenance window opening: -30m, 0, +20m.",
+    window_offset: "When the section is planned to start, relative to the maintenance window opening: -2w, -30m, 0, +20m, +3d.",
   },
   collection: {
     name: "The collection's identifier.",

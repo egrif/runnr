@@ -222,6 +222,38 @@ steps:
 	}
 }
 
+func TestSpans(t *testing.T) {
+	day := 24 * time.Hour
+	for in, want := range map[string]time.Duration{"2w": 14 * day, "1d12h": 36 * time.Hour, "45m": 45 * time.Minute, "1h30m": 90 * time.Minute, "0": 0, "1.5d": 36 * time.Hour, "90s": 90 * time.Second} {
+		if got, err := ParseSpan(in); err != nil || got != want {
+			t.Errorf("ParseSpan(%q) = %s, %v; want %s", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "soon", "2 w", "3mo", "1d-2h", "w"} {
+		if _, err := ParseSpan(bad); err == nil {
+			t.Errorf("ParseSpan(%q) should fail", bad)
+		}
+	}
+	if d, err := ParseOffset("-2w"); err != nil || d != -14*day {
+		t.Errorf("ParseOffset(-2w) = %s %v", d, err)
+	}
+	if d, err := ParseOffset("+1d4h"); err != nil || d != 28*time.Hour {
+		t.Errorf("ParseOffset(+1d4h) = %s %v", d, err)
+	}
+	for d, want := range map[time.Duration]string{14 * day: "2w", 36 * time.Hour: "1d12h", 9*day + 3*time.Hour: "1w2d3h", 75 * time.Minute: "1h15m", 0: "0", -30 * time.Minute: "-30m"} {
+		if got := FormatSpan(d); got != want {
+			t.Errorf("FormatSpan(%s) = %q, want %q", d, got, want)
+		}
+	}
+	rb, err := Parse([]byte("name: a\nmaintenance_window: {target: 2d}\nsections: [{name: Prep, window_offset: -2w}]\nsteps:\n  - {name: p, section: Prep, run: x}\n  - {name: d, run: x, window: open}\n  - {name: u, run: x, window: close, window_offset: +1d4h}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tl := rb.Timeline(nil); tl[0].Length != 2*day || tl[1].Offset != -14*day || tl[2].Offset != 28*time.Hour {
+		t.Fatalf("timeline %+v", tl)
+	}
+}
+
 func TestDescriptionsAndSections(t *testing.T) {
 	good := "name: a\ndescription: |\n  What it's for.\nexpect: Done.\nsections: [{name: S1, description: first, expect: ok}]\nsteps: [{name: a, section: S1, run: x, description: 'doing {{.v}}'}]\n"
 	if _, err := Parse([]byte(good)); err != nil {
