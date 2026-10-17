@@ -415,3 +415,28 @@ func TestEditStepDuringRunOverHTTP(t *testing.T) {
 		t.Fatalf("run record: edits_saved %d", rec.EditsSaved)
 	}
 }
+
+func TestCollectionMembershipOverHTTP(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+
+	if r := do(t, "POST", ts.URL+"/api/runbooks?collection=ops", "name: a\nsteps: [{name: s, run: 'true'}]\n", nil); r.StatusCode != http.StatusCreated {
+		t.Fatalf("create into collection: %d", r.StatusCode)
+	}
+	if r := do(t, "POST", ts.URL+"/api/runbooks/a/move", `{"to":"infra"}`, nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("move: %d", r.StatusCode)
+	}
+	if in, _ := st.CollectionsOf("a"); len(in) != 1 || in[0] != "infra" {
+		t.Fatalf("after move: %v", in)
+	}
+	if r := do(t, "POST", ts.URL+"/api/collections/ops/runbooks", `{"runbooks":["a"]}`, nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("add: %d", r.StatusCode)
+	}
+	if r := do(t, "DELETE", ts.URL+"/api/collections/infra/runbooks/a", "", nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("remove: %d", r.StatusCode)
+	}
+	if in, _ := st.CollectionsOf("a"); len(in) != 1 || in[0] != "ops" {
+		t.Fatalf("after add/remove: %v", in)
+	}
+}

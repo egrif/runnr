@@ -261,12 +261,17 @@ func editLoop(st *store.Store, name string) error {
 
 func importCmd(s func() *store.Store) *cobra.Command {
 	var force bool
+	var collection string
 	cmd := &cobra.Command{
 		Use:   "import <file>...",
 		Short: "Validate and add runbook files to the library (- reads stdin)",
-		Args:  cobra.MinimumNArgs(1),
+		Long: `Validate and add runbook files to the library (- reads stdin).
+
+--collection also adds them to that collection (created if it doesn't exist).`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var failed bool
+			var imported []string
 			for _, f := range args {
 				var raw []byte
 				var err error
@@ -280,11 +285,19 @@ func importCmd(s func() *store.Store) *cobra.Command {
 					var ver int
 					if rb, ver, err = s().Save(raw, store.SaveOpts{Overwrite: force}); err == nil {
 						fmt.Printf("imported %s → %s (version %d)\n", f, rb.Name, ver)
+						imported = append(imported, rb.Name)
 						continue
 					}
 				}
 				failed = true
 				fmt.Fprintf(os.Stderr, "%s:\n%s\n", f, indent(err.Error()))
+			}
+			if collection != "" && len(imported) > 0 {
+				_, created, err := s().AddToCollection(collection, true, imported...)
+				if err != nil {
+					return fmt.Errorf("collection %s: %w", collection, err)
+				}
+				fmt.Printf("added to collection %s%s: %s\n", collection, map[bool]string{true: " (new)"}[created], strings.Join(imported, ", "))
 			}
 			if failed {
 				return ExitError{1}
@@ -293,6 +306,7 @@ func importCmd(s func() *store.Store) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "overwrite existing runbooks")
+	cmd.Flags().StringVarP(&collection, "collection", "c", "", "add the imported runbooks to this collection")
 	return cmd
 }
 
@@ -1369,6 +1383,61 @@ func collectionCmd(s func() *store.Store) *cobra.Command {
 		},
 	}
 	importC.Flags().BoolVarP(&force, "force", "f", false, "overwrite existing collections")
+	var create bool
+	addC := &cobra.Command{
+		Use: "add <collection> <runbook>...", Short: "Add runbooks to a collection (at the end)", Args: cobra.MinimumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ver, created, err := s().AddToCollection(args[0], create, args[1:]...)
+			if err != nil {
+				if _, e := s().LoadCollection(args[0]); !create && errors.Is(e, store.ErrNotFound) {
+					return fmt.Errorf("%w (--create makes it)", err)
+				}
+				return err
+			}
+			fmt.Printf("collection %s%s (version %d): added %s\n", args[0], map[bool]string{true: " created"}[created], ver, strings.Join(args[1:], ", "))
+			return nil
+		},
+	}
+	addC.Flags().BoolVar(&create, "create", false, "create the collection if it doesn't exist")
+	var from string
+	moveC := &cobra.Command{
+		Use:   "move <runbook>... --to <collection>",
+		Short: "Move runbooks to another collection",
+		Long: `Move runbooks into --to (created if it doesn't exist), out of the collection
+they're in. A runbook in several collections needs --from to say which.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			to, _ := cmd.Flags().GetString("to")
+			for _, r := range args {
+				was, err := s().MoveRunbook(r, from, to, true)
+				if err != nil {
+					return err
+				}
+				if was == "" {
+					fmt.Printf("%s: added to %s\n", r, to)
+				} else {
+					fmt.Printf("%s: %s → %s\n", r, was, to)
+				}
+			}
+			return nil
+		},
+	}
+	moveC.Flags().String("to", "", "the collection to move them to")
+	moveC.Flags().StringVar(&from, "from", "", "the collection to take them out of (needed if they're in several)")
+	_ = moveC.MarkFlagRequired("to")
+	cmd.AddCommand(addC, moveC,
+		&cobra.Command{
+			Use: "remove <collection> <runbook>...", Aliases: []string{"rm-runbook"}, Short: "Take runbooks out of a collection (they stay in runnr)", Args: cobra.MinimumNArgs(2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				ver, err := s().RemoveFromCollection(args[0], args[1:]...)
+				if err != nil {
+					return err
+				}
+				fmt.Printf("collection %s (version %d): removed %s\n", args[0], ver, strings.Join(args[1:], ", "))
+				return nil
+			},
+		},
+	)
 	cmd.AddCommand(
 		&cobra.Command{
 			Use: "list", Aliases: []string{"ls"}, Short: "List collections and their runbooks", Args: cobra.NoArgs,

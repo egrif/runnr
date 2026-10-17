@@ -44,6 +44,15 @@ overwriting a newer save.
 (PUT takes `If-Match`), `POST /api/collections/validate`. A collection is
 `{name, description, expect, runbooks: [...]}`.
 
+Membership (these change only the `runbooks` list, keeping the rest of the YAML):
+
+| Method | Path | Body | Does |
+|---|---|---|---|
+| POST | `/api/runbooks?collection=NAME` | runbook YAML | create a runbook and add it to that collection (created if needed) |
+| POST | `/api/collections/{name}/runbooks` | `{runbooks: [...], create?}` | append runbooks (which must exist); `create` makes the collection |
+| DELETE | `/api/collections/{name}/runbooks/{runbook}` | | take a runbook out (it stays in runnr) |
+| POST | `/api/runbooks/{name}/move` | `{to, from?}` | move into `to` (created if needed), out of `from`, or out of the one collection it's in |
+
 ## Trying steps out ("Run this")
 
 | Method | Path | Body | Returns |

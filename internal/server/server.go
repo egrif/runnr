@@ -76,6 +76,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/collections/{name}", s.updateCollection)
 	mux.HandleFunc("DELETE /api/collections/{name}", s.deleteCollection)
 	mux.HandleFunc("POST /api/collections/validate", s.validateCollection)
+	mux.HandleFunc("POST /api/collections/{name}/runbooks", s.addToCollection)
+	mux.HandleFunc("DELETE /api/collections/{name}/runbooks/{runbook}", s.removeFromCollection)
+	mux.HandleFunc("POST /api/runbooks/{name}/move", s.moveRunbook)
 	mux.HandleFunc("GET /api/libraries", s.listLibraries)
 	mux.HandleFunc("POST /api/libraries", s.createLibrary)
 	mux.HandleFunc("GET /api/libraries/{name}", s.getLibrary)
@@ -231,8 +234,30 @@ func (s *Server) getRunbook(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// createRunbook saves a new runbook; ?collection=NAME also adds it to that
+// collection (created if it doesn't exist).
 func (s *Server) createRunbook(w http.ResponseWriter, r *http.Request) {
-	s.saveRunbook(w, r, store.SaveOpts{}, http.StatusCreated)
+	col := r.URL.Query().Get("collection")
+	if col == "" {
+		s.saveRunbook(w, r, store.SaveOpts{}, http.StatusCreated)
+		return
+	}
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	rb, ver, err := s.st.Save(raw, store.SaveOpts{})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if _, _, err := s.st.AddToCollection(col, true, rb.Name); err != nil {
+		writeErr(w, fmt.Errorf("saved %s, but adding it to collection %s failed: %w", rb.Name, col, err))
+		return
+	}
+	w.Header().Set("ETag", strconv.Itoa(ver))
+	writeJSON(w, http.StatusCreated, map[string]any{"name": rb.Name, "version": ver, "runbook": rb, "collection": col})
 }
 
 // updateRunbook saves a new version. Send "If-Match: <version>" to fail with
@@ -1091,6 +1116,57 @@ func (s *Server) putTestValues(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------- collections ----------
+
+// addToCollection appends runbooks (body {"runbooks": [...], "create": bool}).
+func (s *Server) addToCollection(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Runbooks []string `json:"runbooks"`
+		Create   bool     `json:"create"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if len(body.Runbooks) == 0 {
+		writeErr(w, errors.New("no runbooks given"))
+		return
+	}
+	ver, created, err := s.st.AddToCollection(r.PathValue("name"), body.Create, body.Runbooks...)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": ver, "created": created})
+}
+
+func (s *Server) removeFromCollection(w http.ResponseWriter, r *http.Request) {
+	ver, err := s.st.RemoveFromCollection(r.PathValue("name"), r.PathValue("runbook"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": ver})
+}
+
+// moveRunbook moves a runbook to another collection (body {"to", "from"};
+// from is needed only when it's in several).
+func (s *Server) moveRunbook(w http.ResponseWriter, r *http.Request) {
+	var body struct{ To, From string }
+	if err := decode(r, &body); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if body.To == "" {
+		writeErr(w, errors.New(`"to" is required`))
+		return
+	}
+	from, err := s.st.MoveRunbook(r.PathValue("name"), body.From, body.To, true)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"from": from, "to": body.To})
+}
 
 func (s *Server) listCollections(w http.ResponseWriter, _ *http.Request) {
 	cs, err := s.st.ListCollections()

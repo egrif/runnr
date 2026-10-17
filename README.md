@@ -45,8 +45,10 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr versions <name>` | List saved versions |
 | `runnr lib list/show/new/edit/import/delete/versions` | Manage function libraries |
 | `runnr collection list/show/new/edit/import/delete` | Group runbooks that belong together, with what they're for |
+| `runnr collection add <col> <runbook>...` / `remove <col> <runbook>...` | Put runbooks in a collection (`--create` to make it) or take them out (they stay in runnr) |
+| `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
-| `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin) |
+| `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin, `-c <collection>` to add them to a collection) |
 | `runnr delete <name>` | Delete (`-f` to skip the prompt) |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
 | `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |

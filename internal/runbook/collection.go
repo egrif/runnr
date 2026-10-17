@@ -48,3 +48,53 @@ expect: How things stand once they've all run.
 runbooks: []
 `, name)
 }
+
+// SetCollectionRunbooks rewrites a collection's runbooks list, keeping the
+// rest of its YAML (comments included) as it was.
+func SetCollectionRunbooks(raw []byte, names []string) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, errors.New("collection isn't a YAML mapping")
+	}
+	m := doc.Content[0]
+	var seq *yaml.Node
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == "runbooks" {
+			seq = m.Content[i+1]
+		}
+	}
+	if seq == nil {
+		seq = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "runbooks"}, seq)
+	}
+	// Keep the existing item nodes (and their comments) where they survive.
+	old := map[string]*yaml.Node{}
+	for _, n := range seq.Content {
+		old[n.Value] = n
+	}
+	seq.Kind, seq.Tag, seq.Value = yaml.SequenceNode, "!!seq", ""
+	seq.Content = nil
+	for _, name := range names {
+		n := old[name]
+		if n == nil {
+			n = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: name}
+		}
+		seq.Content = append(seq.Content, n)
+	}
+	if len(names) == 0 {
+		seq.Style = yaml.FlowStyle // runbooks: []
+	}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}

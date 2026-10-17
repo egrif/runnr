@@ -82,7 +82,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
         !confirm("Saving from the structured view rewrites the YAML, so its comments will be dropped. Save anyway?")) return;
       const rb = name
         ? await api("PUT", `/api/runbooks/${enc(name)}`, y.raw, true, { "If-Match": String(version) })
-        : await api("POST", "/api/runbooks", y.raw, true);
+        : await api("POST", `/api/runbooks${$("#new-col")?.value ? `?collection=${enc($("#new-col").value)}` : ""}`, y.raw, true);
       toast("Saved");
       await loadRunbooks();
       location.hash = `#/runbooks/${enc(rb.name)}`;

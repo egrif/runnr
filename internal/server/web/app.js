@@ -175,7 +175,7 @@ async function viewRunbook(name, tab, query) {
       <h1>${esc(name)}</h1>
       ${rb?.description ? `<div class="rb-desc">${esc(rb.description)}</div>` : ""}
       ${rb?.expect ? `<div class="rb-desc muted"><b>By the end:</b> ${esc(rb.expect)}</div>` : ""}
-      ${collections.filter((c) => c.collection?.runbooks.includes(name)).map((c) => `<span class="tag">in <a href="#/collections/${enc(c.name)}">${esc(c.name)}</a></span>`).join("")}
+      ${rb ? membership(name) : ""}
       <div>${(rb?.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>
     </div></div>
     <nav class="tabs">
@@ -184,6 +184,7 @@ async function viewRunbook(name, tab, query) {
       <a href="#/history?runbook=${encodeURIComponent(name)}">History</a>
     </nav>
     <section id="tab"></section>`;
+  bindMembership(main, name, () => route());
   if (tab === "edit" || !rb) return renderEditor($("#tab"), data.raw, name, data.error, data.version, data.updated_at);
   const mode = query.get("resume") ? "resume" : query.get("rerun") ? "rerun" : "run";
   await viewLaunch($("#tab"), name, mode, query.get("resume") || query.get("rerun") || "");
@@ -203,7 +204,19 @@ function stepDetails(s) {
 
 async function viewNew() {
   const { raw } = await api("GET", "/api/template?name=my-runbook");
-  main.innerHTML = `<h1>New runbook</h1><p class="muted">Edit the starter below; the <code>name</code> field becomes the runbook's identifier.</p><section id="tab"></section>`;
+  main.innerHTML = `<h1>New runbook</h1>
+    <p class="muted">Edit the starter below, or import a file; the <code>name</code> field becomes the runbook's identifier.</p>
+    <div class="row new-opts"><label>Collection ${colPicker("new-col", "None")}</label>
+      <label class="link">Import a file… <input type="file" id="import-file" accept=".yaml,.yml,text/yaml" hidden></label></div>
+    <section id="tab"></section>`;
+  $("#new-col").onchange = (e) => { const v = pickedCol(e.target.value); if (v && !collections.some((c) => c.name === v)) e.target.add(new Option(v, v), 1); e.target.value = v; };
+  $("#import-file").onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    $("#yaml").value = await f.text();
+    $("#yaml").dispatchEvent(new Event("input"));
+    toast(`Loaded ${f.name}: check it, then Save`);
+  };
   renderEditor($("#tab"), raw, null);
 }
 
