@@ -458,12 +458,12 @@ function renderStruct(ed) {
         ${row("Tags", H.runbook.tags, control("tags", "list", d.tags, { placeholder: "ops, deploy" }))}
         ${row("Libraries", H.runbook.libraries, control("libraries", "list", d.libraries, { placeholder: "aurora-helpers" }))}
       </div>
-      ${group("Maintenance window", [
+      ${group(`Maintenance window${d.maintenance_window ? "" : " (off)"}`, [
         `<p class="muted small" style="grid-column: 1 / -1">${esc(H.runbook.maintenance_window)}</p>`,
-        row("Target length", H.runbook.window_target, offsetPair(d, "maintenance_window.target", d.maintenance_window?.target, "maintenance_window.target_input", d.maintenance_window?.target_input, "e.g. 45m")),
-        row("Description", H.runbook.window_description, control("maintenance_window.description", "text", d.maintenance_window?.description)),
-        d.maintenance_window ? "" : `<button data-act="add-window" style="grid-column: 1 / -1; justify-self: start">Use a maintenance window</button>`,
-      ], { collapsible: true, id: "rb-window", open: !!d.maintenance_window })}
+        `<label class="check" style="grid-column: 1 / -1"><input type="checkbox" data-mw-toggle ${d.maintenance_window ? "checked" : ""}><span>Use a maintenance window</span></label>`,
+        d.maintenance_window ? row("Target length", H.runbook.window_target, offsetPair(d, "maintenance_window.target", d.maintenance_window?.target, "maintenance_window.target_input", d.maintenance_window?.target_input, "e.g. 45m")) : "",
+        d.maintenance_window ? row("Description", H.runbook.window_description, control("maintenance_window.description", "text", d.maintenance_window?.description)) : "",
+      ], { collapsible: true, id: "rb-window", open: ed.windowOpen ?? !!d.maintenance_window })}
       ${sectionsGroup(d)}
       ${group("Shell, environment & masking", [
         row("Shell", H.runbook.shell, control("shell", "text", d.shell, { placeholder: "sh" })),
@@ -526,6 +526,8 @@ function renderStruct(ed) {
     const r = ed.runs.get(+el.dataset.i);
     if (q && r?.question) bindQuestion(q, r.question, r.id);
   });
+  const mw = pane.querySelector('[data-group="rb-window"]');
+  if (mw) mw.ontoggle = () => (ed.windowOpen = mw.open);
   const tv = pane.querySelector("details.test-values");
   if (tv) tv.ontoggle = () => (ed.testOpen = tv.open);
 
@@ -567,6 +569,25 @@ function renderStruct(ed) {
       sec[t.dataset.secField] = t.value || undefined;
       d.sections = d.sections.filter((x) => x.description || x.expect || x.window_offset || x.offset_input);
       return;
+    }
+    if (t.matches("[data-mw-toggle]") && e.type === "change") {
+      ed.windowOpen = true;
+      if (t.checked) {
+        d.maintenance_window = {};
+        return renderStruct(ed);
+      }
+      // Off: window marks and planned times only mean something with a window.
+      const fields = ["window", "window_offset", "offset_input"];
+      const marked = d.steps.filter((st) => fields.some((f) => st[f])).length + (d.sections || []).filter((x) => x.window_offset || x.offset_input).length;
+      if (marked && !confirm(`Turning the maintenance window off also clears the window marks and planned times on ${marked} step${marked === 1 ? "" : "s"}/section${marked === 1 ? "" : "s"}. Go ahead?`)) {
+        t.checked = true;
+        return;
+      }
+      delete d.maintenance_window;
+      d.steps.forEach((st) => fields.forEach((f) => delete st[f]));
+      (d.sections || []).forEach((x) => { delete x.window_offset; delete x.offset_input; });
+      d.sections = (d.sections || []).filter((x) => x.description || x.expect);
+      return renderStruct(ed);
     }
     if (t.matches("[data-sec-rename]") && e.type === "change") {
       const old = t.dataset.secRename, nw = t.value.trim();
@@ -701,7 +722,6 @@ function renderStruct(ed) {
         }
         break;
       }
-      case "add-window": d.maintenance_window = { target: "" }; break;
       case "add-step":
         d.steps.push({ name: "New step", run: "echo hello", section: d.steps.at(-1)?.section });
         ed.open.add(d.steps.length - 1);

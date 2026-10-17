@@ -72,8 +72,8 @@ planning, and for seeing what's coming.`,
 			if err != nil {
 				return err
 			}
-			if next && len(ag) > 1 {
-				ag = ag[:1]
+			if next {
+				ag = nextActions(ag, lv, time.Now())
 			}
 			if len(ag) == 0 {
 				fmt.Println("Nothing scheduled. Add one with: runnr schedule add <runbook> --at \"2026-11-01 22:00\"")
@@ -84,7 +84,7 @@ planning, and for seeing what's coming.`,
 		},
 	}
 	list.Flags().StringVar(&detail, "detail", "steps", "what to show of each run: windows, sections or steps")
-	list.Flags().BoolVar(&next, "next", false, "only the next scheduled run")
+	list.Flags().BoolVar(&next, "next", false, "only the next action of each run still to come")
 	list.Flags().BoolVar(&past, "past", false, "include runs that are over")
 
 	rm := &cobra.Command{
@@ -99,6 +99,37 @@ planning, and for seeing what's coming.`,
 	}
 	cmd.AddCommand(add, list, rm)
 	return cmd
+}
+
+// nextActions keeps, for each run that isn't over, just its next action at
+// this level of detail (or its window, if that's open now).
+func nextActions(ag []store.PlannedRun, level int, now time.Time) []store.PlannedRun {
+	shown := func(e store.AgendaEntry) bool {
+		return e.Kind == "window" || e.Kind == "start" || (e.Kind == "section" && level >= 1) || (e.Kind == "step" && level >= 2)
+	}
+	var out []store.PlannedRun
+	for _, pr := range ag {
+		var keep *store.AgendaEntry
+		for _, e := range pr.Entries {
+			if shown(e) && !e.At.Before(now) {
+				keep = &e
+				break
+			}
+		}
+		if keep == nil {
+			for _, e := range pr.Entries {
+				if e.Kind == "window" && e.End != nil && !e.End.Before(now) {
+					e.Name = "open now"
+					keep = &e
+				}
+			}
+		}
+		if keep != nil {
+			pr.Entries = []store.AgendaEntry{*keep}
+			out = append(out, pr)
+		}
+	}
+	return out
 }
 
 // parseWhen reads a local date and time.
@@ -149,6 +180,9 @@ func printAgenda(ag []store.PlannedRun, level int) {
 			switch {
 			case e.Kind == "window":
 				w := "🔴 maintenance window opens"
+				if e.Name == "open now" {
+					w = "🔴 maintenance window is open now"
+				}
 				if e.End != nil {
 					until := e.End.Local().Format("15:04")
 					if e.End.Local().YearDay() != e.At.Local().YearDay() || e.End.Year() != e.At.Year() {

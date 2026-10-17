@@ -21,21 +21,29 @@ const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,
 const hhmm = (d) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const runName = (r) => r.title ? `${r.runbook} — ${r.title}` : r.runbook;
 
-// shownRuns applies "next only" and (in the agenda) "show past".
+// shownRuns: the runs to show; with "next actions only", every run that
+// isn't over (past runs have no next action).
 function shownRuns(includePast) {
   const now = Date.now();
-  let rs = sched.runs.filter((r) => includePast || runEnd(r) >= now);
-  if (sched.next) rs = sched.runs.filter((r) => runEnd(r) >= now).slice(0, 1);
-  return rs;
+  return sched.runs.filter((r) => (includePast && !sched.next) || runEnd(r) >= now);
 }
 
-// entriesOf lists a run's dated points at the chosen level of detail.
+// entriesOf lists a run's dated points at the chosen level of detail; with
+// "next actions only", just the next one still to come (or its window, if
+// that's open now and nothing else is due before it closes).
 function entriesOf(r) {
-  return r.entries.filter((e) => e.kind === "window" || e.kind === "start" || (e.kind === "section" && sched.detail >= 1) || (e.kind === "step" && sched.detail >= 2));
+  const es = r.entries.filter((e) => e.kind === "window" || e.kind === "start" || (e.kind === "section" && sched.detail >= 1) || (e.kind === "step" && sched.detail >= 2));
+  if (!sched.next) return es;
+  const now = Date.now();
+  const next = es.find((e) => +new Date(e.at) >= now);
+  if (next) return [next];
+  const open = es.find((e) => e.kind === "window" && e.end && +new Date(e.end) >= now);
+  return open ? [{ ...open, now: true }] : [];
 }
 
 function entryLabel(e) {
   if (e.kind === "window") {
+    if (e.now) return `🔴 Maintenance window open now, until ${new Date(e.end).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
     if (!e.end) return "🔴 Maintenance window";
     const end = new Date(e.end), sameDay = dayKey(end) === dayKey(new Date(e.at));
     const until = sameDay ? hhmm(end) : end.toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -60,8 +68,8 @@ function drawSchedule() {
     <div class="row sched-bar">
       <div class="seg"><button data-view="calendar" class="${sched.view === "calendar" ? "on" : ""}">Calendar</button><button data-view="agenda" class="${sched.view === "agenda" ? "on" : ""}">Agenda</button></div>
       <label>Show <select id="sched-detail">${DETAIL.map(([l, v]) => `<option value="${v}" ${v === sched.detail ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-      <label class="check"><input type="checkbox" id="sched-next" ${sched.next ? "checked" : ""}> Next run only</label>
-      ${sched.view === "agenda" ? `<label class="check"><input type="checkbox" id="sched-past" ${sched.past ? "checked" : ""}> Show past</label>` : ""}
+      <label class="check"><input type="checkbox" id="sched-next" ${sched.next ? "checked" : ""}> Next actions only</label>
+      ${sched.view === "agenda" && !sched.next ? `<label class="check"><input type="checkbox" id="sched-past" ${sched.past ? "checked" : ""}> Show past</label>` : ""}
     </div>
     <div id="sched-body">${sched.view === "calendar" ? calendarHTML() : agendaHTML()}</div>`;
   $("#new-sched").onclick = () => scheduleDialog({});

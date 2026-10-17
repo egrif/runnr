@@ -345,8 +345,8 @@ the real downtime, and a run that stops with the window open says so.
 22:00" -v env=prod` (for a runbook with a window, the time is when it
 opens), or **Schedule…** on the launch page. The GUI's **Schedule** page shows
 a calendar and an agenda of planned runs with their windows and, as you
-choose, the planned starts of sections and steps, or just the next run;
-`runnr schedule list [--detail windows|sections|steps] [--next]` prints the
+choose, the planned starts of sections and steps, or just the next action of each run;
+`runnr schedule list [--detail windows|sections|steps] [--next]` (next actions) prints the
 agenda. Nothing starts on its own yet: **Start this run…** opens the launch
 page with the schedule's inputs.
 
