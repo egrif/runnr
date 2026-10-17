@@ -603,3 +603,32 @@ func (s *Store) importLegacy(ctx context.Context, home string) error {
 	_, err = s.db.ExecContext(ctx, `INSERT INTO meta (key, value) VALUES ('legacy_import', 'done')`)
 	return err
 }
+
+// SaveRunEdits saves the step edits made during a run as a new version of
+// its runbook, and records that on the run. A step that has changed in the
+// runbook since the run started is a conflict.
+func (s *Store) SaveRunEdits(run *engine.Run) (int, error) {
+	if len(run.Edits) == 0 {
+		return 0, errors.New("this run has no step edits")
+	}
+	if run.RunbookVersion == 0 {
+		return 0, errors.New("this run's runbook isn't saved in runnr (it ran from a file)")
+	}
+	rb, ver, err := s.Get(run.Runbook)
+	if err != nil {
+		return 0, err
+	}
+	edited, err := engine.ApplyEdits(rb, run.Edits)
+	if err != nil {
+		return 0, err
+	}
+	raw, err := runbook.Format(edited)
+	if err != nil {
+		return 0, err
+	}
+	if _, ver, err = s.Save(raw, SaveOpts{OldName: rb.Name, BaseVersion: ver}); err != nil {
+		return 0, err
+	}
+	run.EditsSaved = ver
+	return ver, s.SaveRun(run)
+}

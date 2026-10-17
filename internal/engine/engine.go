@@ -63,8 +63,10 @@ type StepResult struct {
 	// Alternative is the one chosen; Sub holds its steps' results.
 	Alternative string       `json:"alternative,omitempty"`
 	Sub         []StepResult `json:"sub,omitempty"`
-	Started     time.Time    `json:"started,omitzero"`
-	Ended       time.Time    `json:"ended,omitzero"`
+	// Edited: the step was changed during the run.
+	Edited  bool      `json:"edited,omitempty"`
+	Started time.Time `json:"started,omitzero"`
+	Ended   time.Time `json:"ended,omitzero"`
 }
 
 type Run struct {
@@ -75,6 +77,10 @@ type Run struct {
 	StartAt        int    `json:"start_at,omitempty"`
 	RunbookVersion int    `json:"runbook_version,omitempty"`
 	Resumes        string `json:"resumes,omitempty"`
+	// Edits are changes made to steps during the run; EditsSaved is the
+	// runbook version they were saved as (0: not saved yet).
+	Edits      []StepEdit `json:"edits,omitempty"`
+	EditsSaved int        `json:"edits_saved,omitempty"`
 	// Previous is the run this one was compared against ("last time").
 	Previous string            `json:"previous,omitempty"`
 	Status   Status            `json:"status"`
@@ -326,6 +332,12 @@ type executor struct {
 	funcFile  string
 	functions []FuncInfo
 	mu        sync.Mutex
+	// em guards the step definitions (editable during the run), the
+	// current step and the edits.
+	em         sync.Mutex
+	cur        int
+	edits      []StepEdit
+	editsSaved int
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -338,7 +350,11 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	if opts.Interactive {
 		mode = "interactive"
 	}
-	x := &executor{rb: rb, ui: ui, opts: opts, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
+	// A private copy: steps can be edited during the run.
+	own := *rb
+	own.Steps = slices.Clone(rb.Steps)
+	rb = &own
+	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending})
@@ -390,10 +406,13 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		}
 	}
 	x.finish(ctx, err)
-	return x.run
+	return x.snapshot()
 }
 
 func (x *executor) finish(ctx context.Context, err error) {
+	x.em.Lock()
+	x.cur = len(x.rb.Steps) // no more edits
+	x.em.Unlock()
 	x.tendBackground(-1, true)
 	if x.funcFile != "" {
 		os.Remove(x.funcFile)
@@ -465,7 +484,11 @@ func (x *executor) resolveInputs(ctx context.Context) error {
 }
 
 func (x *executor) steps(ctx context.Context) error {
-	for i, step := range x.rb.Steps {
+	for i := range x.rb.Steps {
+		x.em.Lock()
+		x.cur = i
+		x.em.Unlock()
+		step := x.def(i)
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -573,6 +596,9 @@ func (x *executor) apply(step runbook.Step, out cmdResult) {
 }
 
 func (x *executor) fail(i int, err error) error {
+	if errors.Is(err, ErrStepEdited) {
+		return err // step() starts it again
+	}
 	res := &x.run.Steps[i]
 	res.Status = StatusFailed
 	if x.run.Steps[i].Error == "" {
@@ -601,6 +627,7 @@ func (x *executor) snapshot() *Run {
 	r := *x.run
 	r.Steps = slices.Clone(x.run.Steps)
 	r.State = maps.Clone(x.run.State)
+	x.withEdits(&r)
 	return &r
 }
 

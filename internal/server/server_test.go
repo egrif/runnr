@@ -345,3 +345,73 @@ steps:
 		t.Fatalf("test runs must not be recorded: %d", len(runs))
 	}
 }
+
+// A step fails; the operator edits it from the failure question, it runs
+// again with the fix, and the edit is saved back to the runbook.
+func TestEditStepDuringRunOverHTTP(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+
+	rb := "name: fixme\nsteps:\n  - {name: a, run: 'echo a'}\n  - {name: b, run: 'exit 3'}\n"
+	if res := do(t, "POST", ts.URL+"/api/runbooks", rb, nil); res.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d", res.StatusCode)
+	}
+	res := do(t, "POST", ts.URL+"/api/runs", `{"runbook":"fixme"}`, nil)
+	var started struct{ ID string }
+	json.NewDecoder(res.Body).Decode(&started)
+	base := ts.URL + "/api/runs/" + started.ID
+
+	evs, err := http.Get(base + "/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer evs.Body.Close()
+	deadline := time.AfterFunc(10*time.Second, func() { evs.Body.Close() })
+	defer deadline.Stop()
+	sc := bufio.NewScanner(evs.Body)
+	var final *engine.Run
+	var output []string
+	for final == nil && sc.Scan() {
+		line, ok := strings.CutPrefix(sc.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var e WireEvent
+		json.Unmarshal([]byte(line), &e)
+		switch e.Kind {
+		case "question":
+			if e.Question.Type != "failure" {
+				t.Fatalf("unexpected question %+v", e.Question)
+			}
+			if r := do(t, "PUT", base+"/steps/1", "name: a\nrun: echo nope\n", nil); r.StatusCode == http.StatusOK {
+				t.Fatal("editing a finished step should fail")
+			}
+			r := do(t, "PUT", base+"/steps/2", "name: b\nrun: echo fixed\n", nil)
+			var body struct{ Restarted bool }
+			json.NewDecoder(r.Body).Decode(&body)
+			if r.StatusCode != http.StatusOK || !body.Restarted {
+				t.Fatalf("edit: %d %+v", r.StatusCode, body)
+			}
+		case engine.EventOutput:
+			output = append(output, e.Text)
+		case engine.EventRunFinished:
+			final = e.Run
+		}
+	}
+	if final == nil || final.Status != engine.StatusSucceeded || !final.Steps[1].Edited || !strings.Contains(strings.Join(output, "|"), "fixed") {
+		t.Fatalf("%+v %q", final, output)
+	}
+	r := do(t, "POST", base+"/save-edits", "", nil)
+	var saved struct{ Version int }
+	json.NewDecoder(r.Body).Decode(&saved)
+	if r.StatusCode != http.StatusOK || saved.Version != 2 {
+		t.Fatalf("save: %d %+v", r.StatusCode, saved)
+	}
+	if got, _, _ := st.Get("fixme"); got.Steps[1].Run != "echo fixed" {
+		t.Fatalf("runbook not updated: %q", got.Steps[1].Run)
+	}
+	if rec, _ := st.LoadRun(started.ID); rec.EditsSaved != 2 {
+		t.Fatalf("run record: edits_saved %d", rec.EditsSaved)
+	}
+}

@@ -261,6 +261,7 @@ functions:
       <li><b>Step through</b>: stop before every step: run, skip, carry on without stopping, or abort.</li>
       <li><b>Unattended</b>: no questions. Confirmations need auto-approve, manual and terminal steps follow <code>unattended</code>, alternatives use <code>when</code>, and any failure stops the run.</li>
       <li>At any question: open a <b>shell</b> with the run's variables and the step's commands beside it, add a <b>note</b>, see the <b>state</b>, or view a background step.</li>
+      <li><b>Change a step mid-run</b>: <b>✎ edit</b> on the current step or a later one (CLI: <b>[c]hange step</b>). A step waiting on a question starts again with the change. It's only in that run until you <b>Save to runbook</b>.</li>
       <li><b>Dangerous steps</b> (<code>dangerous: true</code>) run like any other in sequence. Out of sequence (earlier steps skipped, a later start, Run this, a runbook file) they list what didn't run and wait for you to type the step number; a resume counts the steps the earlier run finished.</li>
       <li><b>Resume</b> continues a stopped run at the step that didn't finish, with the same inputs and state; <b>run again</b> repeats it, comparing each step with last time.</li>
     </ul>

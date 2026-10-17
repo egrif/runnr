@@ -126,6 +126,15 @@ Start without `unattended`, then read `/events`. Each event is
 | `choose` (alternatives) | an alternative's name, or `abort` |
 | `after` | `continue`, `retry` (run again), `fail` (`note` = what's wrong; then a `failure` question), `abort` |
 
+**Changing steps during a run.** `GET /api/runs/{id}/steps/{n}` returns
+`{yaml, current, editable}` for a live run's step `n` (1-based). `PUT` the
+same path with the step as YAML to change it for the rest of the run (the
+current step or a later one); if it was waiting on a question, it starts
+again (`{"restarted": true}`). The run records `edits` and, once
+`POST /api/runs/{id}/save-edits` makes them a new runbook version,
+`edits_saved` (that version). Saving fails if the step has changed in the
+runbook since the run started.
+
 Questions carry `text` (the rendered command or instructions) and `expect`.
 `confirm`/`danger`/`manual`/`failure`/`before`/`after` questions also offer `shell`,
 which opens a terminal session with the run's environment and then asks the

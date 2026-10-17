@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -24,7 +25,22 @@ func stepKind(s runbook.Step) string {
 	return s.Kind()
 }
 
+// step runs step i, starting it again (with its new definition) whenever
+// it's edited while waiting on the operator.
 func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
+	for {
+		err := x.stepOnce(ctx, i, step)
+		if !errors.Is(err, ErrStepEdited) {
+			return err
+		}
+		step = x.def(i)
+		res := &x.run.Steps[i]
+		res.Error, res.ExitCode, res.Note = "", nil, ""
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "✎ step edited: starting it again with the new version"})
+	}
+}
+
+func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error {
 	res := &x.run.Steps[i]
 	if step.When != "" {
 		cond, err := x.render(step.When)
@@ -488,7 +504,7 @@ func (x *executor) startBackground(ctx context.Context, i int, step runbook.Step
 	note := "running in the background until the run ends"
 	if step.StopAfter != "" {
 		stopAfter, _ = x.rb.StepIndex(step.StopAfter)
-		note = fmt.Sprintf("running in the background until step %d (%s) finishes", stopAfter+1, x.rb.Steps[stopAfter].Name)
+		note = fmt.Sprintf("running in the background until step %d (%s) finishes", stopAfter+1, x.def(stopAfter).Name)
 	}
 	if x.background == nil {
 		x.background = map[int]*bgStep{}

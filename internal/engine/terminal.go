@@ -344,3 +344,37 @@ func (p *PipeConn) Resized() <-chan struct{} { return p.resize }
 
 // Done is closed when the session ends.
 func (p *PipeConn) Done() <-chan struct{} { return p.done }
+
+// RunOnTerm runs a command (e.g. an editor) on a pty connected to conn and
+// waits for it; conn is closed when it ends.
+func RunOnTerm(ctx context.Context, conn TermConn, name string, args ...string) error {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), "TERM="+termName())
+	rows, cols := conn.Size()
+	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
+	if err != nil {
+		conn.Close()
+		return err
+	}
+	go func() { _, _ = io.Copy(f, conn) }()
+	ended := make(chan struct{})
+	if ch := conn.Resized(); ch != nil {
+		go func() {
+			for {
+				select {
+				case <-ch:
+					r, c := conn.Size()
+					_ = pty.Setsize(f, &pty.Winsize{Rows: r, Cols: c})
+				case <-ended:
+					return
+				}
+			}
+		}()
+	}
+	_, _ = io.Copy(conn, f)
+	err = cmd.Wait()
+	close(ended)
+	f.Close()
+	conn.Close()
+	return err
+}

@@ -532,3 +532,26 @@ func (rb *Runbook) StepIndex(ref string) (int, error) {
 	}
 	return 0, fmt.Errorf("no step %q (use an id, number or exact name)", ref)
 }
+
+// ParseStep decodes one step (YAML), checking its fields are known. The
+// caller validates it in its runbook.
+func ParseStep(data []byte) (Step, error) {
+	var s Step
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&s); err != nil {
+		return s, fmt.Errorf("parse: %w", err)
+	}
+	return s, nil
+}
+
+// FormatStep renders one step as YAML.
+func FormatStep(s Step) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(s); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), enc.Close()
+}

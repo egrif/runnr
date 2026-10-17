@@ -361,3 +361,10 @@ body.dragging { user-select: none; cursor: col-resize; }
 .question.q-danger { border-color: var(--fail); }
 .question.q-danger h3 { color: var(--fail); }
 .danger-why { margin: 4px 0; }
+
+/* Editing a step during a run */
+.edits-banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; padding: 8px 12px; border: 1px solid var(--warn); border-radius: 8px; background: var(--panel); }
+dialog.edit-step { width: min(900px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); padding: 16px; }
+dialog.edit-step::backdrop { background: rgba(0,0,0,.35); }
+dialog.edit-step textarea { width: 100%; min-height: 50vh; }
+dialog.edit-step .row { margin-top: 8px; gap: 8px; }

@@ -92,6 +92,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}", s.getRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
+	mux.HandleFunc("GET /api/runs/{id}/steps/{n}", s.getRunStep)
+	mux.HandleFunc("PUT /api/runs/{id}/steps/{n}", s.editRunStep)
+	mux.HandleFunc("POST /api/runs/{id}/save-edits", s.saveRunEdits)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
 	mux.HandleFunc("POST /api/runs/{id}/notes", s.addNote)
@@ -789,6 +792,99 @@ func (s *Server) answer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// runEditor is a live run's step editor (nil when the run isn't live).
+func (s *Server) runEditor(id string) (*liveRun, engine.Editor) {
+	l := s.getLive(id)
+	if l == nil {
+		return nil, nil
+	}
+	ed, _ := l.session.(engine.Editor)
+	return l, ed
+}
+
+func stepNumber(r *http.Request) (int, error) {
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("step must be a number from 1")
+	}
+	return n - 1, nil
+}
+
+// getRunStep returns a live run's step definition as YAML, for editing.
+func (s *Server) getRunStep(w http.ResponseWriter, r *http.Request) {
+	i, err := stepNumber(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	_, ed := s.runEditor(r.PathValue("id"))
+	if ed == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	def := ed.StepDef(i)
+	raw, err := runbook.FormatStep(def)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"yaml": string(raw), "current": ed.Current() + 1, "editable": i >= ed.Current()})
+}
+
+// editRunStep replaces a step of a live run (body: the step as YAML). The
+// current step, if it's waiting on a question, starts again with it.
+func (s *Server) editRunStep(w http.ResponseWriter, r *http.Request) {
+	i, err := stepNumber(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	l, ed := s.runEditor(r.PathValue("id"))
+	if ed == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	step, err := runbook.ParseStep(raw)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := ed.EditStep(i, step); err != nil {
+		writeErr(w, err)
+		return
+	}
+	restarted := i == ed.Current() && l.restartStep(i)
+	writeJSON(w, http.StatusOK, map[string]any{"restarted": restarted, "edits": ed.Edits(), "view": l.session.View(i)})
+}
+
+// saveRunEdits saves a run's step edits as a new version of its runbook.
+func (s *Server) saveRunEdits(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	run, err := s.st.LoadRun(id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	_, ed := s.runEditor(id)
+	if ed != nil {
+		run.Edits = ed.Edits() // the record may not have the latest yet
+	}
+	ver, err := s.st.SaveRunEdits(run)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if ed != nil {
+		ed.MarkEditsSaved(ver)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": ver})
 }
 
 // addNote attaches an operator note to a step (1-based "step"), or to the

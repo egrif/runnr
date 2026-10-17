@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -242,6 +243,10 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 		extra += " · [w]atch background"
 		all["w"], all["watch"] = "\x00watch", "\x00watch"
 	}
+	if _, ok := t.session.(engine.Editor); ok && idx >= 0 && t.canShell() {
+		extra += " · [c]hange step"
+		all["c"], all["change"] = "\x00change", "\x00change"
+	}
 	for k, v := range opts {
 		all[k] = v
 	}
@@ -279,8 +284,66 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 			if err := t.watch(ctx); err != nil {
 				return "", err
 			}
+		case "\x00change":
+			changed, err := t.changeStep(ctx, idx)
+			if err != nil {
+				fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
+			}
+			if changed {
+				return "", engine.ErrStepEdited
+			}
 		default:
 			return a, nil
+		}
+	}
+}
+
+// changeStep edits step idx for this run in $VISUAL/$EDITOR, until it's
+// valid or left unchanged. changed means the step starts again with it.
+func (t *Terminal) changeStep(ctx context.Context, idx int) (changed bool, err error) {
+	ed := t.session.(engine.Editor)
+	raw, err := runbook.FormatStep(ed.StepDef(idx))
+	if err != nil {
+		return false, err
+	}
+	tmp, err := os.CreateTemp("", "runnr-step-*.yaml")
+	if err != nil {
+		return false, err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(raw); err != nil {
+		return false, err
+	}
+	tmp.Close()
+	editor := nonEmptyEnv("VISUAL", nonEmptyEnv("EDITOR", "vi"))
+	for {
+		conn, err := t.StartTerm(idx, fmt.Sprintf("editing step %d for this run", idx+1))
+		if err != nil {
+			return false, err
+		}
+		if err := engine.RunOnTerm(ctx, conn, "sh", "-c", editor+` "$1"`, "sh", tmp.Name()); err != nil {
+			return false, fmt.Errorf("editor: %w", err)
+		}
+		edited, err := os.ReadFile(tmp.Name())
+		if err != nil {
+			return false, err
+		}
+		if bytes.Equal(edited, raw) {
+			fmt.Fprintln(t.out, t.c("2", "  unchanged"))
+			return false, nil
+		}
+		step, err := runbook.ParseStep(edited)
+		if err == nil {
+			err = ed.EditStep(idx, step)
+		}
+		if err == nil {
+			fmt.Fprintln(t.out, t.c("33", "  ✎ step changed for this run; it starts again with the new version. Save it to the runbook at the end."))
+			return true, nil
+		}
+		fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
+		a, err := t.choose(ctx, "  [e]dit again / [d]iscard the change", map[string]string{"e": "e", "d": "d"}, "e")
+		if err != nil || a == "d" {
+			return false, err
 		}
 	}
 }

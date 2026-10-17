@@ -262,7 +262,10 @@ function applyEvent(state, e) {
       if (e.kind === "run_started") state.steps.forEach((s) => (s.log = []));
       e.run.steps.forEach((r, i) => Object.assign(state.steps[i], { ...r, notes: state.steps[i].notes }));
       e.run.notes = state.run.notes;
-      if (e.kind === "run_finished") { state.question = null; stream?.close(); }
+      if (e.kind === "run_finished") {
+        state.question = null; stream?.close();
+        if (e.run.edits?.length && !e.run.edits_saved) toast("Run finished. Your step edits aren't saved to the runbook yet");
+      }
       break;
     case "step_started":
       Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes });
@@ -325,6 +328,7 @@ function renderRun(state) {
       ${active ? `<button class="danger" id="cancel">Abort run</button>` : `${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
+    ${editsBanner(run, state)}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
     ${(state.messages || []).map((m) => `<p class="muted">ℹ ${esc(m)}</p>`).join("")}
     ${runningBackground().length ? `<div class="bg-list">${runningBackground().map((s) => `<span class="bg-item">◐ ${esc(s.title.replace(/^background · /, ""))} <button class="link" data-show-bg="${esc(s.id)}">View</button></span>`).join("")}</div>` : ""}
@@ -340,10 +344,11 @@ function renderRun(state) {
         <div class="step-head" data-toggle="${i}">
           <span class="icon s-${s.status}">${ICONS[s.status] || ""}</span>
           <span class="n">${i + 1}</span>
-          <span class="name">${esc(s.name)} <span class="kind">${esc(s.kind)}</span>${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
+          <span class="name">${esc(s.name)} <span class="kind">${esc(s.kind)}</span>${s.edited ? ` <span class="badge-k warn" title="Changed during this run">edited</span>` : ""}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
           <span class="meta">${[s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}</span>
           ${state.preview?.[i]?.confirm ? `<span class="badge-k warn" title="Asks before running">confirms on its own</span>` : ""}
           ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<span class="last s-${esc(state.prev.steps[i].status)}" title="Last time: ${esc(state.prev.steps[i].status)}">${ICONS[state.prev.steps[i].status]}</span>` : ""}
+          ${live && editable(state, i) ? `<button class="pill" data-edit-step="${i}" title="Change this step for this run${state.question?.step === i ? " and run it again" : ""}">✎ edit</button>` : ""}
           ${live && s.status === "pending" && state.controls ? `
             <button class="pill ${has(ctl.skip, i) ? "on" : ""}" data-ctl="skip" data-i="${i}" title="Leave this step out">skip</button>
             <button class="pill ${has(ctl.pause_before, i) ? "on" : ""}" data-ctl="pause_before" data-i="${i}" title="Stop before this step">⏸ before</button>
@@ -389,11 +394,77 @@ function renderRun(state) {
   bindSide(main, () => renderRun(state));
   main.querySelectorAll("[data-show-bg]").forEach((b) => (b.onclick = () => showTerm(b.dataset.showBg)));
   main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
+  main.querySelectorAll("[data-edit-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); editRunStep(state, +b.dataset.editStep); }));
+  $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
   $("#cancel") && ($("#cancel").onclick = () => api("POST", `/api/runs/${run.id}/cancel`).catch((e) => toast(e.message)));
   $("#resume") && ($("#resume").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?resume=${enc(run.id)}`));
   $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?rerun=${enc(run.id)}`));
   const q = $(".question");
   if (q) bindQuestion(q, state.question, run.id);
+}
+
+// ---------- editing steps during a run ----------
+
+// editable: the current step and later ones can be changed while the run is live.
+function editable(state, i) {
+  if (state.question?.step === i) return true; // waiting on it: edit and run it again
+  const cur = state.steps.findIndex((s) => ["pending", "running"].includes(s.status));
+  return cur >= 0 && i >= cur && ["pending", "running"].includes(state.steps[i].status);
+}
+
+function editsBanner(run, state) {
+  const edits = run.edits || [];
+  if (!edits.length) return "";
+  const steps = [...new Set(edits.map((e) => e.step))].sort((a, b) => a - b);
+  const names = steps.map((i) => `${i + 1}. ${esc(state.steps[i]?.name || "")}`).join(", ");
+  if (run.edits_saved) return `<p class="muted">✎ Step edits (${names}) saved to the runbook as version ${run.edits_saved}.</p>`;
+  return `<div class="edits-banner">✎ You changed ${steps.length === 1 ? "a step" : `${steps.length} steps`} in this run (${names}). The runbook doesn't have ${steps.length === 1 ? "this change" : "these changes"} yet.
+    <button class="primary" id="save-edits">Save to runbook</button></div>`;
+}
+
+async function editRunStep(state, i) {
+  const run = state.run;
+  let def;
+  try { def = await api("GET", `/api/runs/${enc(run.id)}/steps/${i + 1}`); } catch (e) { return toast(e.message); }
+  const waiting = state.question?.step === i;
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step";
+  dlg.innerHTML = `<h3>Edit step ${i + 1} for this run</h3>
+    <p class="muted small">${waiting ? "Applying starts this step again with the new version." : i + 1 === def.current ? "This step is running now; the change applies if it runs again (retry)." : "The run uses the new version when it gets here."}
+      Save the change to the runbook afterwards, or it's only in this run.</p>
+    <textarea class="editor" spellcheck="false">${esc(def.yaml)}</textarea>
+    <div class="error-text"></div>
+    <div class="row"><button class="primary" data-apply>${waiting ? "Apply and run it again" : "Apply"}</button><button data-close>Cancel</button></div>`;
+  document.body.append(dlg);
+  const ta = dlg.querySelector("textarea");
+  ta.onkeydown = (e) => { if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); } };
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  dlg.querySelector("[data-apply]").onclick = async () => {
+    try {
+      const res = await api("PUT", `/api/runs/${enc(run.id)}/steps/${i + 1}`, ta.value, true);
+      state.run.edits = res.edits;
+      state.run.edits_saved = 0;
+      Object.assign(state.steps[i], { edited: true, name: res.view.name, kind: res.view.kind });
+      dlg.close();
+      toast(res.restarted ? "Step changed; running it again" : "Step changed for this run");
+      state.onState?.();
+      renderRun(state);
+    } catch (e) { dlg.querySelector(".error-text").textContent = e.message; }
+  };
+  dlg.showModal();
+  ta.focus();
+}
+
+async function saveRunEdits(state) {
+  if (!confirm(`Save this run's step edits as a new version of “${state.run.runbook}”?\nThe YAML is reformatted, so comments in it are dropped.`)) return;
+  try {
+    const { version } = await api("POST", `/api/runs/${enc(state.run.id)}/save-edits`);
+    state.run.edits_saved = version;
+    toast(`Saved as version ${version}`);
+    api("GET", `/api/runbooks/${enc(state.run.runbook)}`).then((d) => { state.cfg = d.runbook?.steps; renderRun(state); }).catch(() => {});
+    renderRun(state);
+  } catch (e) { toast(e.message); }
 }
 
 // renderChecks shows the latest attempt of a group of checks.

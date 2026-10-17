@@ -110,6 +110,15 @@ pausing / abort. *After* a step: look at the result (and its `expect`), then
 continue / run it again / mark it failed (then the usual failure choices) /
 abort. Steps with `confirm: true` always ask before running.
 
+**Changing a step mid-run.** While a run is live you can change the
+current step or any later one: **✎ edit** on the run page, or **[c]hange
+step** at a CLI prompt (opens `$EDITOR` on the step's YAML). If the step is
+waiting on a question (a failure, a pause, a confirmation), it starts again
+with the new version. The change is only in that run until you save it: the
+run page shows a **Save to runbook** reminder, the CLI asks at the end, and
+`runnr save-edits <run-id>` does it later. Saving makes a new runbook
+version; if someone changed that step in the runbook since, it's refused.
+
 **Dangerous steps.** A step with `dangerous: true` runs like any other when
 it's in sequence in a recorded run of the saved runbook: every earlier step
 ran, was forced, or was left out by its own `when` (a resume counts what the

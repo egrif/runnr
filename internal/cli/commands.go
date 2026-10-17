@@ -75,7 +75,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -382,6 +382,29 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.StringVar(&f.after, "pause-after", "", "steps to stop after, to check the result before going on")
 }
 
+// offerSaveEdits reminds the operator that steps were changed during the
+// run, and offers to save them to the runbook.
+func offerSaveEdits(st *store.Store, run *engine.Run, t *Terminal, ask bool) {
+	n := len(engine.LatestEdits(run.Edits))
+	fmt.Fprintf(os.Stderr, "\n✎ %d step(s) were changed during this run; the runbook doesn't have the change yet.\n", n)
+	if run.RunbookVersion == 0 {
+		fmt.Fprintln(os.Stderr, "  This runbook ran from a file: copy the change into it by hand.")
+		return
+	}
+	if ask {
+		fmt.Fprintf(os.Stderr, "  Save to %s as a new version? [y/N]: ", run.Runbook)
+		if a, err := t.readLine(context.Background()); err == nil && strings.HasPrefix(strings.ToLower(a), "y") {
+			if ver, err := st.SaveRunEdits(run); err != nil {
+				fmt.Fprintln(os.Stderr, "  couldn't save:", err)
+			} else {
+				fmt.Fprintf(os.Stderr, "  saved %s (version %d)\n", run.Runbook, ver)
+				return
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "  Save it later with: runnr save-edits %s\n", run.ID)
+}
+
 // execute runs rb with these flags; base holds inputs that --var overrides.
 // launch describes what to run beyond the runbook and flags.
 type launch struct {
@@ -469,6 +492,9 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		}
 	}
 	run := engine.Execute(ctx, rb, ui, "", opts)
+	if len(run.Edits) > 0 && !f.js {
+		offerSaveEdits(st, run, term, interactive && !f.noHistory)
+	}
 	if f.js {
 		_ = printJSON(run)
 	} else if run.Status != engine.StatusSucceeded && !f.noHistory && engine.ResumePoint(run) >= 0 {
@@ -694,6 +720,29 @@ would publish show as <name>.`,
 	cmd.Flags().BoolVar(&all, "all", false, "show every step in full")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	return cmd
+}
+
+func saveEditsCmd(s func() *store.Store) *cobra.Command {
+	return &cobra.Command{
+		Use:   "save-edits <run-id>",
+		Short: "Save the step changes made during a run as a new runbook version",
+		Long: `Steps changed during a run ([c]hange step in the CLI, ✎ edit in the GUI)
+apply only to that run until saved. A step that has changed in the runbook
+since the run started is a conflict; the YAML is reformatted (comments drop).`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			r, err := s().LoadRun(args[0])
+			if err != nil {
+				return err
+			}
+			ver, err := s().SaveRunEdits(r)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("saved %s (version %d)\n", r.Runbook, ver)
+			return nil
+		},
+	}
 }
 
 func noteCmd(s func() *store.Store) *cobra.Command {

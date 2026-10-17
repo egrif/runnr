@@ -16,7 +16,7 @@ import (
 var _ Session = (*executor)(nil)
 
 func (x *executor) View(i int) StepView {
-	s := x.rb.Steps[i]
+	s := x.def(i)
 	v := StepView{
 		Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: x.run.Steps[i].Kind,
 		When: s.When, Confirm: s.Confirm, Dangerous: s.Dangerous, Always: s.Always, Timeout: s.Timeout, Retries: s.Retries,
@@ -106,7 +106,7 @@ func (x *executor) openShell(ctx context.Context, idx int) error {
 	var step runbook.Step
 	title := "shell"
 	if idx >= 0 && idx < len(x.rb.Steps) {
-		step = x.rb.Steps[idx]
+		step = x.def(idx)
 		title = fmt.Sprintf("shell · step %d: %s", idx+1, step.Name)
 	}
 	extra, err := x.runnrEnv(step)

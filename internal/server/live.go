@@ -58,12 +58,14 @@ type liveRun struct {
 	events  []WireEvent
 	subs    map[chan WireEvent]struct{}
 	pending map[string]chan Answer
-	done    bool
-	qseq    int
+	// qstep is the step each pending question is about.
+	qstep map[string]int
+	done  bool
+	qseq  int
 }
 
 func newLiveRun(id string, cancel context.CancelFunc) *liveRun {
-	return &liveRun{id: id, cancel: cancel, subs: map[chan WireEvent]struct{}{}, pending: map[string]chan Answer{}}
+	return &liveRun{id: id, cancel: cancel, subs: map[chan WireEvent]struct{}{}, pending: map[string]chan Answer{}, qstep: map[string]int{}}
 }
 
 func (l *liveRun) publish(e WireEvent) {
@@ -113,6 +115,7 @@ func (l *liveRun) answer(a Answer) error {
 	l.mu.Lock()
 	ch, ok := l.pending[a.QuestionID]
 	delete(l.pending, a.QuestionID)
+	delete(l.qstep, a.QuestionID)
 	l.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("no pending question %q", a.QuestionID)
@@ -121,17 +124,41 @@ func (l *liveRun) answer(a Answer) error {
 	return nil
 }
 
+// answerEdited withdraws a question because its step was edited.
+const answerEdited = "\x00edited"
+
+// restartStep withdraws the questions waiting on step i, so it starts again
+// with its new definition. It reports whether there were any.
+func (l *liveRun) restartStep(i int) bool {
+	l.mu.Lock()
+	var ids []string
+	for id, st := range l.qstep {
+		if st == i {
+			ids = append(ids, id)
+		}
+	}
+	l.mu.Unlock()
+	for _, id := range ids {
+		_ = l.answer(Answer{QuestionID: id, Value: answerEdited})
+	}
+	return len(ids) > 0
+}
+
 func (l *liveRun) ask(ctx context.Context, q Question) (Answer, error) {
 	ch := make(chan Answer, 1)
 	l.mu.Lock()
 	l.qseq++
 	q.ID = fmt.Sprintf("q%d", l.qseq)
 	l.pending[q.ID] = ch
+	l.qstep[q.ID] = q.Step
 	l.mu.Unlock()
 	l.publish(WireEvent{Event: engine.Event{Kind: "question", Step: q.Step}, Question: &q})
 	select {
 	case a := <-ch:
 		l.publish(WireEvent{Event: engine.Event{Kind: "answered", Step: q.Step, Text: a.Value}, Answered: q.ID})
+		if a.Value == answerEdited {
+			return a, engine.ErrStepEdited
+		}
 		if a.Value == "abort" && q.Type != "input" {
 			return a, engine.ErrAborted
 		}
@@ -139,6 +166,7 @@ func (l *liveRun) ask(ctx context.Context, q Question) (Answer, error) {
 	case <-ctx.Done():
 		l.mu.Lock()
 		delete(l.pending, q.ID)
+		delete(l.qstep, q.ID)
 		l.mu.Unlock()
 		return Answer{}, ctx.Err()
 	}
