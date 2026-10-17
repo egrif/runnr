@@ -419,7 +419,7 @@ func (t *Terminal) viewText(v engine.StepView, in string) string {
 		on   bool
 		name string
 	}{{true, v.Kind}, {v.Choose, "asks which way"}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.Dangerous, "⚠ dangerous"}, {v.StopAfter != "", "until " + v.StopAfter}, {v.When != "", "when " + v.When},
-		{v.Window != "", "window " + v.Window + "s"}, {v.Offset != "", "planned T" + v.Offset},
+		{v.Window != "", "window " + v.Window + "s"}, {v.Offset != "", "planned T" + v.Offset}, {v.IgnoredOffset != "", "T" + v.IgnoredOffset + " out of order, ignored"},
 		{v.Timeout != "", "timeout " + v.Timeout}, {v.Retries > 0, fmt.Sprintf("retries %d", v.Retries)}} {
 		if f.on {
 			flags = append(flags, f.name)

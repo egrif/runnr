@@ -36,6 +36,7 @@ const FIELD_HELP = {
     preferred: "The way used by default, and always in unattended runs.",
     window: "Opens: production goes down when this step starts. Closes: production is back when it finishes.",
     window_offset: "When this step is planned to start, relative to the window opening: -2w, -30m (before), 0, +12m, +1d4h (w weeks, d days, h hours, m minutes). A section's first step uses the section's if it has none.",
+    out_of_order: "Planned times have to keep step order: one earlier than a planned time before it (or after T+0 before the opening step, or before T+0 after it) is treated as unscheduled, and the step just follows on.",
     offset_input: "An input that overrides this planned time (or the window's target) when a run or schedule gives it a value, e.g. a longer cutoff in production.",
     run: "Shell script to run. Templates like {{.input}} are filled in first; every input and published value is also an environment variable ($name).",
     manual: "Instructions for the operator, who marks the step done, skipped or failed. Templates are filled in.",
@@ -253,7 +254,7 @@ steps:
   - {name: Promote, window_offset: +10m, offset_input: t_promote, manual: …}
   - {name: Maintenance mode OFF, window: close, run: …}</pre>
     <p>${esc(FIELD_HELP.runbook.maintenance_window)}</p>
-    <p>${esc(FIELD_HELP.step.window_offset)} ${esc(FIELD_HELP.step.offset_input)} (<code>offset_input</code> on sections and steps, <code>target_input</code> on the window.) Planned times show as T-30m, T+0, T+10m in the plan; while the window is open each step shows how far ahead or behind it is. A run that stops with the window open says so plainly: production may still be down.</p>
+    <p>${esc(FIELD_HELP.step.window_offset)} ${esc(FIELD_HELP.step.offset_input)} (<code>offset_input</code> on sections and steps, <code>target_input</code> on the window.) ${esc(FIELD_HELP.step.out_of_order)} Planned times show as T-30m, T+0, T+10m in the plan; while the window is open each step shows how far ahead or behind it is. A run that stops with the window open says so plainly: production may still be down.</p>
     <p><b>Scheduling.</b> Plan runs ahead under <a href="#/schedule">Schedule</a> (or <code>runnr schedule add</code>): pick when the window opens and the run's inputs; the calendar and agenda show each window and the planned starts of its sections and steps. Nothing starts on its own; <i>Start this run…</i> opens the launch page with those inputs.</p>
 
     <h2 id="help-templates">Templates &amp; state</h2>

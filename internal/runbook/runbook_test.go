@@ -254,6 +254,54 @@ func TestSpans(t *testing.T) {
 	}
 }
 
+func TestOutOfOrderPlannedTimesAreUnscheduled(t *testing.T) {
+	rb, err := Parse([]byte(`name: a
+inputs: [{name: t_b}]
+maintenance_window: {}
+sections: [{name: Prep, window_offset: -1h}, {name: Cut, window_offset: "0"}]
+steps:
+  - {name: p1, section: Prep, run: x}
+  - {name: early, run: x, window_offset: -2h}
+  - {name: late, run: x, window_offset: +5m}
+  - {name: p4, run: x, window_offset: -30m}
+  - {name: down, section: Cut, run: x, window: open}
+  - {name: b, run: x, window_offset: +20m, offset_input: t_b}
+  - {name: c, run: x, window_offset: +10m}
+  - {name: d, run: x, window_offset: +30m}
+  - {name: up, run: x, window: close}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := func(vars map[string]string) string {
+		var out []string
+		for i := range rb.Steps {
+			if d, ok := rb.PlannedOffset(i, vars); ok {
+				out = append(out, fmt.Sprintf("%s:%s", rb.Steps[i].Name, FormatSpan(d)))
+			} else {
+				out = append(out, rb.Steps[i].Name+":-")
+			}
+		}
+		return strings.Join(out, " ")
+	}
+	// early (-2h after -1h) and late (+5m before the window opens) are out
+	// of order; c (+10m after b's +20m) too.
+	if got, want := plan(nil), "p1:-1h early:- late:- p4:-30m down:0 b:20m c:- d:30m up:-"; got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	// A default that an input moves earlier lets c count again; an input
+	// that moves b after d drops d instead.
+	if got, want := plan(map[string]string{"t_b": "+5m"}), "p1:-1h early:- late:- p4:-30m down:0 b:5m c:10m d:30m up:-"; got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	if got, want := plan(map[string]string{"t_b": "+45m"}), "p1:-1h early:- late:- p4:-30m down:0 b:45m c:- d:- up:-"; got != want {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+	if n := len(rb.Timeline(nil)); n != 6 { // window, Prep, p4, Cut, b, d
+		t.Fatalf("timeline has %d entries: %+v", n, rb.Timeline(nil))
+	}
+}
+
 func TestDescriptionsAndSections(t *testing.T) {
 	good := "name: a\ndescription: |\n  What it's for.\nexpect: Done.\nsections: [{name: S1, description: first, expect: ok}]\nsteps: [{name: a, section: S1, run: x, description: 'doing {{.v}}'}]\n"
 	if _, err := Parse([]byte(good)); err != nil {

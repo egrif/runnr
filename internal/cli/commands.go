@@ -761,6 +761,9 @@ would publish show as <name>.`,
 				if v.Offset != "" {
 					flags = append(flags, "T"+v.Offset)
 				}
+				if v.IgnoredOffset != "" {
+					flags = append(flags, t.c("33", "T"+v.IgnoredOffset+" out of order, ignored"))
+				}
 				if v.Always {
 					flags = append(flags, "always")
 				}

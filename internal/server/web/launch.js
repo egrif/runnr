@@ -201,13 +201,42 @@ function fmtOffset(sec, sign = true) {
   return (sign ? (neg ? "-" : "+") : neg ? "-" : "") + (body || "0");
 }
 
-// plannedOffset is when step i is planned to start (seconds from the window
-// opening): its own window_offset, or its section's for a section's first step.
+// planPoints lists each section's and step's planned start (seconds from
+// the window opening), in step order, marking ones out of order (earlier
+// than a planned time before them, or on the wrong side of the opening) as
+// ignored: those steps are unscheduled and just follow on. Same rules as
+// the server's.
+function planPoints(steps, sections) {
+  const pts = [];
+  steps.forEach((s, i) => {
+    if (s.section && (i === 0 || steps[i - 1].section !== s.section)) {
+      const v = parseOffset((sections || []).find((x) => x.name === s.section)?.window_offset);
+      if (v != null) pts.push({ step: i, section: s.section, offset: v });
+    }
+    const v = parseOffset(s.window_offset);
+    if (v != null) pts.push({ step: i, offset: v });
+  });
+  const open = steps.findIndex((s) => s.window === "open");
+  let lo = null;
+  for (const p of pts) {
+    if (open >= 0 && p.step >= open && (lo == null || lo < 0)) lo = 0;
+    if ((lo != null && p.offset < lo) || (open >= 0 && p.step < open && p.offset > 0)) p.ignored = true;
+    else lo = p.offset;
+  }
+  return pts;
+}
+
+// plannedOffset is when step i is planned to start (seconds, or null): its
+// own planned time, or its section's for a section's first step.
 function plannedOffset(steps, sections, i) {
-  const s = steps[i];
-  let v = s.window_offset;
-  if (!v && s.section && (i === 0 || steps[i - 1].section !== s.section)) v = (sections || []).find((x) => x.name === s.section)?.window_offset;
-  return parseOffset(v);
+  const pts = planPoints(steps, sections).filter((p) => p.step === i && !p.ignored);
+  const own = pts.find((p) => !p.section);
+  return own ? own.offset : pts.length ? pts[0].offset : null;
+}
+
+// ignoredOffset is step i's own planned time if it's out of order (or null).
+function ignoredOffset(steps, sections, i) {
+  return planPoints(steps, sections).find((p) => p.step === i && !p.section && p.ignored)?.offset ?? null;
 }
 
 // windowSpan: indexes of the steps that open and close the window (-1 if none).
@@ -218,7 +247,9 @@ function windowSpan(steps) {
 const inWindow = (steps, i) => { const [o, c] = windowSpan(steps); return o >= 0 && i >= o && (c < 0 || i <= c); };
 
 function plannedBadge(steps, sections, i) {
-  return offsetBadge(plannedOffset(steps, sections, i));
+  const ig = ignoredOffset(steps, sections, i);
+  return offsetBadge(plannedOffset(steps, sections, i)) +
+    (ig == null ? "" : ` <span class="badge-k planned ignored" title="Out of order (earlier than a planned time before it, or on the wrong side of the window opening), so it's unscheduled: the step just follows on">T${fmtOffset(ig)}</span>`);
 }
 
 // offsetBadge shows a planned start (seconds from the window opening).

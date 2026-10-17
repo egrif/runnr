@@ -334,7 +334,10 @@ one where it's back `window: close`. `window_offset` on sections and steps
 is when they're planned to start relative to the
 window opening; `offset_input` (and `target_input` on the window) names an
 input that overrides it when given a value, e.g. a longer cutoff in
-production. Plans show T-30m, T+0, T+12m; runs show a live window clock
+production. Planned times have to keep step order: one earlier than a
+planned time before it (or after T+0 before the opening step, or before
+T+0 after it) is treated as unscheduled, and the step just follows on.
+Plans show T-30m, T+0, T+12m; runs show a live window clock
 against the target and each step's planned and actual time; history keeps
 the real downtime, and a run that stops with the window open says so.
 

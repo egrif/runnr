@@ -420,3 +420,4 @@ dialog.edit-step .row { margin-top: 8px; gap: 8px; }
 .offset-pair input { flex: 1; min-width: 0; }
 .offset-pair select { max-width: 45%; font-size: 12px; }
 .section .badge-k { text-transform: none; letter-spacing: 0; }
+.badge-k.planned.ignored { text-decoration: line-through; opacity: .6; }

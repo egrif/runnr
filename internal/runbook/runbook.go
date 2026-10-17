@@ -308,20 +308,73 @@ func offsetOf(literal, input string, vars map[string]string) string {
 	return literal
 }
 
+// PlanPoint is a planned start: a section's (Section set) or a step's own.
+// Ignored means it's out of order (earlier than a planned time before it,
+// or on the wrong side of the window opening), so it's treated as
+// unscheduled: the step just follows the one before.
+type PlanPoint struct {
+	Step    int
+	Section string
+	Offset  time.Duration
+	Ignored bool
+}
+
+// PlanPoints lists every section and step with a planned start, in step
+// order (a section before its first step), with out-of-order ones marked.
+func (rb *Runbook) PlanPoints(vars map[string]string) []PlanPoint {
+	var pts []PlanPoint
+	for i, st := range rb.Steps {
+		if rb.sectionStarts(i) {
+			if v := rb.SectionOffset(st.Section, vars); v != "" {
+				if d, err := ParseOffset(v); err == nil {
+					pts = append(pts, PlanPoint{Step: i, Section: st.Section, Offset: d})
+				}
+			}
+		}
+		if v := offsetOf(st.WindowOffset, st.OffsetInput, vars); v != "" {
+			if d, err := ParseOffset(v); err == nil {
+				pts = append(pts, PlanPoint{Step: i, Offset: d})
+			}
+		}
+	}
+	open, _ := rb.WindowSteps()
+	lo, haveLo := time.Duration(0), false
+	for k := range pts {
+		p := &pts[k]
+		if open >= 0 && p.Step >= open && (!haveLo || lo < 0) {
+			lo, haveLo = 0, true // the window opens at T+0
+		}
+		switch {
+		case haveLo && p.Offset < lo:
+			p.Ignored = true
+		case open >= 0 && p.Step < open && p.Offset > 0:
+			p.Ignored = true // before the opening step, but after T+0
+		default:
+			lo, haveLo = p.Offset, true
+		}
+	}
+	return pts
+}
+
 // PlannedOffset is when step i is planned to start relative to the window
 // opening: its own offset, or its section's for a section's first step.
-// Inputs named by offset_input override the offsets they're on.
+// Inputs named by offset_input override the offsets they're on; planned
+// times out of order don't count.
 func (rb *Runbook) PlannedOffset(i int, vars map[string]string) (time.Duration, bool) {
-	st := rb.Steps[i]
-	v := offsetOf(st.WindowOffset, st.OffsetInput, vars)
-	if v == "" && rb.sectionStarts(i) {
-		v = rb.SectionOffset(st.Section, vars)
+	var sec *PlanPoint
+	for _, p := range rb.PlanPoints(vars) {
+		if p.Step != i || p.Ignored {
+			continue
+		}
+		if p.Section == "" {
+			return p.Offset, true
+		}
+		sec = &p
 	}
-	if v == "" {
-		return 0, false
+	if sec != nil {
+		return sec.Offset, true
 	}
-	d, err := ParseOffset(v)
-	return d, err == nil
+	return 0, false
 }
 
 // sectionStarts reports whether step i is its section's first step.
@@ -390,7 +443,7 @@ type TimelineEntry struct {
 
 // Timeline lists the window and every section and step with a planned
 // start (steps only where they set one, not where they take their
-// section's), in order.
+// section's), in order, leaving out planned times that are out of order.
 func (rb *Runbook) Timeline(vars map[string]string) []TimelineEntry {
 	var out []TimelineEntry
 	if rb.MaintenanceWindow == nil {
@@ -402,16 +455,13 @@ func (rb *Runbook) Timeline(vars map[string]string) []TimelineEntry {
 		w.Length = d
 	}
 	out = append(out, w)
-	for i, st := range rb.Steps {
-		if rb.sectionStarts(i) {
-			if d, err := ParseOffset(rb.SectionOffset(st.Section, vars)); err == nil && rb.SectionOffset(st.Section, vars) != "" {
-				out = append(out, TimelineEntry{Kind: "section", Name: st.Section, Step: i, Offset: d})
-			}
-		}
-		if v := offsetOf(st.WindowOffset, st.OffsetInput, vars); v != "" {
-			if d, err := ParseOffset(v); err == nil {
-				out = append(out, TimelineEntry{Kind: "step", Name: st.Name, Step: i, Offset: d})
-			}
+	for _, p := range rb.PlanPoints(vars) {
+		switch {
+		case p.Ignored:
+		case p.Section != "":
+			out = append(out, TimelineEntry{Kind: "section", Name: p.Section, Step: p.Step, Offset: p.Offset})
+		default:
+			out = append(out, TimelineEntry{Kind: "step", Name: rb.Steps[p.Step].Name, Step: p.Step, Offset: p.Offset})
 		}
 	}
 	return out

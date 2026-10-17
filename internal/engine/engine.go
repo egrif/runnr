@@ -248,6 +248,9 @@ type StepView struct {
 	Window    string `json:"window,omitempty"`
 	Offset    string `json:"offset,omitempty"`
 	OffsetSec *int   `json:"offset_sec,omitempty"`
+	// IgnoredOffset is the step's own planned time when it's out of order
+	// (so the step is unscheduled).
+	IgnoredOffset string `json:"ignored_offset,omitempty"`
 }
 
 // WindowRecord tracks the maintenance window (production down) in a run.

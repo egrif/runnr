@@ -29,6 +29,11 @@ func (x *executor) View(i int) StepView {
 		sec := int(d.Seconds())
 		v.Offset, v.OffsetSec = FormatOffset(d), &sec
 	}
+	for _, p := range x.rb.PlanPoints(x.vars) {
+		if p.Step == i && p.Section == "" && p.Ignored {
+			v.IgnoredOffset = FormatOffset(p.Offset)
+		}
+	}
 	var b strings.Builder
 	if len(s.Ways) > 1 {
 		pref := s.PreferredWay()
