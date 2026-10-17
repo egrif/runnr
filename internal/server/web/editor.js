@@ -665,6 +665,8 @@ function renderStruct(ed) {
         `<label class="check" style="grid-column: 1 / -1"><input type="checkbox" data-mw-toggle ${d.maintenance_window ? "checked" : ""}><span>Use a maintenance window</span></label>`,
         d.maintenance_window ? row("Target length", H.runbook.window_target, offsetPair(d, "maintenance_window.target", d.maintenance_window?.target, "maintenance_window.target_input", d.maintenance_window?.target_input, "e.g. 45m")) : "",
         d.maintenance_window ? row("Description", H.runbook.window_description, control("maintenance_window.description", "text", d.maintenance_window?.description)) : "",
+        d.maintenance_window ? row("Notification", H.runbook.notification_required, `<span class="offset-pair"><label class="check">${control("maintenance_window.notification_required", "bool", d.maintenance_window.notification_required)}<span>required</span></label>
+          ${d.maintenance_window.notification_required ? `${control("maintenance_window.notify_before", "text", d.maintenance_window.notify_before, { placeholder: "2w (default)" })}<span class="muted small">before</span>` : ""}</span>`) : "",
       ], { collapsible: true, id: "rb-window", open: ed.windowOpen ?? !!d.maintenance_window })}
       ${group("Shell, environment & masking", [
         row("Shell", H.runbook.shell, control("shell", "text", d.shell, { placeholder: "sh" })),
@@ -829,7 +831,7 @@ function renderStruct(ed) {
     // that's now set (or cleared): it moves above the fold (or back).
     const m = el.dataset.path.match(/^steps\.(\d+)\.([a-z_]+)/);
     const moved = m && MORE_FIELDS.some(([k]) => k === m[2]) && !!el.closest(".adv-rest") === isSet(d.steps[+m[1]][m[2]]);
-    if (e.type === "change" && (moved || /\.(name|section|confirm|dangerous|background|window|window_offset|offset_input|choose|tty)$|^maintenance_window\./.test(el.dataset.path))) {
+    if (e.type === "change" && (moved || /\.(name|section|confirm|dangerous|background|window|window_offset|offset_input|choose|tty|notification_required)$|^maintenance_window\./.test(el.dataset.path))) {
       const focus = document.activeElement?.dataset?.path;
       renderStruct(ed);
       if (focus) pane.querySelector(`[data-path="${CSS.escape(focus)}"]`)?.focus();

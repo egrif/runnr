@@ -71,7 +71,11 @@ type MaintenanceWindow struct {
 	// TargetInput names an input that overrides it when given a value.
 	Target      string `yaml:"target,omitempty" json:"target,omitempty"`
 	TargetInput string `yaml:"target_input,omitempty" json:"target_input,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// NotificationRequired means the window has to be announced ahead:
+	// NotifyBefore (default 2w) before it opens.
+	NotificationRequired bool   `yaml:"notification_required,omitempty" json:"notification_required,omitempty"`
+	NotifyBefore         string `yaml:"notify_before,omitempty" json:"notify_before,omitempty"`
+	Description          string `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 // Window marks on steps.
@@ -401,6 +405,21 @@ func (rb *Runbook) WindowTarget(vars map[string]string) string {
 	return offsetOf(rb.MaintenanceWindow.Target, rb.MaintenanceWindow.TargetInput, vars)
 }
 
+// DefaultNotifyBefore is how long before a window its notification is due.
+const DefaultNotifyBefore = 14 * 24 * time.Hour
+
+// NotifyLead is how long before the window its notification is due, if
+// one is required.
+func (mw *MaintenanceWindow) NotifyLead() (time.Duration, bool) {
+	if mw == nil || !mw.NotificationRequired {
+		return 0, false
+	}
+	if d, err := ParseSpan(mw.NotifyBefore); err == nil && d > 0 {
+		return d, true
+	}
+	return DefaultNotifyBefore, true
+}
+
 // CheckWindowInputs checks that inputs overriding window offsets or the
 // target hold valid durations.
 func (rb *Runbook) CheckWindowInputs(vars map[string]string) error {
@@ -434,7 +453,7 @@ func (rb *Runbook) CheckWindowInputs(vars map[string]string) error {
 // the window itself (Kind "window", with its target length), a section's
 // start, or a step's start, relative to the window opening.
 type TimelineEntry struct {
-	Kind   string        `json:"kind"` // window | section | step
+	Kind   string        `json:"kind"` // notify | window | section | step
 	Name   string        `json:"name"`
 	Step   int           `json:"step"` // step index (sections: their first step)
 	Offset time.Duration `json:"offset_ns"`
@@ -448,6 +467,9 @@ func (rb *Runbook) Timeline(vars map[string]string) []TimelineEntry {
 	var out []TimelineEntry
 	if rb.MaintenanceWindow == nil {
 		return nil
+	}
+	if lead, ok := rb.MaintenanceWindow.NotifyLead(); ok {
+		out = append(out, TimelineEntry{Kind: "notify", Name: "Maintenance window notification due", Step: -1, Offset: -lead})
 	}
 	w := TimelineEntry{Kind: "window", Name: "Maintenance window"}
 	w.Step, _ = rb.WindowSteps()
@@ -714,6 +736,11 @@ func (rb *Runbook) validateWindow() []error {
 	}
 	if (used || opens+closes > 0) && rb.MaintenanceWindow == nil {
 		add("window and window_offset need a maintenance_window (e.g. maintenance_window: {target: 45m})")
+	}
+	if mw := rb.MaintenanceWindow; mw != nil && mw.NotifyBefore != "" {
+		if d, err := ParseSpan(mw.NotifyBefore); err != nil || d <= 0 {
+			add("maintenance_window: notify_before %q must be a length like 2w or 10d", mw.NotifyBefore)
+		}
 	}
 	if mw := rb.MaintenanceWindow; mw != nil && mw.Target != "" {
 		if d, err := ParseSpan(mw.Target); err != nil || d <= 0 {

@@ -1166,7 +1166,15 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ag, err := s.st.Agenda(from)
+	loc := time.Local
+	if tz := r.URL.Query().Get("tz"); tz != "" {
+		var err error
+		if loc, err = time.LoadLocation(tz); err != nil {
+			writeErr(w, fmt.Errorf("tz: %w", err))
+			return
+		}
+	}
+	ag, err := s.st.Agenda(from, loc)
 	if err != nil {
 		writeErr(w, err)
 		return

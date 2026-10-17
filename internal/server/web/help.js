@@ -20,6 +20,7 @@ const FIELD_HELP = {
     maintenance_window: "The time production is down. Mark the step where it goes down (window: open) and the one where it's back (window: close); target is how long it should take, e.g. 45m. Runs show a live clock against the target and record the real downtime.",
     window_target: "How long production is expected (or allowed) to be down, e.g. 45m, 6h, 2d.",
     window_description: "What the window is, e.g. the announced outage.",
+    notification_required: "The window has to be announced ahead: the notification is due notify_before (default 2w) before it opens, and shows on the Schedule calendar and agenda.",
   },
   input: {
     name: "Variable name: letters, digits and _. Steps use it as {{.name}} or $name.",
@@ -246,6 +247,7 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
   - {name: t_promote, description: when to promote, e.g. +25m in production}
 maintenance_window:
   target: 45m
+  notification_required: true   # due 2w before, or set notify_before
 sections:
   - {name: Prep, window_offset: -30m}
   - {name: Cutover, window_offset: 0}
@@ -255,6 +257,8 @@ steps:
   - {name: Maintenance mode OFF, window: close, run: …}</pre>
     <p>${esc(FIELD_HELP.runbook.maintenance_window)}</p>
     <p>${esc(FIELD_HELP.step.window_offset)} ${esc(FIELD_HELP.step.offset_input)} (<code>offset_input</code> on sections and steps, <code>target_input</code> on the window.) ${esc(FIELD_HELP.step.out_of_order)} Planned times show as T-30m, T+0, T+10m in the plan; while the window is open each step shows how far ahead or behind it is. A run that stops with the window open says so plainly: production may still be down.</p>
+    <p><b>Notification.</b> <code>notification_required: true</code> (with <code>notify_before</code>, default <code>2w</code>) puts a “notification due” date on the calendar ahead of each scheduled window.</p>
+    <p><b>Business days.</b> On the calendar and agenda, dates worked out from offsets (sections, steps, the notification) that land on a Saturday or Sunday move back to the Friday before, at the same time. Only the maintenance window, and what happens during it, falls on a weekend.</p>
     <p><b>Scheduling.</b> Plan runs ahead under <a href="#/schedule">Schedule</a> (or <code>runnr schedule add</code>): pick when the window opens and the run's inputs; the calendar and agenda show each window and the planned starts of its sections and steps. Nothing starts on its own; <i>Start this run…</i> opens the launch page with those inputs.</p>
 
     <h2 id="help-templates">Templates &amp; state</h2>

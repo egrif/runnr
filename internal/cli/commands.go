@@ -714,6 +714,9 @@ would publish show as <name>.`,
 				if mw.Target != "" {
 					line += ": target " + mw.Target
 				}
+				if lead, ok := mw.NotifyLead(); ok {
+					line += ", notification due " + runbook.FormatSpan(lead) + " before"
+				}
 				if o, c := rb.WindowSteps(); o >= 0 {
 					line += fmt.Sprintf(", steps %d", o+1)
 					if c >= 0 {

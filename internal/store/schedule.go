@@ -129,12 +129,15 @@ func (s *Store) DeleteSchedule(id string) error {
 // window (with End), a section or step's planned start, or for a runbook
 // without a window, the run's start.
 type AgendaEntry struct {
-	Kind   string     `json:"kind"` // window | section | step | start
+	Kind   string     `json:"kind"` // notify | window | section | step | start
 	Name   string     `json:"name"`
 	Step   int        `json:"step"`
 	At     time.Time  `json:"at"`
 	End    *time.Time `json:"end,omitempty"`
 	Offset string     `json:"offset,omitempty"` // e.g. -30m, +12m
+	// Planned is the calculated time when At was moved back to a business
+	// day (it fell on a weekend).
+	Planned *time.Time `json:"planned,omitempty"`
 }
 
 // PlannedRun is a schedule with its runbook's timeline laid out in time.
@@ -148,7 +151,13 @@ type PlannedRun struct {
 
 // Agenda lays out the schedules at or after from (zero: all). Planned
 // times come from each runbook as saved now, with the schedule's inputs.
-func (s *Store) Agenda(from time.Time) ([]PlannedRun, error) {
+// Dates worked out from offsets that land on a weekend (in loc) move back
+// to the Friday before; only the maintenance window itself, and what
+// happens during it, stays where it falls.
+func (s *Store) Agenda(from time.Time, loc *time.Location) ([]PlannedRun, error) {
+	if loc == nil {
+		loc = time.Local
+	}
 	scs, err := s.ListSchedules(time.Time{})
 	if err != nil {
 		return nil, err
@@ -176,6 +185,7 @@ func (s *Store) Agenda(from time.Time) ([]PlannedRun, error) {
 				pr.Entries = append(pr.Entries, ae)
 			}
 		}
+		toBusinessDays(pr.Entries, loc)
 		slices.SortStableFunc(pr.Entries, func(a, b AgendaEntry) int { return a.At.Compare(b.At) })
 		// Keep runs any part of which is at or after from.
 		last := sc.At
@@ -192,6 +202,39 @@ func (s *Store) Agenda(from time.Time) ([]PlannedRun, error) {
 		}
 	}
 	return out, nil
+}
+
+// toBusinessDays moves entries that fall on a weekend back to the Friday
+// before (same time of day), except the window and anything during it:
+// from its opening to its end, or, without a target length, the rest of
+// the day it opens.
+func toBusinessDays(es []AgendaEntry, loc *time.Location) {
+	var open, end time.Time
+	for _, e := range es {
+		if e.Kind == "window" {
+			open = e.At
+			if e.End != nil {
+				end = *e.End
+			} else {
+				y, m, d := e.At.In(loc).Date()
+				end = time.Date(y, m, d+1, 0, 0, 0, 0, loc)
+			}
+		}
+	}
+	for i := range es {
+		e := &es[i]
+		if e.Kind == "window" || e.Kind == "start" || (!open.IsZero() && !e.At.Before(open) && e.At.Before(end)) {
+			continue
+		}
+		t := e.At.In(loc)
+		back := map[time.Weekday]int{time.Saturday: 1, time.Sunday: 2}[t.Weekday()]
+		if back == 0 {
+			continue
+		}
+		planned := e.At
+		e.Planned = &planned
+		e.At = t.AddDate(0, 0, -back)
+	}
 }
 
 func firstLine(s string) string {

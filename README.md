@@ -349,6 +349,15 @@ Plans show T-30m, T+0, T+12m; runs show a live window clock
 against the target and each step's planned and actual time; history keeps
 the real downtime, and a run that stops with the window open says so.
 
+**Notification.** `notification_required: true` on the maintenance window
+(due `notify_before`, default `2w`, before it opens) puts a "notification
+due" date on the schedule.
+
+**Business days.** On the schedule, dates worked out from offsets
+(sections, steps, the notification) that land on a weekend move back to the
+Friday before, same time; only the window, and what happens during it,
+falls on a weekend.
+
 **Schedule.** Plan runs ahead: `runnr schedule add <runbook> --at "2026-11-01
 22:00" -v env=prod` (for a runbook with a window, the time is when it
 opens), or **Schedule…** on the launch page. The GUI's **Schedule** page shows

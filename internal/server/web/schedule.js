@@ -32,7 +32,7 @@ function shownRuns(includePast) {
 // "next actions only", just the next one still to come (or its window, if
 // that's open now and nothing else is due before it closes).
 function entriesOf(r) {
-  const es = r.entries.filter((e) => e.kind === "window" || e.kind === "start" || (e.kind === "section" && sched.detail >= 1) || (e.kind === "step" && sched.detail >= 2));
+  const es = r.entries.filter((e) => e.kind === "window" || e.kind === "notify" || e.kind === "start" || (e.kind === "section" && sched.detail >= 1) || (e.kind === "step" && sched.detail >= 2));
   if (!sched.next) return es;
   const now = Date.now();
   const next = es.find((e) => +new Date(e.at) >= now);
@@ -41,7 +41,15 @@ function entriesOf(r) {
   return open ? [{ ...open, now: true }] : [];
 }
 
+// movedNote says when a date was moved back off a weekend.
+const movedNote = (e) => e.planned ? ` <span class="muted small" title="Worked out as ${esc(new Date(e.planned).toLocaleString())}; moved back to the business day before">(moved from ${new Date(e.planned).toLocaleDateString([], { weekday: "short" })})</span>` : "";
+
 function entryLabel(e) {
+  return entryText(e) + movedNote(e);
+}
+
+function entryText(e) {
+  if (e.kind === "notify") return `📣 Maintenance window notification due <span class="muted">T${esc(e.offset)}</span>`;
   if (e.kind === "window") {
     if (e.now) return `🔴 Maintenance window open now, until ${new Date(e.end).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
     if (!e.end) return "🔴 Maintenance window";
@@ -56,7 +64,9 @@ function entryLabel(e) {
 
 async function viewSchedule() {
   loadSchedPrefs();
-  sched.runs = await api("GET", "/api/schedules");
+  // The server moves derived dates off weekends in our time zone.
+  const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ""; } })();
+  sched.runs = await api("GET", `/api/schedules${tz ? `?tz=${enc(tz)}` : ""}`);
   sched.month ||= (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
   drawSchedule();
 }
@@ -115,7 +125,9 @@ function calendarHTML() {
       <div class="cal-date">${d.getDate()}</div>
       ${items.map(({ r, e }) => {
         const head = !seen.has(r.id) ? (seen.add(r.id), `<div class="cal-run" data-sched="${esc(r.id)}" title="${esc(runName(r))}">${esc(runName(r))}</div>`) : "";
-        return `${head}<div class="cal-item ${e.kind}" data-sched="${esc(r.id)}">${hhmm(new Date(e.at))} ${entryLabel(e)}</div>`;
+        const plain = { notify: "Maintenance window notification due", window: "Maintenance window", start: "Run starts" }[e.kind] || e.name;
+        const tip = `${hhmm(new Date(e.at))} ${plain}${e.offset ? ` (T${e.offset})` : ""}${e.planned ? `, moved from ${new Date(e.planned).toLocaleDateString([], { weekday: "long" })}` : ""}`;
+        return `${head}<div class="cal-item ${e.kind}" data-sched="${esc(r.id)}" title="${esc(tip)}">${hhmm(new Date(e.at))} ${entryLabel(e)}</div>`;
       }).join("")}
     </div>`);
   }

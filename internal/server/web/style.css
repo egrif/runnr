@@ -487,3 +487,4 @@ dialog.edit-step .row { margin-top: 8px; gap: 8px; }
 .col-drop.drop-on { border-color: var(--accent) !important; color: var(--accent) !important; }
 .col-card select { font-size: 12px; }
 kbd { font-size: 11px; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; background: var(--bg); }
+.cal-item.notify, .agenda-items tr.notify td { color: var(--warn); font-weight: 600; }

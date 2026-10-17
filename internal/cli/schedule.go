@@ -68,7 +68,7 @@ planning, and for seeing what's coming.`,
 			if past {
 				from = time.Time{}
 			}
-			ag, err := s().Agenda(from)
+			ag, err := s().Agenda(from, time.Local)
 			if err != nil {
 				return err
 			}
@@ -105,7 +105,7 @@ planning, and for seeing what's coming.`,
 // this level of detail (or its window, if that's open now).
 func nextActions(ag []store.PlannedRun, level int, now time.Time) []store.PlannedRun {
 	shown := func(e store.AgendaEntry) bool {
-		return e.Kind == "window" || e.Kind == "start" || (e.Kind == "section" && level >= 1) || (e.Kind == "step" && level >= 2)
+		return e.Kind == "window" || e.Kind == "notify" || e.Kind == "start" || (e.Kind == "section" && level >= 1) || (e.Kind == "step" && level >= 2)
 	}
 	var out []store.PlannedRun
 	for _, pr := range ag {
@@ -177,7 +177,13 @@ func printAgenda(ag []store.PlannedRun, level int) {
 		}
 		line(first, head)
 		for _, e := range pr.Entries {
+			moved := ""
+			if e.Planned != nil {
+				moved = t.c("2", " (moved from "+e.Planned.Local().Format("Mon")+")")
+			}
 			switch {
+			case e.Kind == "notify":
+				line(e.At, t.c("33", "  📣 maintenance window notification due")+t.c("2", " T"+e.Offset)+moved)
 			case e.Kind == "window":
 				w := "🔴 maintenance window opens"
 				if e.Name == "open now" {
@@ -192,9 +198,9 @@ func printAgenda(ag []store.PlannedRun, level int) {
 				}
 				line(e.At, t.c("31", "  "+w))
 			case e.Kind == "section" && level >= 1:
-				line(e.At, t.c("35", "  ▸ "+e.Name)+t.c("2", " T"+e.Offset))
+				line(e.At, t.c("35", "  ▸ "+e.Name)+t.c("2", " T"+e.Offset)+moved)
 			case e.Kind == "step" && level >= 2:
-				line(e.At, fmt.Sprintf("    · %d. %s", e.Step+1, e.Name)+t.c("2", " T"+e.Offset))
+				line(e.At, fmt.Sprintf("    · %d. %s", e.Step+1, e.Name)+t.c("2", " T"+e.Offset)+moved)
 			}
 		}
 	}

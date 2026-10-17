@@ -61,16 +61,20 @@ Runs planned ahead of time. Nothing starts them yet.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| GET | `/api/schedules?from=RFC3339` | | planned runs, soonest first, each `{id, runbook, at, title, notes, inputs, description, window, entries, error}`; `from` leaves out runs entirely before it |
+| GET | `/api/schedules?from=RFC3339&tz=Area/City` | | planned runs, soonest first, each `{id, runbook, at, title, notes, inputs, description, window, entries, error}`; `from` leaves out runs entirely before it |
 | POST | `/api/schedules` | `{runbook, at, title?, notes?, inputs?, created_by?}` | `201` the schedule |
 | GET / PUT / DELETE | `/api/schedules/{id}` | (PUT: as POST) | the schedule / `204` |
 
 `at` is when the maintenance window opens (T+0) for a runbook with one,
-else when the run starts. `entries` are `{kind: window|section|step|start,
-name, step, at, end?, offset}`: the window (with `end` if it has a target),
+else when the run starts. `entries` are `{kind: notify|window|section|step|start,
+name, step, at, end?, offset, planned?}`: the notification (if the window
+needs one), the window (with `end` if it has a target),
 and each section and step with a planned start, from the runbook as saved
 now with the schedule's `inputs` (which can override offsets and the
-target). Secret inputs aren't stored.
+target). Dates that land on a weekend in `tz` (default: the server's time
+zone) move back to the Friday before, with `planned` holding the date
+worked out; the window, and entries during it, don't move. Secret inputs
+aren't stored.
 
 ## Trying steps out ("Run this")
 
