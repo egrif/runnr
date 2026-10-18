@@ -136,6 +136,9 @@ type Step struct {
 	// Repeat retries the group until it does.
 	Checks []Check `yaml:"checks,omitempty" json:"checks,omitempty"`
 	Repeat *Repeat `yaml:"repeat,omitempty" json:"repeat,omitempty"`
+	// RetryChecks is what a retry of the checks runs: all of them (the
+	// default), only the failed ones, or each in turn until it passes.
+	RetryChecks string `yaml:"retry_checks,omitempty" json:"retry_checks,omitempty"`
 
 	// Ways are different ways to do the step (e.g. Scripted, Manual, or a
 	// named alternative); the preferred one is used unless Choose is set,
@@ -160,6 +163,13 @@ type Check struct {
 	Name string `yaml:"name" json:"name"`
 	Run  string `yaml:"run" json:"run"`
 }
+
+// Retry modes for checks.
+const (
+	RetryAll    = "all"
+	RetryFailed = "failed"
+	RetryEach   = "each"
+)
 
 // Repeat re-runs a group of checks until all pass.
 type Repeat struct {
@@ -883,6 +893,14 @@ func validateStep(where string, s Step) []error {
 		if err := validTemplate(c.Run); err != nil {
 			add("checks[%d] (%s): run template: %v", j, c.Name, err)
 		}
+	}
+	switch s.RetryChecks {
+	case "", RetryAll, RetryFailed, RetryEach:
+		if s.RetryChecks != "" && !hasKind("checks") {
+			add("retry_checks only applies to checks")
+		}
+	default:
+		add("retry_checks must be all, failed or each")
 	}
 	if s.Repeat != nil {
 		if !hasKind("checks") {

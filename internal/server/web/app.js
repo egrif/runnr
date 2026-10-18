@@ -543,9 +543,10 @@ async function saveRunEdits(state) {
 // renderChecks shows the latest attempt of a group of checks.
 function renderChecks(checks) {
   if (!checks?.length) return "";
+  const latest = Math.max(0, ...checks.map((c) => c.attempt || 0));
   return `<table class="checks">${checks.map((c) => `<tr>
-    <td>${c.passed ? "✅" : "❌"}</td><td>${esc(c.name)}</td>
-    <td class="muted">${c.passed ? "" : esc((c.output || c.error || "").split("\n").filter(Boolean).pop() || "")}</td></tr>`).join("")}</table>`;
+    <td>${c.not_run ? "⏸" : c.passed ? "✅" : "❌"}</td><td>${esc(c.name)}</td>
+    <td class="muted">${c.not_run ? "waits for the one above to pass" : c.passed ? (c.attempt && c.attempt < latest ? `passed in attempt ${c.attempt}` : "") : esc((c.output || c.error || "").split("\n").filter(Boolean).pop() || "")}</td></tr>`).join("")}</table>`;
 }
 
 // renderSub shows which alternative ran and its steps.

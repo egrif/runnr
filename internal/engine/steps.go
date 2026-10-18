@@ -33,7 +33,7 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 		}
 		step = x.def(i)
 		res := &x.run.Steps[i]
-		res.Error, res.ExitCode, res.Note = "", nil, ""
+		res.Error, res.ExitCode, res.Note, res.Checks = "", nil, "", nil
 		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "✎ step edited: starting it again with the new version"})
 	}
 }
@@ -134,6 +134,7 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 				return x.fail(i, err)
 			}
 			step, confirmed = x.useWay(i, orig, way), false
+			res.Checks = nil // a new way's checks start afresh
 			continue
 		}
 		if err != errRetry {
@@ -298,11 +299,34 @@ func (x *executor) attemptChecks(ctx context.Context, i int, step runbook.Step, 
 	if step.Repeat != nil {
 		deadline = time.Now().Add(step.Repeat.TimeoutDuration())
 	}
+	mode := step.RetryChecks
+	// What passed before (in an earlier attempt of these same checks) stays
+	// passed when retries rerun only the failed ones, or each in turn.
+	prev := res.Checks
+	if len(prev) != len(step.Checks) || mode == "" || mode == runbook.RetryAll {
+		prev = nil
+	} else {
+		for j, c := range step.Checks {
+			if prev[j].Name != c.Name {
+				prev = nil
+				break
+			}
+		}
+	}
 	for {
 		res.Attempts++
 		results := make([]CheckResult, len(step.Checks))
+		blocked := false
 		for j, c := range step.Checks {
-			r := CheckResult{Name: c.Name}
+			if prev != nil && prev[j].Passed {
+				results[j] = prev[j]
+				continue
+			}
+			if blocked {
+				results[j] = CheckResult{Name: c.Name, NotRun: true}
+				continue
+			}
+			r := CheckResult{Name: c.Name, Attempt: res.Attempts}
 			cmd, err := x.render(c.Run)
 			if err != nil {
 				return attemptResult{hard: fmt.Errorf("check %q: %w", c.Name, err)}
@@ -316,8 +340,13 @@ func (x *executor) attemptChecks(ctx context.Context, i int, step runbook.Step, 
 			r.Passed, r.ExitCode, r.Output = out.err == nil, out.exitCode, x.mask(lastLines(out.combined, 20))
 			if out.err != nil {
 				r.Error = x.mask(out.err.Error())
+				// Each in turn: the ones after it wait for it to pass.
+				blocked = mode == runbook.RetryEach
 			}
 			results[j] = r
+		}
+		if mode == runbook.RetryFailed || mode == runbook.RetryEach {
+			prev = results
 		}
 		res.Checks = results
 
@@ -325,7 +354,16 @@ func (x *executor) attemptChecks(ctx context.Context, i int, step runbook.Step, 
 		lines := []string{fmt.Sprintf("checks, attempt %d:", res.Attempts)}
 		for _, r := range results {
 			if r.Passed {
-				lines = append(lines, "  ✅ "+r.Name)
+				if r.Attempt != 0 && r.Attempt < res.Attempts {
+					lines = append(lines, fmt.Sprintf("  ✅ %s (passed in attempt %d)", r.Name, r.Attempt))
+				} else {
+					lines = append(lines, "  ✅ "+r.Name)
+				}
+				continue
+			}
+			if r.NotRun {
+				failing = append(failing, r.Name)
+				lines = append(lines, "  ⏸ "+r.Name+" — waits for the one above to pass")
 				continue
 			}
 			failing = append(failing, r.Name)

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -916,6 +917,49 @@ func TestFunctionsInShells(t *testing.T) {
 			tr := run.Steps[0].Shells[0]
 			if !strings.Contains(tr, "hello, shell") || !strings.Contains(tr, "user-config") {
 				t.Fatalf("transcript %q", tr)
+			}
+		})
+	}
+}
+
+func TestRetryChecksModes(t *testing.T) {
+	// a passes; b passes from its 3rd run (a counter file); c always passes.
+	for _, tc := range []struct {
+		mode string
+		runs string // how many times a, b, c ran
+	}{
+		{"", "3 3 3"},       // all: every check every attempt
+		{"failed", "1 3 1"}, // only what failed
+		{"each", "1 3 1"},   // b blocks c until it passes; c runs once
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			dir := t.TempDir()
+			mode := ""
+			if tc.mode != "" {
+				mode = "\n    retry_checks: " + tc.mode
+			}
+			rb := mustParse(t, `
+name: t
+steps:
+  - name: gate
+    dir: `+dir+`
+    repeat: {every: 10ms, timeout: 5s}`+mode+`
+    checks:
+      - {name: a, run: 'echo x >> a'}
+      - {name: b, run: 'echo x >> b; [ $(wc -l < b) -ge 3 ]'}
+      - {name: c, run: 'echo x >> c'}
+`)
+			run := Execute(context.Background(), rb, &scripted{}, "", Options{})
+			if run.Status != StatusSucceeded || run.Steps[0].Attempts != 3 {
+				t.Fatalf("%s attempts=%d", run.Status, run.Steps[0].Attempts)
+			}
+			var got []string
+			for _, f := range []string{"a", "b", "c"} {
+				b, _ := os.ReadFile(dir + "/" + f)
+				got = append(got, strconv.Itoa(strings.Count(string(b), "x")))
+			}
+			if strings.Join(got, " ") != tc.runs {
+				t.Fatalf("runs %v, want %s", got, tc.runs)
 			}
 		})
 	}

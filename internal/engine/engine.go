@@ -272,8 +272,13 @@ type WayView struct {
 
 // CheckResult is one check's outcome in the latest attempt.
 type CheckResult struct {
-	Name     string `json:"name"`
-	Passed   bool   `json:"passed"`
+	Name   string `json:"name"`
+	Passed bool   `json:"passed"`
+	// Attempt is the attempt that ran it (a check that passed earlier keeps
+	// that attempt's result when retries rerun only what failed); NotRun
+	// marks one still waiting for an earlier check to pass (retry_checks: each).
+	Attempt  int    `json:"attempt,omitempty"`
+	NotRun   bool   `json:"not_run,omitempty"`
 	ExitCode *int   `json:"exit_code,omitempty"`
 	Output   string `json:"output,omitempty"`
 	Error    string `json:"error,omitempty"`

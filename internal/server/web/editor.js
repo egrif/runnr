@@ -402,6 +402,7 @@ const MORE_FIELDS = [
   ["retries", "Retries", "int", H.step.retries, (k, s) => hasKind(s, "run"), "Conditions & timing"],
   ["retry_delay", "Retry delay", "text", H.step.retry_delay, (k, s) => hasKind(s, "run"), "Conditions & timing"],
   ["repeat", "Repeat until all pass", "repeat", H.step.repeat_every, (k, s) => hasKind(s, "checks"), "Conditions & timing"],
+  ["retry_checks", "Retry checks", "retry", H.step.retry_checks, (k, s) => hasKind(s, "checks"), "Conditions & timing"],
   ["dir", "Directory", "text", H.step.dir, (k) => k !== "manual", "Where it runs"],
   ["shell", "Shell", "text", H.step.step_shell, (k) => k !== "manual", "Where it runs"],
   ["env", "Environment", "kv", H.step.step_env, (k) => k !== "manual", "Where it runs"],
@@ -430,6 +431,7 @@ function detailsPane(ed, d, s, i) {
     let ctl;
     if (fkind === "repeat") ctl = `<div class="row tight">${control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "every, e.g. 20s" })}${control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "give up after, e.g. 10m" })}</div>`;
     else if (fkind === "select") ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "fail (default)"], ["skip", "skip"], ["pass", "pass"]] });
+    else if (fkind === "retry") ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "all of them (default)"], ["failed", "only the failed ones"], ["each", "each in turn, until it passes"]] });
     else ctl = control(`${P}.${k}`, fkind, s[k]);
     return row(label, help, ctl);
   };

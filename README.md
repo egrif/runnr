@@ -324,8 +324,10 @@ output is recorded with the step. They can't publish outputs.
 **Checks** run several commands as one step: each passes if it exits 0,
 every one runs on each attempt, and the step passes when all pass. Results
 show as a ✅/❌ table. With `repeat`, the group re-runs on its own until it
-passes or times out; otherwise a failure offers retry (re-runs the group),
-skip, force or abort.
+passes or times out; otherwise a failure offers retry, skip, force or abort.
+`retry_checks` says what a retry runs: `all` (default), only the `failed`
+ones (passed ones stay passed), or `each` in turn, retrying the first
+failing check until it passes before going on to the next.
 
 **Ways** are different ways to do one step: Scripted, Manual, Checks, or
 any you name. The preferred way runs (always, in unattended runs) unless the
