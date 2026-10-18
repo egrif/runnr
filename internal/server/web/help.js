@@ -112,16 +112,19 @@ function helpIcon(text) {
   const show = (el) => {
     tip ||= Object.assign(document.createElement("div"), { id: "tip" });
     tip.textContent = el.dataset.tip;
+    tip.classList.toggle("code", !!el.dataset.tipCode);
     tip.style.left = tip.style.top = "0px";
     document.body.append(tip);
     const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
     const left = Math.max(8, Math.min(r.left + r.width / 2 - 40, innerWidth - t.width - 8));
     const below = r.bottom + 6 + t.height <= innerHeight - 8;
+    const above = r.top - 6 - t.height >= 8;
     tip.style.left = left + "px";
-    tip.style.top = (below ? r.bottom + 6 : Math.max(8, r.top - 6 - t.height)) + "px";
+    // Too tall for either side: from the top of the window (click ƒ for all of it).
+    tip.style.top = (below ? r.bottom + 6 : above ? r.top - 6 - t.height : 8) + "px";
   };
   const hide = () => tip?.remove();
-  const at = (e) => e.target.closest?.(".info[data-tip], .cmt[data-tip]");
+  const at = (e) => e.target.closest?.(".info[data-tip], .cmt[data-tip], .fn-icon[data-tip]");
   document.addEventListener("mouseover", (e) => { const el = at(e); if (el) show(el); });
   document.addEventListener("mouseout", (e) => { if (at(e)) hide(); });
   document.addEventListener("focusin", (e) => { const el = at(e); if (el) show(el); });
@@ -305,3 +308,60 @@ functions:
     document.getElementById(a.getAttribute("href").slice(1))?.scrollIntoView({ behavior: "smooth" });
   }));
 }
+
+// ---------- functions used by a step ----------
+// The ƒ marker beside a step's description (or script) names the library
+// and runbook functions its code calls; hovering it shows their definitions.
+
+const libFns = new Map(); // library name → its functions (once loaded)
+
+// loadLibs fetches the libraries a runbook uses that aren't loaded yet;
+// it reports whether it loaded any (so the caller can draw again).
+async function loadLibs(names) {
+  const missing = (names || []).filter((n) => !libFns.has(n));
+  await Promise.all(missing.map(async (n) => {
+    try { libFns.set(n, (await api("GET", `/api/libraries/${enc(n)}`)).library?.functions || {}); }
+    catch { libFns.set(n, {}); }
+  }));
+  return missing.length > 0;
+}
+
+// fnsOf is every function a runbook's steps can call: its libraries' (as
+// loaded so far), then its own, which win.
+function fnsOf(rb) {
+  const out = {};
+  for (const l of rb?.libraries || []) for (const [k, f] of Object.entries(libFns.get(l) || {})) out[k] = { ...f, from: `library ${l}` };
+  for (const [k, f] of Object.entries(rb?.functions || {})) out[k] = { ...f, from: "this runbook" };
+  return out;
+}
+
+// fnIcon is the ƒ marker for the functions text calls, or "" if none.
+function fnIcon(text, fns) {
+  if (!text || !fns) return "";
+  const used = Object.keys(fns).filter((n) => new RegExp(`(^|[^\\w-])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\w-]|$)`, "m").test(text));
+  if (!used.length) return "";
+  const tip = used.map((n) => {
+    const f = fns[n];
+    const desc = (f.description || "").trim().split("\n").map((l) => `# ${l}`).join("\n");
+    return `# ${n}: from ${f.from}\n${desc ? desc + "\n" : ""}${n}() {\n${(f.body || "").replace(/\s+$/, "")}\n}`;
+  }).join("\n\n");
+  return `<span class="fn-icon" tabindex="0" role="button" data-tip="${esc(tip)}" data-tip-code="1" title="">ƒ ${esc(used.join(", "))}</span>`;
+}
+
+// Clicking ƒ opens the definitions where they can be scrolled and copied.
+document.addEventListener("click", (e) => {
+  const el = e.target.closest?.(".fn-icon[data-tip]");
+  if (!el) return;
+  e.preventDefault();
+  e.stopPropagation();
+  document.getElementById("tip")?.remove();
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step fn-dialog";
+  dlg.innerHTML = `<div class="row"><h3>Functions used here</h3><span class="spacer"></span><button data-close>Close</button></div><pre class="cmd"></pre>`;
+  dlg.querySelector("pre").textContent = el.dataset.tip;
+  document.body.append(dlg);
+  dlg.onclose = () => dlg.remove();
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  dlg.addEventListener("click", (ev) => { if (ev.target === dlg) dlg.close(); });
+  dlg.showModal();
+}, true);

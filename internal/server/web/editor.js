@@ -326,7 +326,8 @@ function stepLeft(ed, s, i) {
   const P = `steps.${i}`;
   const label = (o, kind) => {
     const [l, help] = { run: ["Script", H.step.run], manual: ["Instructions", H.step.manual], checks: ["Checks", H.step.checks] }[kind];
-    return `<div class="flabel">${l}${helpIcon(help)}${kind !== "checks" ? cmtBtn([o, kind]) : ""}</div>`;
+    const code = kind === "checks" ? (o.checks || []).map((c) => c.run || "").join("\n") : kind === "run" ? o.run : "";
+    return `<div class="flabel">${l}${helpIcon(help)}${kind !== "checks" ? cmtBtn([o, kind]) : ""}${fnIcon(code, fnsOf(ed.doc))}</div>`;
   };
   if (!s.ways) {
     const kind = kindOf(s);
@@ -667,6 +668,8 @@ function renderStruct(ed) {
   d.steps ||= [];
   ed.widths ||= [null, null]; // px once dragged; proportional until then
   ed.cmtTargets = [];
+  // Library functions load once; draw again when they arrive.
+  loadLibs(d.libraries).then((loaded) => { if (loaded && ed.mode === "struct") renderStruct(ed); });
   curEd = ed;
   const pane = $("#struct-pane");
   const html = `

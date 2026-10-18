@@ -488,3 +488,8 @@ dialog.edit-step .row { margin-top: 8px; gap: 8px; }
 .col-card select { font-size: 12px; }
 kbd { font-size: 11px; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; background: var(--bg); }
 .cal-item.notify, .agenda-items tr.notify td { color: var(--warn); font-weight: 600; }
+
+/* Functions a step uses: hover for their definitions */
+.fn-icon { display: inline-block; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); border: 1px solid currentColor; border-radius: 8px; padding: 0 6px; margin: 0 4px; cursor: help; white-space: nowrap; vertical-align: middle; }
+#tip.code { white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; max-width: min(720px, 90vw); max-height: calc(100vh - 16px); overflow: hidden; }
+.fn-dialog pre { max-height: 70vh; overflow: auto; white-space: pre; font-size: 12px; }

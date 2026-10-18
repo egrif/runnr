@@ -153,6 +153,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
   bindSide($("#launch-steps"), draw);
   draw();
   refreshPreview();
+  loadLibs(rb.libraries).then(() => { st.fns = fnsOf(rb); draw(); });
 }
 
 function toggle(set, i) { set.has(i) ? set.delete(i) : set.add(i); }
@@ -294,7 +295,7 @@ function renderLaunchSteps(st) {
           <button type="button" class="pill ${st.after.has(i) ? "on" : ""}" data-after="${i}" title="Stop after this step to check the result">⏸ after</button>
         </div>
         ${st.open.has(i) ? `<div class="step-body two-col">
-          <div><h4>Will do</h4>${stepDetails(view)}</div>
+          <div><h4>Will do</h4>${stepDetails(view, st.fns)}</div>
           <div>${sidePanel(`launch:${i}`, i, s, st.history, prev)}</div>
         </div>` : ""}
       </li>`;

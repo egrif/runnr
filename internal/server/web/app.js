@@ -194,10 +194,18 @@ async function viewRunbook(name, tab, query) {
 }
 
 // stepDetails shows what a step does: code, expected outcome, outputs.
-function stepDetails(s) {
+// stepCode is all the code a step (or its view) runs: script, checks, ways.
+function stepCode(s) {
+  if (!s) return "";
+  const checks = (cs) => (cs || []).map((c) => c.run || c.command || "").join("\n");
+  return [s.command, s.run, checks(s.checks), ...(s.ways || []).map((w) => [w.run, w.command, checks(w.checks)].join("\n"))].filter(Boolean).join("\n");
+}
+
+function stepDetails(s, fns) {
   const outs = [...(s.outputs || []), ...(s.secret_outputs || []).map((o) => `${o} (secret)`)];
+  const fi = fnIcon(stepCode(s), fns);
   return `
-    ${s.description ? `<div class="doing">${esc(s.description)}</div>` : ""}
+    ${s.description ? `<div class="doing">${esc(s.description)}${fi}</div>` : fi ? `<div>${fi}</div>` : ""}
     ${s.dir ? `<div class="muted">dir: <code>${esc(s.dir)}</code></div>` : ""}
     ${s.when ? `<div class="muted">only when: <code>${esc(s.when)}</code></div>` : ""}
     <pre class="cmd">${esc(s.run || s.manual || s.command)}</pre>
@@ -237,7 +245,12 @@ async function viewRun(id) {
   // Earlier runs (for History) and the runbook's configuration (for Details).
   state.history = [];
   api("GET", `/api/runs?runbook=${enc(run.runbook)}&limit=30`).then((rs) => { state.history = rs.filter((r) => r.id !== run.id); renderRun(state); }).catch(() => {});
-  api("GET", `/api/runbooks/${enc(run.runbook)}`).then((d) => { state.cfg = d.runbook?.steps; state.rbSections = d.runbook?.sections; renderRun(state); }).catch(() => {});
+  api("GET", `/api/runbooks/${enc(run.runbook)}`).then(async (d) => {
+    state.cfg = d.runbook?.steps; state.rbSections = d.runbook?.sections;
+    await loadLibs(d.runbook?.libraries);
+    state.fns = fnsOf(d.runbook);
+    renderRun(state);
+  }).catch(() => {});
   let pt;
   state.onState = () => { clearTimeout(pt); pt = setTimeout(loadPreview, 300); };
   // Past runs: show stored output; expand failures.
@@ -378,7 +391,8 @@ function renderRun(state) {
         ${state.termStep === i ? `<div class="step-body"><p class="term-note">⌨ A terminal is open for this step below${state.termShell ? " (shell): type exit or End session to come back to the run" : ": type there when it asks"}. <button class="link" data-show-term>Show terminal</button></p></div>` : ""}
         ${s.notes?.length ? `<div class="step-body">${renderNotes(s.notes)}</div>` : ""}
         ${state.open.has(i) ? `<div class="step-body two-col"><div>
-          ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i])}` : `
+          ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i], state.fns)}` : `
+            ${state.preview?.[i]?.description || fnIcon(stepCode(state.cfg?.[i]) || s.command, state.fns) ? `<div class="doing">${esc(state.preview?.[i]?.description || "")}${fnIcon(stepCode(state.cfg?.[i]) || s.command, state.fns)}</div>` : ""}
             ${state.preview?.[i]?.expect ? `<div class="expect"><b>Expect:</b> ${esc(state.preview[i].expect)}</div>` : ""}
             ${s.command || state.preview?.[i]?.command ? `<pre class="cmd">${esc(s.command || state.preview[i].command)}</pre>` : ""}
             ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : ""}
