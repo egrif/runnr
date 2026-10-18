@@ -67,6 +67,18 @@ steps:
     run: echo after-read
 `
 
+func TestMDProse(t *testing.T) {
+	for in, want := range map[string]string{
+		"Expect roughly ${days} day(s) for ${aurora_dbid} to catch up.": "Expect roughly `${days}` day(s) for `${aurora_dbid}` to catch up.",
+		"costs $5 and $silo_env": "costs \\$5 and `$silo_env`",
+		"run `echo $x` then $y":  "run `echo $x` then `$y`",
+	} {
+		if got := mdProse(in); got != want {
+			t.Errorf("mdProse(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestExportMarkdownIsPasteable(t *testing.T) {
 	zsh, err := exec.LookPath("zsh")
 	if err != nil {
@@ -82,7 +94,7 @@ func TestExportMarkdownIsPasteable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"<details>\n<summary><b>Overview</b></summary>", "## Primary states", "### 1. Prep", "**APP IS DOWN**", "**APP IS BACK**",
-		"- Work out names.", "> Look at ${who}'s dashboard.", "<summary>Or: Manual</summary>", "<summary>Helper functions (shout)</summary>"} {
+		"- Work out names.", "> Look at `${who}`'s dashboard.", "<summary>Or: Manual</summary>", "<summary>Helper functions (shout)</summary>"} {
 		if !strings.Contains(md, want) {
 			t.Errorf("missing %q in:\n%s", want, md)
 		}

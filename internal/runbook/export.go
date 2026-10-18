@@ -199,7 +199,7 @@ func ExportMarkdown(rb *Runbook, o ExportOptions) (string, error) {
 		if d := strings.TrimSpace(exportText(st.Description)); d != "" {
 			for _, l := range strings.Split(d, "\n") {
 				if l = strings.TrimSpace(l); l != "" {
-					w("- %s\n", l)
+					w("- %s\n", mdProse(l))
 				}
 			}
 		}
@@ -220,7 +220,7 @@ func ExportMarkdown(rb *Runbook, o ExportOptions) (string, error) {
 			switch s.Kind() {
 			case "manual":
 				for _, l := range strings.Split(strings.TrimSpace(exportText(s.Manual)), "\n") {
-					w("> %s\n", l)
+					w("> %s\n", mdProse(l))
 				}
 				w("\n")
 			case "checks":
@@ -316,6 +316,38 @@ func checksScript(s Step) string {
 		b.WriteString("checks\n")
 	}
 	b.WriteString(")")
+	return b.String()
+}
+
+var (
+	codeSpanRe = regexp.MustCompile("`[^`]*`")
+	shellVarRe = regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*`)
+)
+
+// mdProse makes text safe as Markdown prose: placeholders like ${days}
+// become inline code, and any other $ is escaped, so viewers that render
+// $...$ as math don't swallow it.
+func mdProse(s string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range codeSpanRe.FindAllStringIndex(s, -1) {
+		b.WriteString(proseOutsideCode(s[last:m[0]]))
+		b.WriteString(s[m[0]:m[1]])
+		last = m[1]
+	}
+	b.WriteString(proseOutsideCode(s[last:]))
+	return b.String()
+}
+
+func proseOutsideCode(s string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range shellVarRe.FindAllStringIndex(s, -1) {
+		b.WriteString(strings.ReplaceAll(s[last:m[0]], "$", `\$`))
+		b.WriteString("`" + s[m[0]:m[1]] + "`")
+		last = m[1]
+	}
+	b.WriteString(strings.ReplaceAll(s[last:], "$", `\$`))
 	return b.String()
 }
 
