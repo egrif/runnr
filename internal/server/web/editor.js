@@ -393,6 +393,10 @@ function sectionNames(d) {
 
 // Less-used step fields, under Advanced. [key, label, kind, help, applies(step kind), group]
 const MORE_FIELDS = [
+  ["owner", "Owner", "text", H.step.owner, () => true, "Placement"],
+  ["section", "Section", "section", H.step.section, () => true, "Placement"],
+  ["window", "Window", "window", H.step.window, (k, s, d) => !!d?.maintenance_window, "Placement"],
+  ["window_offset", "Planned at", "planned", H.step.window_offset, (k, s, d) => !!d?.maintenance_window, "Placement"],
   ["always", "Always run", "bool", H.step.always, () => true, "Behaviour"],
   ["continue_on_error", "Keep going if it fails", "bool", H.step.continue_on_error, () => true, "Behaviour"],
   ["tty", "Needs a terminal", "bool", H.step.tty, (k) => k === "run", "Behaviour"],
@@ -413,6 +417,15 @@ const MORE_FIELDS = [
   ["unattended", "When unattended", "select", H.step.unattended, () => true, "Other"],
 ];
 
+// fieldSet: whether a step's field holds something other than its default
+// (set ones show above the fold). A step's section is shown by where it
+// sits in the outline, so it stays under Advanced.
+function fieldSet(s, k) {
+  if (k === "section") return false;
+  if (k === "window_offset") return isSet(s.window_offset) || isSet(s.offset_input);
+  return isSet(s[k]);
+}
+
 const isSet = (v) => v !== undefined && v !== "" && v !== false && !(Array.isArray(v) && !v.length) && !(v && typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length);
 
 // checkRow puts checkboxes side by side, in columns that line up.
@@ -429,7 +442,15 @@ function detailsPane(ed, d, s, i) {
   const later = d.steps.slice(i + 1).map((o, k) => [o.id || o.name, `${i + k + 2}. ${o.name}`]);
   const fieldRow = ([k, label, fkind, help]) => {
     let ctl;
-    if (fkind === "repeat") ctl = `<div class="row tight">${control(`${P}.repeat.every`, "text", s.repeat?.every, { placeholder: "every, e.g. 20s" })}${control(`${P}.repeat.timeout`, "text", s.repeat?.timeout, { placeholder: "give up after, e.g. 10m" })}</div>`;
+    if (fkind === "repeat") {
+      // None (run once) until chosen; then how often and for how long.
+      ctl = s.repeat
+        ? `<div class="row tight">${control(`${P}.repeat.every`, "text", s.repeat.every, { placeholder: "every, e.g. 20s" })}${control(`${P}.repeat.timeout`, "text", s.repeat.timeout, { placeholder: "give up after, e.g. 10m" })}<button class="icon-btn small-x" data-act="repeat-off" data-i="${i}" title="Don't repeat (run once)">✕</button></div>`
+        : `<select data-repeat-on data-i="${i}"><option value="">none (run once)</option><option value="on">every 20s, for up to 10m…</option></select>`;
+    }
+    else if (fkind === "section") ctl = sectionPick(d, i);
+    else if (fkind === "window") ctl = control(`${P}.window`, "select", s.window, { choices: [["", "—"], ["open", "opens here (production goes down)"], ["close", "closes here (production is back)"]] });
+    else if (fkind === "planned") ctl = offsetPair(d, `${P}.window_offset`, s.window_offset, `${P}.offset_input`, s.offset_input, plannedHint(d, i));
     else if (fkind === "select") ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "fail (default)"], ["skip", "skip"], ["pass", "pass"]] });
     else if (fkind === "retry") ctl = control(`${P}.${k}`, "select", s[k], { choices: [["", "all of them (default)"], ["failed", "only the failed ones"], ["each", "each in turn, until it passes"]] });
     else ctl = control(`${P}.${k}`, fkind, s[k]);
@@ -441,9 +462,9 @@ function detailsPane(ed, d, s, i) {
     const bools = fs.filter((f) => f[2] === "bool");
     return (bools.length ? checkRow(bools.map(box)) : "") + fs.filter((f) => f[2] !== "bool").map(fieldRow).join("");
   };
-  const all = MORE_FIELDS.filter(([, , , , applies]) => applies(kind, s));
-  const set = all.filter(([k]) => isSet(s[k]));
-  const unset = all.filter(([k]) => !isSet(s[k]));
+  const all = MORE_FIELDS.filter(([, , , , applies]) => applies(kind, s, d));
+  const set = all.filter(([k]) => fieldSet(s, k));
+  const unset = all.filter(([k]) => !fieldSet(s, k));
   const open = ed.adv.has(s);
   const rest = open ? [...new Set(unset.map((f) => f[5]))].map((g) =>
     `<div class="adv-title">${esc(g)}</div>${fields(unset.filter((f) => f[5] === g))}`).join("") : "";
@@ -452,10 +473,6 @@ function detailsPane(ed, d, s, i) {
     ${row("Name", H.step.name, control(`${P}.name`, "text", s.name))}
     ${row("What we're doing", H.step.description, control(`${P}.description`, "area", s.description, { placeholder: "what this step does, and why" }))}
     ${row("By the end", H.step.expect, control(`${P}.expect`, "area", s.expect, { placeholder: "how things should stand when it's done" }))}
-    ${row("Section", H.step.section, sectionPick(d, i))}
-    ${d.maintenance_window ? row("Window", H.step.window, control(`${P}.window`, "select", s.window, { choices: [["", "—"], ["open", "opens here (production goes down)"], ["close", "closes here (production is back)"]] })) : ""}
-    ${d.maintenance_window ? row("Planned at", H.step.window_offset, offsetPair(d, `${P}.window_offset`, s.window_offset, `${P}.offset_input`, s.offset_input, plannedHint(d, i))) : ""}
-    ${row("Owner", H.step.owner, control(`${P}.owner`, "text", s.owner))}
     ${checkRow([["Confirm first", H.step.confirm, control(`${P}.confirm`, "bool", s.confirm)], ["Dangerous", H.step.dangerous, control(`${P}.dangerous`, "bool", s.dangerous)], ...set.filter((f) => f[2] === "bool").map(box)])}
     ${s.background ? row("Stop after", H.step.stop_after, control(`${P}.stop_after`, "select", s.stop_after, { choices: [["", "when the run ends"], ...later] })) : ""}
     ${set.filter((f) => f[2] !== "bool").map(fieldRow).join("")}
@@ -790,6 +807,10 @@ function renderStruct(ed) {
       for (const sec of d.sections) if (sec.name === old) sec.name = nw;
       return renderStruct(ed);
     }
+    if (t.matches("[data-repeat-on]") && e.type === "change") {
+      if (t.value) d.steps[+t.dataset.i].repeat = { every: "20s", timeout: "10m" };
+      return renderStruct(ed);
+    }
     if (t.matches("[data-sec-pick]") && e.type === "change") {
       const i = +t.dataset.i;
       if (t.value === "__new__") {
@@ -832,7 +853,8 @@ function renderStruct(ed) {
     // Structure-changing fields redraw the form. So does an advanced field
     // that's now set (or cleared): it moves above the fold (or back).
     const m = el.dataset.path.match(/^steps\.(\d+)\.([a-z_]+)/);
-    const moved = m && MORE_FIELDS.some(([k]) => k === m[2]) && !!el.closest(".adv-rest") === isSet(d.steps[+m[1]][m[2]]);
+    const fk = m && (m[2] === "offset_input" ? "window_offset" : m[2]);
+    const moved = m && MORE_FIELDS.some(([k]) => k === fk) && !!el.closest(".adv-rest") === fieldSet(d.steps[+m[1]], fk);
     if (e.type === "change" && (moved || /\.(name|section|confirm|dangerous|background|window|window_offset|offset_input|choose|tty|notification_required)$|^maintenance_window\./.test(el.dataset.path))) {
       const focus = document.activeElement?.dataset?.path;
       renderStruct(ed);
@@ -871,6 +893,7 @@ function renderStruct(ed) {
       case "stop-run": { const r = ed.runs.get(s); if (r?.id) api("POST", `/api/runs/${enc(r.id)}/cancel`).catch(() => {}); return; }
       case "close-run": ed.runs.get(s)?.es?.close(); ed.runs.delete(s); break;
       case "way-tab": ed.wayTab.set(s, j); break;
+      case "repeat-off": delete s.repeat; break;
       case "sec-toggle": toggle(ed.secOpen, b.dataset.sec); break;
       case "sec-add-step": {
         const ns = { name: "New step", run: "echo hello", section: s.section };
