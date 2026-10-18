@@ -74,7 +74,8 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
       <p class="muted small">Click a step to see what it will do, what it did in earlier runs (History) and how it's set up (Details). Untick to skip it; ⏸ before / after stops there so you can check.</p>
       <ol class="steps" id="launch-steps"></ol>
       <div class="row start-bar"><button class="primary" type="submit" id="start"></button>
-        ${mode === "run" ? `<button type="button" id="schedule-btn" title="Plan this run for later, with these inputs">Schedule…</button>` : ""}</div>
+        ${mode === "run" ? `<button type="button" id="schedule-btn" title="Plan this run for later, with these inputs">Schedule…</button>` : ""}
+        <button type="button" id="export-btn" title="Download it as Markdown to follow by hand: code blocks to paste, with these inputs filled in">Export as Markdown</button></div>
     </form>`;
 
   const form = $("#run-form");
@@ -144,6 +145,10 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
       location.hash = `#/runs/${id}`;
     } catch (e) { toast(e.message); }
   });
+  $("#export-btn").onclick = () => {
+    const q = Object.entries(vars()).filter(([, v]) => v !== "").map(([k, v]) => `v=${enc(`${k}=${v}`)}`);
+    location.href = `/api/runbooks/${enc(rb.name)}/export?download=1${q.length ? "&" + q.join("&") : ""}`;
+  };
   $("#schedule-btn") && ($("#schedule-btn").onclick = () => scheduleDialog({ runbook: rb.name, inputs: vars() }));
   bindSide($("#launch-steps"), draw);
   draw();

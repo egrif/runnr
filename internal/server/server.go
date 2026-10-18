@@ -81,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/collections/{name}", s.patchCollection)
 	mux.HandleFunc("DELETE /api/collections/{name}/runbooks/{runbook}", s.removeFromCollection)
 	mux.HandleFunc("POST /api/runbooks/{name}/move", s.moveRunbook)
+	mux.HandleFunc("GET /api/runbooks/{name}/export", s.exportRunbook)
 	mux.HandleFunc("GET /api/schedules", s.listSchedules)
 	mux.HandleFunc("POST /api/schedules", s.saveSchedule)
 	mux.HandleFunc("GET /api/schedules/{id}", s.getSchedule)
@@ -1151,6 +1152,37 @@ func (s *Server) putTestValues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tv)
+}
+
+// exportRunbook returns the runbook as Markdown to follow by hand
+// (?v=name=value fills in inputs; ?download=1 saves it as a file).
+func (s *Server) exportRunbook(w http.ResponseWriter, r *http.Request) {
+	rb, _, err := s.st.Get(r.PathValue("name"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	libs, err := s.st.Libraries(rb.Libraries)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	vars := map[string]string{}
+	for _, kv := range r.URL.Query()["v"] {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			vars[k] = v
+		}
+	}
+	md, err := runbook.ExportMarkdown(rb, runbook.ExportOptions{Vars: vars, Libraries: libs})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	if r.URL.Query().Get("download") != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.md"`, rb.Name))
+	}
+	io.WriteString(w, md)
 }
 
 // ---------- schedules ----------

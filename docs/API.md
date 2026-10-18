@@ -61,6 +61,7 @@ Runs planned ahead of time. Nothing starts them yet.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
+| GET | `/api/runbooks/{name}/export?v=name=value&download=1` | | the runbook as Markdown to follow by hand (`v` fills in inputs; `download` saves it as a file) |
 | GET | `/api/schedules?from=RFC3339&tz=Area/City` | | planned runs, soonest first, each `{id, runbook, at, title, notes, inputs, description, window, entries, error}`; `from` leaves out runs entirely before it |
 | POST | `/api/schedules` | `{runbook, at, title?, notes?, inputs?, created_by?}` | `201` the schedule |
 | GET / PUT / DELETE | `/api/schedules/{id}` | (PUT: as POST) | the schedule / `204` |

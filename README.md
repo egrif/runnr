@@ -47,6 +47,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr collection list/show/new/edit/import/delete` | Group runbooks that belong together, with what they're for |
 | `runnr collection add <col> <runbook>...` / `remove <col> <runbook>...` | Put runbooks in a collection (`--create` to make it) or take them out (they stay in runnr) |
 | `runnr schedule add/list/rm` | Plan runs ahead; `list` prints the agenda |
+| `runnr export <runbook> [-v k=v] [-o file]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
 | `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin, `-c <collection>` to add them to a collection) |
@@ -359,6 +360,20 @@ due" date on the schedule.
 (sections, steps, the notification) that land on a weekend move back to the
 Friday before, same time; only the window, and what happens during it,
 falls on a weekend.
+
+**Export.** `runnr export` (or **Export as Markdown**) writes a runbook as
+a document to follow by hand, like a wiki runbook: a collapsed overview,
+a setup block (inputs, environment, helper functions), then per section
+each step with a bullet of what it's doing and its code in collapsible
+blocks; other ways are collapsed under it. Paste the blocks in order into
+one shell: placeholders become shell variables, steps that exit, `cd` or
+set shell options run in a subshell, values steps publish still land in
+your shell, and multi-line blocks are grouped so an interactive command
+can't swallow the lines after it. The setup block turns on zsh's
+`interactive_comments` and turns off `!` history expansion, which
+otherwise break pasted code. Templates with logic (`{{if eq .env …}}`)
+are worked out with the inputs given (`-v`), so export again for other
+values.
 
 **Schedule.** Plan runs ahead: `runnr schedule add <runbook> --at "2026-11-01
 22:00" -v env=prod` (for a runbook with a window, the time is when it

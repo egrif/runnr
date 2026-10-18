@@ -75,7 +75,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -791,6 +791,58 @@ would publish show as <name>.`,
 	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "fill in an input (key=value)")
 	cmd.Flags().BoolVar(&all, "all", false, "show every step in full")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
+	return cmd
+}
+
+func exportCmd(s func() *store.Store) *cobra.Command {
+	var vars []string
+	var out string
+	cmd := &cobra.Command{
+		Use:   "export <runbook|file>",
+		Short: "Write a runbook as Markdown to follow by hand (code blocks to paste, in order)",
+		Long: `Writes the runbook as a Markdown document: a collapsed overview, a setup
+block (inputs, environment, helper functions), then each section and step
+with what it's doing and its code, in collapsible blocks.
+
+Paste the code blocks, in order, into one shell (the runbook's shell).
+Placeholders become shell variables; steps that exit, change directory or
+set shell options run in a subshell; values steps publish still land in
+your shell. --var fills in inputs.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rb, _, err := s().Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			libs, err := s().Libraries(rb.Libraries)
+			if err != nil {
+				return err
+			}
+			vals := map[string]string{}
+			for _, kv := range vars {
+				k, v, ok := strings.Cut(kv, "=")
+				if !ok {
+					return fmt.Errorf("--var %q must be key=value", kv)
+				}
+				vals[k] = v
+			}
+			md, err := runbook.ExportMarkdown(rb, runbook.ExportOptions{Vars: vals, Libraries: libs})
+			if err != nil {
+				return err
+			}
+			if out == "" || out == "-" {
+				fmt.Print(md)
+				return nil
+			}
+			if err := os.WriteFile(out, []byte(md), 0o644); err != nil {
+				return err
+			}
+			fmt.Fprintln(os.Stderr, "wrote", out)
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "fill in an input (key=value)")
+	cmd.Flags().StringVarP(&out, "output", "o", "", "write to this file (default: standard output)")
 	return cmd
 }
 
