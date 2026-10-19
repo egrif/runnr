@@ -38,31 +38,24 @@ type OpenAI struct {
 	Label string
 	HTTP  *http.Client
 
-	mu    sync.Mutex
-	keyed string
-	keyAt time.Time
+	tok cmdToken
 }
 
-func (o *OpenAI) Name() string {
-	if o.Label != "" {
-		return o.Label
-	}
-	return "openai"
+// cmdToken is a short-lived token printed by a command (e.g. an SSO token
+// for a gateway), reused for ten minutes unless renewed.
+type cmdToken struct {
+	mu  sync.Mutex
+	tok string
+	at  time.Time
 }
-func (o *OpenAI) ModelName() string { return o.Model }
 
-// key is the API key: fixed, or from KeyCmd (reused for ten minutes,
-// unless renew).
-func (o *OpenAI) key(ctx context.Context, renew bool) (string, error) {
-	if o.KeyCmd == "" {
-		return o.Key, nil
+func (c *cmdToken) get(ctx context.Context, cmd string, renew bool) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !renew && c.tok != "" && time.Since(c.at) < 10*time.Minute {
+		return c.tok, nil
 	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if !renew && o.keyed != "" && time.Since(o.keyAt) < 10*time.Minute {
-		return o.keyed, nil
-	}
-	out, err := exec.CommandContext(ctx, "sh", "-c", o.KeyCmd).Output()
+	out, err := exec.CommandContext(ctx, "sh", "-c", cmd).Output()
 	if err != nil {
 		msg := err.Error()
 		var ee *exec.ExitError
@@ -73,10 +66,26 @@ func (o *OpenAI) key(ctx context.Context, renew bool) (string, error) {
 			// It reads its config from the directory it runs in by default.
 			msg += " (set SSO_TOKEN_CLI_CONFIG to the path of your sso-token-cli config file, or start runnr in the directory that has it)"
 		}
-		return "", fmt.Errorf("getting a key (%s): %s", o.KeyCmd, msg)
+		return "", fmt.Errorf("getting a key (%s): %s", cmd, msg)
 	}
-	o.keyed, o.keyAt = strings.TrimSpace(string(out)), time.Now()
-	return o.keyed, nil
+	c.tok, c.at = strings.TrimSpace(string(out)), time.Now()
+	return c.tok, nil
+}
+
+func (o *OpenAI) Name() string {
+	if o.Label != "" {
+		return o.Label
+	}
+	return "openai"
+}
+func (o *OpenAI) ModelName() string { return o.Model }
+
+// key is the API key: fixed, or from KeyCmd.
+func (o *OpenAI) key(ctx context.Context, renew bool) (string, error) {
+	if o.KeyCmd == "" {
+		return o.Key, nil
+	}
+	return o.tok.get(ctx, o.KeyCmd, renew)
 }
 
 func (o *OpenAI) Stream(ctx context.Context, system []Block, history []Message, question string, maxTokens int, onText func(string)) (Usage, error) {
