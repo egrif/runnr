@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -61,7 +62,14 @@ func (o *OpenAI) key(ctx context.Context, renew bool) (string, error) {
 	if !renew && o.keyed != "" && time.Since(o.keyAt) < 10*time.Minute {
 		return o.keyed, nil
 	}
-	out, err := exec.CommandContext(ctx, "sh", "-c", o.KeyCmd).Output()
+	cmd := exec.CommandContext(ctx, "sh", "-c", o.KeyCmd)
+	// From the home directory: credential helpers such as sso-token-cli
+	// look for their config (.sso-token-cli) in the directory they run in,
+	// and runnr may have been started anywhere.
+	if home, err := os.UserHomeDir(); err == nil {
+		cmd.Dir = home
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		msg := err.Error()
 		var ee *exec.ExitError
