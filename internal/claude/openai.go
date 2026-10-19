@@ -154,10 +154,12 @@ func (o *OpenAI) stream(ctx context.Context, system []Block, history []Message, 
 		var e struct {
 			Error struct{ Message string } `json:"error"`
 		}
+		// Say where: a wrong URL shows as 404 or 405.
+		where := "POST " + req.URL.String()
 		if json.Unmarshal(b, &e) == nil && e.Error.Message != "" {
-			return usage, fmt.Errorf("%s %s: %s (%d)", o.Name(), o.Model, e.Error.Message, res.StatusCode)
+			return usage, fmt.Errorf("%s %s: %s (%d, %s)", o.Name(), o.Model, e.Error.Message, res.StatusCode, where)
 		}
-		return usage, fmt.Errorf("%s %s: %s", o.Name(), o.Model, res.Status)
+		return usage, fmt.Errorf("%s %s: %s (%s)", o.Name(), o.Model, res.Status, where)
 	}
 	sc := bufio.NewScanner(res.Body)
 	sc.Buffer(make([]byte, 64*1024), 1<<20)
