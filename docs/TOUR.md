@@ -1,7 +1,8 @@
 # A tour of runnr
 
 Screenshots of the web GUI (`runnr serve`), using a demo runbook that moves an
-"orders" database to a new cluster. Everything shown also works from the CLI.
+"orders" database to a new cluster. Everything shown also works from the
+[CLI](CLI.md).
 
 - [Runbooks](#runbooks)
 - [Running](#running)
