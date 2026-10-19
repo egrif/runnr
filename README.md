@@ -15,6 +15,8 @@ unattended for cron/CI.
 - **SQLite or Postgres** storage: zero-setup locally, shared for a team.
 - **HTTP API** for CI, cron and chatops ([docs/API.md](docs/API.md)).
 
+See it in action: **[a tour of the GUI, with screenshots](docs/TOUR.md)**.
+
 ## Install
 
 ```sh

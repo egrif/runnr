@@ -80,7 +80,7 @@ async function viewCollections() {
     const others = runbooks.filter((r) => !col?.runbooks.includes(r.name));
     return `<div class="card col-card" data-card="${esc(c.name)}">
       <div class="row col-head-row">
-        <input class="col-name" data-col-name="${esc(c.name)}" value="${esc(c.name)}" title="Rename">
+        <input class="col-name" data-col-name="${esc(c.name)}" value="${esc(c.name)}" size="${Math.max(8, c.name.length + 1)}" title="Rename">
         <span class="muted small">${col ? `${col.runbooks.length} runbook${col.runbooks.length === 1 ? "" : "s"}` : ""}</span>
         <span class="spacer"></span>
         <a class="small" href="#/collections/${enc(c.name)}" title="Edit the YAML">YAML</a>
