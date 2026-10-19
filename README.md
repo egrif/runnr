@@ -50,7 +50,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr collection add <col> <runbook>...` / `remove <col> <runbook>...` | Put runbooks in a collection (`--create` to make it) or take them out (they stay in runnr) |
 | `runnr schedule add/list/rm` | Plan runs ahead; `list` prints the agenda |
 | `runnr explain <runbook> [step] [-q question] [--fresh]` | Ask a model about a step, or review the whole runbook (see "Ask Claude" for setup) |
-| `runnr export <runbook> [-v k=v] [-o file]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page) |
+| `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
 | `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin, `-c <collection>` to add them to a collection) |
@@ -404,6 +404,17 @@ can't swallow the lines after it. The setup block turns on zsh's
 otherwise break pasted code. Templates with logic (`{{if eq .env …}}`)
 are worked out with the inputs given (`-v`), so export again for other
 values.
+
+**HTML view.** `runnr export <runbook> -o page.html` (or **View as HTML**
+on the run page) writes one self-contained page to read or share:
+sections and steps that expand and collapse, ways as tabs (the preferred
+one first), checks one by one, and each step's code either **as written**
+(with its templates) or **as runnr runs it**: templates filled in with the
+inputs, then exactly what the step's shell is given (the shell, directory
+and timeout; the files sourced first: profile files, then the functions;
+the trap that publishes its outputs), with the environment runnr adds.
+Values that steps publish during a run show as `<name>`, secret inputs as
+`****`, and runnr's temporary files as `XXXXXX` paths.
 
 **Schedule.** Plan runs ahead: `runnr schedule add <runbook> --at "2026-11-01
 22:00" -v env=prod` (for a runbook with a window, the time is when it

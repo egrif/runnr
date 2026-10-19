@@ -75,6 +75,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
       <ol class="steps" id="launch-steps"></ol>
       <div class="row start-bar"><button class="primary" type="submit" id="start"></button>
         ${mode === "run" ? `<button type="button" id="schedule-btn" title="Plan this run for later, with these inputs">Schedule…</button>` : ""}
+        <button type="button" id="view-html-btn" title="Open it as a page to read or share: sections and steps that expand, ways as tabs, and each step's code as written or exactly as runnr runs it, with these inputs filled in">View as HTML</button>
         <button type="button" id="export-btn" title="Download it as Markdown to follow by hand: code blocks to paste, with these inputs filled in">Export as Markdown</button></div>
     </form>`;
 
@@ -152,10 +153,11 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
     const n = +b.dataset.explain;
     openExplain({ runbook: rb.name }, n, `${n}. ${rb.steps[n - 1].name}`);
   }, true);
-  $("#export-btn").onclick = () => {
-    const q = Object.entries(vars()).filter(([, v]) => v !== "").map(([k, v]) => `v=${enc(`${k}=${v}`)}`);
-    location.href = `/api/runbooks/${enc(rb.name)}/export?download=1${q.length ? "&" + q.join("&") : ""}`;
-  };
+  // Secret inputs stay out of the URL: both views leave them to the reader.
+  const secret = new Set((rb.inputs || []).filter((i) => i.secret).map((i) => i.name));
+  const exportQuery = () => Object.entries(vars()).filter(([k, v]) => v !== "" && !secret.has(k)).map(([k, v]) => `&v=${enc(`${k}=${v}`)}`).join("");
+  $("#export-btn").onclick = () => { location.href = `/api/runbooks/${enc(rb.name)}/export?download=1${exportQuery()}`; };
+  $("#view-html-btn").onclick = () => window.open(`/api/runbooks/${enc(rb.name)}/export?format=html${exportQuery()}`, "_blank", "noopener");
   $("#schedule-btn") && ($("#schedule-btn").onclick = () => scheduleDialog({ runbook: rb.name, inputs: vars() }));
   bindSide($("#launch-steps"), draw);
   draw();

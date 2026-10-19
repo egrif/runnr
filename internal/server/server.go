@@ -19,6 +19,7 @@ import (
 
 	"github.com/egrif/runnr/internal/claude"
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/htmlview"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
 )
@@ -1166,8 +1167,9 @@ func (s *Server) putTestValues(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tv)
 }
 
-// exportRunbook returns the runbook as Markdown to follow by hand
-// (?v=name=value fills in inputs; ?download=1 saves it as a file).
+// exportRunbook returns the runbook as Markdown to follow by hand, or with
+// ?format=html as a page to read (?v=name=value fills in inputs;
+// ?download=1 saves it as a file).
 func (s *Server) exportRunbook(w http.ResponseWriter, r *http.Request) {
 	rb, _, err := s.st.Get(r.PathValue("name"))
 	if err != nil {
@@ -1184,6 +1186,19 @@ func (s *Server) exportRunbook(w http.ResponseWriter, r *http.Request) {
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			vars[k] = v
 		}
+	}
+	if r.URL.Query().Get("format") == "html" {
+		page, err := htmlview.Render(rb, htmlview.Options{Vars: vars, Libraries: libs})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if r.URL.Query().Get("download") != "" {
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.html"`, rb.Name))
+		}
+		w.Write(page)
+		return
 	}
 	md, err := runbook.ExportMarkdown(rb, runbook.ExportOptions{Vars: vars, Libraries: libs})
 	if err != nil {

@@ -225,26 +225,5 @@ func (x *executor) lenient(text string) string {
 // input defaults) and, optionally, an earlier run's state (as for a
 // resume); values not known yet show as <name>.
 func Preview(rb *runbook.Runbook, vars, state map[string]string) []StepView {
-	x := &executor{rb: rb, ui: Unattended{}, vars: map[string]string{}, secretVars: map[string]bool{}, run: &Run{}, masker: runbook.NewMasker(rb)}
-	for k, v := range state {
-		if v != "****" {
-			x.vars[k] = v
-		}
-	}
-	for _, in := range rb.Inputs {
-		v := vars[in.Name]
-		if v == "" {
-			v = in.Default
-		}
-		if v != "" {
-			x.vars[in.Name] = v
-		}
-		if in.Secret && v != "" {
-			x.addSecret(v, true)
-		}
-	}
-	for _, s := range rb.Steps {
-		x.run.Steps = append(x.run.Steps, StepResult{Kind: stepKind(s)})
-	}
-	return x.Plan()
+	return NewPreviewer(rb, vars, state, false).Plan()
 }

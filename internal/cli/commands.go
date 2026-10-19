@@ -23,6 +23,7 @@ import (
 
 	"github.com/egrif/runnr/internal/claude"
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/htmlview"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/server"
 	"github.com/egrif/runnr/internal/store"
@@ -869,10 +870,10 @@ Set up a model with environment variables:
 
 func exportCmd(s func() *store.Store) *cobra.Command {
 	var vars []string
-	var out string
+	var out, format string
 	cmd := &cobra.Command{
 		Use:   "export <runbook|file>",
-		Short: "Write a runbook as Markdown to follow by hand (code blocks to paste, in order)",
+		Short: "Write a runbook as Markdown to follow by hand, or as an HTML page to read",
 		Long: `Writes the runbook as a Markdown document: a collapsed overview, a setup
 block (inputs, environment, helper functions), then each section and step
 with what it's doing and its code, in collapsible blocks.
@@ -880,7 +881,12 @@ with what it's doing and its code, in collapsible blocks.
 Paste the code blocks, in order, into one shell (the runbook's shell).
 Placeholders become shell variables; steps that exit, change directory or
 set shell options run in a subshell; values steps publish still land in
-your shell. --var fills in inputs.`,
+your shell. --var fills in inputs.
+
+--format html (or -o file.html) writes one self-contained page instead:
+sections and steps that expand and collapse, ways as tabs, and each step's
+code as written or exactly as runnr would run it (templates filled in, the
+files it sources, how it captures published values).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rb, _, err := s().Resolve(args[0])
@@ -899,15 +905,32 @@ your shell. --var fills in inputs.`,
 				}
 				vals[k] = v
 			}
-			md, err := runbook.ExportMarkdown(rb, runbook.ExportOptions{Vars: vals, Libraries: libs})
-			if err != nil {
-				return err
+			if format == "" {
+				format = "md"
+				if strings.HasSuffix(strings.ToLower(out), ".html") {
+					format = "html"
+				}
+			}
+			var doc []byte
+			switch format {
+			case "md", "markdown":
+				md, err := runbook.ExportMarkdown(rb, runbook.ExportOptions{Vars: vals, Libraries: libs})
+				if err != nil {
+					return err
+				}
+				doc = []byte(md)
+			case "html":
+				if doc, err = htmlview.Render(rb, htmlview.Options{Vars: vals, Libraries: libs}); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("--format must be md or html")
 			}
 			if out == "" || out == "-" {
-				fmt.Print(md)
+				os.Stdout.Write(doc)
 				return nil
 			}
-			if err := os.WriteFile(out, []byte(md), 0o644); err != nil {
+			if err := os.WriteFile(out, doc, 0o644); err != nil {
 				return err
 			}
 			fmt.Fprintln(os.Stderr, "wrote", out)
@@ -916,6 +939,7 @@ your shell. --var fills in inputs.`,
 	}
 	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "fill in an input (key=value)")
 	cmd.Flags().StringVarP(&out, "output", "o", "", "write to this file (default: standard output)")
+	cmd.Flags().StringVarP(&format, "format", "f", "", "md, or html for a page to read: sections and steps that expand, code as written or as runnr runs it (default: from -o's extension, else md)")
 	return cmd
 }
 

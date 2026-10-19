@@ -331,8 +331,7 @@ func (x *executor) attemptChecks(ctx context.Context, i int, step runbook.Step, 
 			if err != nil {
 				return attemptResult{hard: fmt.Errorf("check %q: %w", c.Name, err)}
 			}
-			cs := step
-			cs.Run, cs.Outputs, cs.SecretOutputs, cs.Capture, cs.TTY = cmd, nil, nil, "", false
+			cs := checkStep(step, cmd)
 			out := x.execStream(ctx, i, cs, cmd, false)
 			if ctx.Err() != nil {
 				return attemptResult{kind: outFailed, err: ctx.Err().Error()}
@@ -536,4 +535,11 @@ func suffix(note string) string {
 		return ""
 	}
 	return ": " + note
+}
+
+// checkStep is the step a check runs as: its command, publishing nothing,
+// never in a terminal.
+func checkStep(step runbook.Step, cmd string) runbook.Step {
+	step.Run, step.Outputs, step.SecretOutputs, step.Capture, step.TTY = cmd, nil, nil, "", false
+	return step
 }

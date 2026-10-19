@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="runnr">
+<title>{{.Name}} · runnr</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1f23; --muted: #6b7079; --line: #e3e4e8;
+  --accent: #2f6fdc; --accent-soft: #e8f0fd; --code-bg: #f3f4f6; --code-ink: #1d1f23;
+  --danger: #c0352b; --danger-soft: #fdecea; --warn: #9a6200; --warn-soft: #fdf3e1;
+  --ok: #23863b; --ok-soft: #e6f4ea; --violet: #7a3fc4; --violet-soft: #f2eafc;
+  --shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15171b; --panel: #1d2026; --ink: #e4e6ea; --muted: #959ba6; --line: #2e323a;
+    --accent: #6ea2ff; --accent-soft: #1f2b40; --code-bg: #14161a; --code-ink: #dfe3ea;
+    --danger: #ff7b72; --danger-soft: #3a1f1f; --warn: #e3b341; --warn-soft: #3a2f17;
+    --ok: #6fd18a; --ok-soft: #1c3324; --violet: #c49cff; --violet-soft: #2b2140;
+    --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-padding-top: 64px; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+main { max-width: 980px; margin: 0 auto; padding: 0 20px 64px; }
+code, pre { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+:not(pre) > code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+a { color: var(--accent); }
+h1 { font-size: 28px; margin: 28px 0 6px; letter-spacing: -.01em; }
+.prose { white-space: pre-line; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+
+/* Toolbar */
+.bar { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
+.bar-in { max-width: 980px; margin: 0 auto; padding: 10px 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.bar .title { font-weight: 600; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+button { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--panel); }
+.seg button { border: 0; border-radius: 0; background: transparent; padding: 4px 10px; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #fff; }
+.seg-label { font-size: 13px; color: var(--muted); }
+
+/* Overview */
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 14px 0; font-size: 14px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
+.overview { padding: 4px 18px 14px; margin: 16px 0 22px; }
+.expect { border-left: 3px solid var(--ok); padding: 2px 0 2px 10px; margin: 10px 0; }
+.expect b { color: var(--ok); }
+table.inputs { border-collapse: collapse; width: 100%; font-size: 14px; }
+table.inputs th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+table.inputs td { padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.inputs tr:last-child td { border-bottom: 0; }
+h2.sub { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 18px 0 6px; font-weight: 600; }
+
+/* Sections and steps */
+details > summary { list-style: none; cursor: pointer; }
+details > summary::-webkit-details-marker { display: none; }
+.chev { display: inline-block; width: 14px; color: var(--muted); transition: transform .15s; flex: none; }
+details[open] > summary .chev { transform: rotate(90deg); }
+.section { margin: 18px 0; }
+.section > summary { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; }
+.section > summary h2 { font-size: 20px; margin: 0; }
+.section > summary .sec-desc { color: var(--muted); font-size: 14px; }
+.section-body { padding-left: 22px; }
+.section-body > .prose { color: var(--muted); margin: 0 0 8px; }
+.step { margin: 8px 0; }
+.step > summary { display: flex; align-items: center; gap: 8px; padding: 10px 14px; flex-wrap: wrap; }
+.step > summary:hover { background: color-mix(in srgb, var(--accent-soft) 45%, transparent); border-radius: 10px; }
+.step .num { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 1.6em; text-align: right; }
+.step .name { font-weight: 600; }
+.badges { display: inline-flex; gap: 5px; flex-wrap: wrap; }
+.badge { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: var(--code-bg); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; }
+.badge.kind { color: var(--ink); }
+.badge.setup { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.badge.danger { background: var(--danger-soft); color: var(--danger); border-color: transparent; font-weight: 600; }
+.badge.confirm { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.badge.window { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
+.badge.time { background: var(--violet-soft); color: var(--violet); border-color: transparent; font-variant-numeric: tabular-nums; }
+.step-body { padding: 0 16px 14px 46px; }
+.step-body > .prose { margin: 0 0 10px; }
+.meta { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; font-size: 13.5px; margin: 0 0 12px; }
+.meta dt { color: var(--muted); }
+.meta dd { margin: 0; overflow-wrap: anywhere; }
+.step.is-danger { border-color: color-mix(in srgb, var(--danger) 40%, var(--line)); }
+
+/* Code */
+.codehead { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; }
+.codehead .lbl { font-size: 12px; color: var(--muted); }
+.codehead .seg { margin-left: auto; }
+.code { position: relative; margin: 6px 0; }
+.code .file { font-size: 12px; color: var(--muted); font-family: "SF Mono", ui-monospace, Menlo, monospace; margin: 8px 0 3px; }
+pre { margin: 0; background: var(--code-bg); color: var(--code-ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; line-height: 1.5; }
+.code .copy { position: absolute; top: 6px; right: 6px; font-size: 11.5px; padding: 2px 8px; opacity: 0; transition: opacity .15s; }
+.code:hover .copy, .code .copy:focus { opacity: 1; }
+.inv-head { font-size: 13px; margin: 2px 0 6px; }
+.inv-env { font-size: 13px; margin: 4px 0 8px; }
+.inv-env summary { color: var(--muted); }
+.inv-env .vars { margin: 6px 0 0 14px; overflow-wrap: anywhere; }
+.manual { border-left: 3px solid var(--warn); background: var(--warn-soft); padding: 8px 12px; border-radius: 0 8px 8px 0; white-space: pre-line; }
+.check-name { font-weight: 600; font-size: 14px; margin: 12px 0 2px; }
+.check-name::before { content: "✓ "; color: var(--ok); }
+.note { font-size: 13px; color: var(--muted); margin: 6px 0; }
+
+/* Mode: as written / as runnr runs it */
+.step[data-mode="written"] .as-run { display: none; }
+.step[data-mode="run"] .as-written { display: none; }
+
+/* Ways as tabs */
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 6px 0 8px; flex-wrap: wrap; }
+.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px; color: var(--muted); }
+.tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs .pref { color: var(--ok); font-size: 11.5px; font-weight: 500; margin-left: 4px; }
+.tabpanel:not(.on) { display: none; }
+
+/* Functions */
+.lib { padding: 4px 18px 14px; margin: 10px 0; }
+.lib h3 { margin: 12px 0 2px; font-size: 16px; }
+footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: center; }
+
+@media (max-width: 640px) {
+  main { padding: 0 14px 48px; }
+  .bar .title { display: none; }
+  .step-body { padding: 0 12px 12px 14px; }
+  .section-body { padding-left: 4px; }
+  .facts, .meta { grid-template-columns: 1fr; }
+  .facts dt, .meta dt { margin-top: 6px; }
+}
+@media print {
+  .bar, .copy, .codehead .seg { display: none; }
+  body { background: #fff; }
+  .card { box-shadow: none; }
+}
+</style>
+</head>
+<body>
+<div class="bar"><div class="bar-in">
+  <span class="title">{{.Name}}</span>
+  <button type="button" data-all="open">Expand all</button>
+  <button type="button" data-all="close">Collapse all</button>
+  <span class="seg-label">Code:</span>
+  <span class="seg" role="group" aria-label="How to show code">
+    <button type="button" data-mode-all="written" class="on" title="The step's code as written in the runbook, with its templates">As written</button>
+    <button type="button" data-mode-all="run" title="Exactly what runnr hands the shell: templates filled in, the files it sources, and how it captures published values">As runnr runs it</button>
+  </span>
+</div></div>
+<main>
+<h1>{{.Name}}</h1>
+{{with .Description}}<div class="prose">{{.}}</div>{{end}}
+
+<section class="card overview">
+  {{with .Expect}}<div class="expect"><b>By the end:</b> <span class="prose">{{.}}</span></div>{{end}}
+  <dl class="facts">
+    <dt>Steps</dt><dd>{{.Steps}}</dd>
+    {{range .Facts}}<dt>{{.K}}</dt><dd>{{.V}}</dd>{{end}}
+  </dl>
+  {{if .Inputs}}
+  <h2 class="sub">Inputs</h2>
+  <table class="inputs">
+    <tr><th>Name</th><th>Value used here</th><th>What it's for</th></tr>
+    {{range .Inputs}}<tr>
+      <td><code>{{.Name}}</code>{{if .Secret}} <span class="badge">secret</span>{{end}}</td>
+      <td>{{if .Value}}<code>{{.Value}}</code> <span class="muted small">{{.Source}}</span>{{else}}<span class="muted small">{{.Source}}</span>{{end}}</td>
+      <td class="muted">{{.Description}}</td>
+    </tr>{{end}}
+  </table>
+  {{end}}
+</section>
+
+{{range .Sections}}
+{{if .Name}}<details class="section" id="{{.Anchor}}" open>
+  <summary><span class="chev">▸</span><h2>{{.Name}}</h2>{{with .Offset}}<span class="badge time" title="Planned start, relative to the maintenance window opening">{{.}}</span>{{end}}</summary>
+  <div class="section-body">
+  {{with .Description}}<div class="prose">{{.}}</div>{{end}}
+  {{with .Expect}}<div class="expect"><b>By the end:</b> <span class="prose">{{.}}</span></div>{{end}}
+{{else}}<div class="section">
+  <div>
+{{end}}
+  {{range .Steps}}
+  <details class="step card{{range .Badges}}{{if eq .Class "danger"}} is-danger{{end}}{{end}}" id="{{.Anchor}}" data-mode="written">
+    <summary><span class="chev">▸</span><span class="num">{{.N}}</span><span class="name">{{.Name}}</span>
+      <span class="badges">{{range .Badges}}<span class="badge {{.Class}}"{{with .Title}} title="{{.}}"{{end}}>{{.Text}}</span>{{end}}</span></summary>
+    <div class="step-body">
+      {{with .Description}}<div class="prose">{{.}}</div>{{end}}
+      {{if .Meta}}<dl class="meta">{{range .Meta}}<dt>{{.K}}</dt><dd>{{.V}}</dd>{{end}}</dl>{{end}}
+      {{$step := .}}
+      <div class="codehead"><span class="lbl">{{if gt (len .Ways) 1}}Ways to do it{{if .Choose}} · runnr asks which{{else}} · runnr uses the preferred one, others after a failure{{end}}{{end}}</span>
+        <span class="seg" role="group" aria-label="How to show this step's code">
+          <button type="button" data-mode="written" class="on">As written</button><button type="button" data-mode="run">As runnr runs it</button>
+        </span></div>
+      {{if gt (len .Ways) 1}}<div class="tabs" role="tablist">{{range $j, $w := .Ways}}<button type="button" role="tab" data-tab="{{$j}}"{{if $w.Preferred}} class="on"{{end}}>{{$w.Name}}{{if $w.Preferred}}<span class="pref">preferred</span>{{end}}</button>{{end}}</div>{{end}}
+      {{range $j, $w := .Ways}}
+      <div class="tabpanel{{if or $w.Preferred (eq (len $step.Ways) 1)}} on{{end}}" data-tab="{{$j}}">
+        {{if eq $w.Kind "manual"}}
+          <div class="as-written"><div class="manual">{{$w.Manual}}</div></div>
+          <div class="as-run"><div class="manual">{{$w.ManualRendered}}</div>
+            <p class="note">Nothing runs: runnr shows these instructions and waits for you to mark the step done, skipped or failed.</p></div>
+        {{else if eq $w.Kind "checks"}}
+          {{range $w.Checks}}
+          <div class="check-name">{{.Name}}</div>
+          <div class="as-written"><div class="code"><pre><code>{{.Written}}</code></pre></div></div>
+          <div class="as-run">{{template "inv" .Run}}</div>
+          {{end}}
+          <p class="note">Each check passes when its command exits 0.</p>
+        {{else}}
+          <div class="as-written"><div class="code"><pre><code>{{$w.Written}}</code></pre></div></div>
+          <div class="as-run">{{template "inv" $w.Run}}</div>
+        {{end}}
+      </div>
+      {{end}}
+      {{with .Expect}}<div class="expect"><b>Expect:</b> <span class="prose">{{.}}</span></div>{{end}}
+    </div>
+  </details>
+  {{end}}
+  </div>
+{{if .Name}}</details>{{else}}</div>{{end}}
+{{end}}
+
+{{if .Libraries}}
+<h2 class="sub" id="functions">Functions every step can call</h2>
+{{range .Libraries}}
+<details class="card lib">
+  <summary><h3><span class="chev">▸</span> {{.Name}}</h3><span class="muted small">{{join .Functions ", "}}{{with .Description}} — {{.}}{{end}}</span></summary>
+  <div class="code"><pre><code>{{.Code}}</code></pre></div>
+</details>
+{{end}}
+{{end}}
+
+<footer>Made by runnr · {{.Generated}} · “As runnr runs it” shows what each step's shell is given; values that steps publish while running show as &lt;name&gt;, and the paths of runnr's temporary files as XXXXXX.</footer>
+</main>
+
+{{define "inv"}}
+<div class="inv-head">runnr runs <code>{{.Shell}} -c "$script"</code>{{with .Dir}} in <code>{{.}}</code>{{end}}{{with .Timeout}} · timeout {{.}}{{end}}{{if .TTY}} · in a terminal you're connected to{{end}}</div>
+<details class="inv-env"><summary>Environment runnr adds ({{len .Values}} values, {{len .Env}} more)</summary>
+  <div class="vars">Inputs and values published by earlier steps: {{range $i, $v := .Values}}{{if $i}}, {{end}}<code>${{$v}}</code>{{end}}</div>
+  <div class="vars">{{range $i, $v := .Env}}{{if $i}}, {{end}}<code>{{$v}}</code>{{end}}</div>
+</details>
+<div class="code"><div class="file">$script{{if .StepFile}} · loads the <a href="#functions">functions</a> (and any profile files) first, then the step's file{{end}}</div><pre><code>{{.Script}}</code></pre></div>
+{{with .StepFile}}<div class="code"><div class="file" title="The step is read from a file so it's parsed after the functions are defined">/tmp/runnr-step-XXXXXX/step.sh</div><pre><code>{{.}}</code></pre></div>{{end}}
+{{end}}
+
+<script>
+(() => {
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  // Expand / collapse everything.
+  $$("[data-all]").forEach((b) => b.onclick = () => {
+    const open = b.dataset.all === "open";
+    $$("details.section, details.step, details.lib").forEach((d) => d.open = open);
+  });
+  // How a step shows its code: per step, or all at once.
+  const setMode = (step, mode) => {
+    step.dataset.mode = mode;
+    $$(".codehead [data-mode]", step).forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+  };
+  $$("[data-mode-all]").forEach((b) => b.onclick = () => {
+    $$("[data-mode-all]").forEach((x) => x.classList.toggle("on", x === b));
+    $$("details.step").forEach((s) => setMode(s, b.dataset.modeAll));
+  });
+  $$(".codehead [data-mode]").forEach((b) => b.onclick = () => setMode(b.closest(".step"), b.dataset.mode));
+  // Ways as tabs.
+  $$(".tabs [data-tab]").forEach((b) => b.onclick = () => {
+    const body = b.closest(".step-body");
+    $$(".tabs [data-tab]", body).forEach((x) => x.classList.toggle("on", x === b));
+    $$(".tabpanel", body).forEach((p) => p.classList.toggle("on", p.dataset.tab === b.dataset.tab));
+  });
+  // Copy buttons on code.
+  $$(".code").forEach((c) => {
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "copy"; btn.textContent = "Copy";
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(c.querySelector("pre").innerText); btn.textContent = "Copied"; }
+      catch { btn.textContent = "Select and copy"; }
+      setTimeout(() => btn.textContent = "Copy", 1400);
+    };
+    c.append(btn);
+  });
+  // A link to a step opens it (and its section).
+  const reveal = () => {
+    const el = location.hash && document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    for (let d = el; d; d = d.parentElement) if (d.tagName === "DETAILS") d.open = true;
+    el && el.scrollIntoView();
+  };
+  addEventListener("hashchange", reveal); reveal();
+  // Print everything.
+  addEventListener("beforeprint", () => $$("details").forEach((d) => d.open = true));
+})();
+</script>
+</body>
+</html>

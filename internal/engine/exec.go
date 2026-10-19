@@ -225,20 +225,26 @@ func (x *executor) withPrelude(command, tmp string) (string, error) {
 	if err := os.WriteFile(script, []byte(command), 0o600); err != nil {
 		return "", err
 	}
-	var b strings.Builder
 	home, _ := os.UserHomeDir()
-	for _, f := range x.rb.Profile {
+	return prelude(x.rb.Profile, home, x.funcFile, script, shQuote), nil
+}
+
+// prelude is the script that sources the profile files (~/ meaning home)
+// and the functions file, then the step's file. quote quotes each path.
+func prelude(profile []string, home, funcFile, stepFile string, quote func(string) string) string {
+	var b strings.Builder
+	for _, f := range profile {
 		if rest, ok := strings.CutPrefix(f, "~/"); ok {
 			f = filepath.Join(home, rest)
 		}
 		// Quiet: shell configs often print things meant for interactive use.
-		fmt.Fprintf(&b, "[ -r %[1]s ] && . %[1]s >/dev/null 2>&1\n", shQuote(f))
+		fmt.Fprintf(&b, "[ -r %[1]s ] && . %[1]s >/dev/null 2>&1\n", quote(f))
 	}
-	if x.funcFile != "" {
-		fmt.Fprintf(&b, ". %s\n", shQuote(x.funcFile))
+	if funcFile != "" {
+		fmt.Fprintf(&b, ". %s\n", quote(funcFile))
 	}
-	fmt.Fprintf(&b, ". %s\n", shQuote(script))
-	return b.String(), nil
+	fmt.Fprintf(&b, ". %s\n", quote(stepFile))
+	return b.String()
 }
 
 // withOutputs makes the shell write the step's declared outputs to
@@ -249,9 +255,12 @@ func withOutputs(step runbook.Step, command string) string {
 	}
 	var b strings.Builder
 	b.WriteString("__runnr_outputs() {\n")
-	for file, names := range map[string][]string{"RUNNR_OUTPUT": step.Outputs, "RUNNR_SECRET": step.SecretOutputs} {
-		for _, n := range names {
-			fmt.Fprintf(&b, "  [ -n \"${%[1]s+x}\" ] && printf '%%s=%%s\\n' %[1]s \"$%[1]s\" >> \"$%[2]s\"\n", n, file)
+	for _, o := range []struct {
+		file  string
+		names []string
+	}{{"RUNNR_OUTPUT", step.Outputs}, {"RUNNR_SECRET", step.SecretOutputs}} {
+		for _, n := range o.names {
+			fmt.Fprintf(&b, "  [ -n \"${%[1]s+x}\" ] && printf '%%s=%%s\\n' %[1]s \"$%[1]s\" >> \"$%[2]s\"\n", n, o.file)
 		}
 	}
 	b.WriteString("  return 0\n}\ntrap __runnr_outputs EXIT\n")

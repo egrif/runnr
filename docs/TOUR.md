@@ -6,6 +6,7 @@ Screenshots of the web GUI (`runnr serve`), using a demo runbook that moves an
 
 - [Runbooks](#runbooks)
 - [Running](#running)
+- [HTML view](#html-view)
 - [Editing](#editing)
 - [Schedule](#schedule)
 - [Function libraries](#function-libraries)
@@ -38,6 +39,16 @@ Background steps (here, a status board) keep running in their own terminal tab
 while the run goes on; terminal steps run in the browser too.
 
 ![A background step's terminal](screenshots/running-terminal.png)
+
+## HTML view
+
+**View as HTML** on the run page (or `runnr export <runbook> -o page.html`)
+makes one self-contained page to read or share. Sections and steps expand
+and collapse, ways are tabs, and each step's code can be shown as written
+or exactly as runnr runs it: templates filled in with the inputs, the
+files sourced first, and the trap that publishes its outputs.
+
+![A runbook as an HTML page, with a step shown as runnr runs it](screenshots/html-view.png)
 
 ## Editing
 

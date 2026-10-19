@@ -112,5 +112,7 @@ time.
 - `runnr explain <runbook> [step]` asks a model what a step does, what it
   relies on, and its risks. See "Ask Claude" in the README for setup.
 - `runnr export <runbook>` writes the runbook as Markdown to follow by hand,
-  with copy/paste-safe shell blocks.
+  with copy/paste-safe shell blocks. `-o page.html` writes a page to read
+  instead: steps that expand, ways as tabs, and code as written or exactly
+  as runnr runs it ([screenshot](TOUR.md#html-view)).
 - `runnr serve --open` starts the GUI.
