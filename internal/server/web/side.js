@@ -1,18 +1,23 @@
 "use strict";
 
 // The right-hand side of a step, on the launch screen and the run page:
-// History (what it did in an earlier run; last time by default, any earlier
-// run selectable) or Details (how it's configured).
+// on the run page, This run (what it's doing now); History (what it did in
+// an earlier run; last time by default, any earlier run selectable); or
+// Details (how it's configured).
 
 const side = { tab: new Map(), pick: new Map(), runs: new Map() };
 
 // resetSide forgets per-page choices (called when the page changes).
 function resetSide() { side.pick.clear(); }
 
-function sidePanel(key, i, cfg, history, defaultRun) {
-  const tab = side.tab.get(key) || "history";
-  const tabs = `<div class="side-tabs">${[["history", "History"], ["details", "Details"]].map(([t, l]) =>
+// current, on the run page, is {label, html}: the run's own tab, shown first.
+function sidePanel(key, i, cfg, history, defaultRun, current) {
+  const names = [["history", "History"], ["details", "Details"]];
+  if (current) names.unshift(["run", current.label]);
+  const tab = side.tab.get(key) || names[0][0];
+  const tabs = `<div class="side-tabs">${names.map(([t, l]) =>
     `<button type="button" class="${tab === t ? "on" : ""}" data-side-tab="${t}" data-key="${esc(key)}">${l}</button>`).join("")}</div>`;
+  if (tab === "run" && current) return `<div class="side">${tabs}${current.html}</div>`;
   if (tab === "details") return `<div class="side">${tabs}${stepConfig(cfg)}</div>`;
 
   const runs = [...history];

@@ -405,6 +405,12 @@ type executor struct {
 	cur        int
 	edits      []StepEdit
 	editsSaved int
+	// reopenTo is the step asked to re-open; pauseAt the re-opened step
+	// that pauses before running (-1: none).
+	reopenTo, pauseAt int
+	// windowOpenedBy is the step that opened the maintenance window in
+	// this run (-1: none, or it was open already when resuming).
+	windowOpenedBy int
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -421,7 +427,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	own := *rb
 	own.Steps = slices.Clone(rb.Steps)
 	rb = &own
-	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
+	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending})
@@ -585,7 +591,7 @@ func (x *executor) resolveInputs(ctx context.Context) error {
 }
 
 func (x *executor) steps(ctx context.Context) error {
-	for i := range x.rb.Steps {
+	for i := 0; i < len(x.rb.Steps); i++ {
 		x.em.Lock()
 		x.cur = i
 		x.em.Unlock()
@@ -609,6 +615,11 @@ func (x *executor) steps(ctx context.Context) error {
 			continue
 		}
 		if err := x.step(ctx, i, step); err != nil {
+			if j := x.takeReopen(); errors.Is(err, ErrReopen) && j >= 0 && j < i {
+				x.reopen(i, j)
+				i = j - 1
+				continue
+			}
 			return err
 		}
 		x.tendBackground(i, false)
@@ -699,8 +710,8 @@ func (x *executor) apply(step runbook.Step, out cmdResult) {
 }
 
 func (x *executor) fail(i int, err error) error {
-	if errors.Is(err, ErrStepEdited) {
-		return err // step() starts it again
+	if errors.Is(err, ErrStepEdited) || errors.Is(err, ErrReopen) {
+		return err // step() starts it again, or steps() goes back
 	}
 	res := &x.run.Steps[i]
 	res.Status = StatusFailed

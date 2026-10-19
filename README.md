@@ -181,10 +181,16 @@ it aborted now**).
   will do** (rendered with your inputs, and the earlier run's state on
   resume) next to **what it did last time**.
 - **While a run is live**, upcoming steps can still be skipped or paused, and
-  step-through switched on or off. Open any step for its output, what it will
-  do, or last time's result. Prompts (confirm, manual, failure, pause before
-  and after) are answered in the browser; notes and the run's state are there
-  too.
+  step-through switched on or off. Open any step: what it does is on the
+  left, and on the right **This run** (its output as it arrives, checks,
+  errors) is tabbed with **History** (what it did in earlier runs) and
+  **Details** (how it's set up). Prompts (confirm, manual, failure, pause
+  before and after) are answered in the browser; notes and the run's state
+  are there too. While the run waits for you, the last step that succeeded
+  can be **↺ re-opened**: the run goes back to it, it waits for you before
+  running again (run, skip, edit or open a shell), and the run carries on
+  from there. Only that step: earlier ones would mean undoing more than one
+  step's work.
 - **Editing**: YAML with live validation, or a **structured view** (switch
   any time). Each step opens as **details | command | run**: the common
   details (what we're doing, by the end, section, owner, confirm) with an

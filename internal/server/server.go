@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
 	mux.HandleFunc("GET /api/runs/{id}/steps/{n}", s.getRunStep)
 	mux.HandleFunc("PUT /api/runs/{id}/steps/{n}", s.editRunStep)
+	mux.HandleFunc("POST /api/runs/{id}/steps/{n}/reopen", s.reopenRunStep)
 	mux.HandleFunc("POST /api/runs/{id}/save-edits", s.saveRunEdits)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
@@ -917,6 +918,37 @@ func (s *Server) getRunStep(w http.ResponseWriter, r *http.Request) {
 
 // editRunStep replaces a step of a live run (body: the step as YAML). The
 // current step, if it's waiting on a question, starts again with it.
+// reopenRunStep goes back to step n, the last one that succeeded, while the
+// run waits on the operator at the next one: n pauses before running again.
+func (s *Server) reopenRunStep(w http.ResponseWriter, r *http.Request) {
+	i, err := stepNumber(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	l := s.getLive(r.PathValue("id"))
+	if l == nil || l.session == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	ro, ok := l.session.(engine.Reopener)
+	ed, _ := l.session.(engine.Editor)
+	if !ok || ed == nil {
+		writeErr(w, errors.New("this run can't go back"))
+		return
+	}
+	if !l.waitingOn(ed.Current()) {
+		writeErr(w, errors.New("the run isn't waiting for you right now; re-open a step while it waits before the next one"))
+		return
+	}
+	if err := ro.Reopen(i); err != nil {
+		writeErr(w, err)
+		return
+	}
+	l.withdraw(ed.Current(), answerReopen)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) editRunStep(w http.ResponseWriter, r *http.Request) {
 	i, err := stepNumber(r)
 	if err != nil {

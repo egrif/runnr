@@ -299,8 +299,8 @@ function applyEvent(state, e) {
       }
       break;
     case "step_started":
-      Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes });
-      state.steps[e.step].log = [];
+      // Replaced, not merged: a step run again (re-opened, edited) starts afresh.
+      state.steps[e.step] = { ...e.result, notes: state.steps[e.step].notes, log: [] };
       state.current = e.step;
       state.open.add(e.step);
       break;
@@ -334,7 +334,9 @@ function applyEvent(state, e) {
       state.run.window = e.run.window;
       break;
     case "step_progress":
-      Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes, log: state.steps[e.step].log });
+      // A re-opened step (and the one after it) starts afresh.
+      if (e.result.status === "pending") state.steps[e.step] = { ...e.result, notes: state.steps[e.step].notes, log: [] };
+      else Object.assign(state.steps[e.step], { ...e.result, notes: state.steps[e.step].notes, log: state.steps[e.step].log });
       break;
   }
 }
@@ -383,6 +385,7 @@ function renderRun(state) {
           <span class="meta">${[s.way && `way: ${s.way}`, s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}${stepTiming(state, i)}</span>
           ${state.preview?.[i]?.confirm ? `<span class="badge-k warn" title="Asks before running">confirms on its own</span>` : ""}
           ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<span class="last s-${esc(state.prev.steps[i].status)}" title="Last time: ${esc(state.prev.steps[i].status)}">${ICONS[state.prev.steps[i].status]}</span>` : ""}
+          ${live && state.question?.reopenable === i + 1 ? `<button class="pill" data-reopen="${i}" title="Go back to this step: it waits for you before running again, then the run carries on from there">↺ re-open</button>` : ""}
           ${live && editable(state, i) ? `<button class="pill" data-edit-step="${i}" title="Change this step for this run${state.question?.step === i ? " and run it again" : ""}">✎ edit</button>` : ""}
           ${live && s.status === "pending" && state.controls ? `
             <button class="pill ${has(ctl.skip, i) ? "on" : ""}" data-ctl="skip" data-i="${i}" title="Leave this step out">skip</button>
@@ -396,13 +399,9 @@ function renderRun(state) {
           ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i], state.fns)}` : `
             ${state.preview?.[i]?.description || fnIcon(stepCode(state.cfg?.[i]) || s.command, state.fns) ? `<div class="doing">${esc(state.preview?.[i]?.description || "")}${fnIcon(stepCode(state.cfg?.[i]) || s.command, state.fns)}</div>` : ""}
             ${state.preview?.[i]?.expect ? `<div class="expect"><b>Expect:</b> ${esc(state.preview[i].expect)}</div>` : ""}
-            ${s.command || state.preview?.[i]?.command ? `<pre class="cmd">${esc(s.command || state.preview[i].command)}</pre>` : ""}
-            ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : ""}
-            ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}`}
-          ${renderChecks(s.checks)}${renderSub(s)}
-          ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
+            ${s.command || state.preview?.[i]?.command ? `<pre class="cmd">${esc(s.command || state.preview[i].command)}</pre>` : ""}`}
           <button class="link" data-note="${i + 1}">✎ Add note</button> ${explainBtn(i + 1)}</div>
-          <div>${sidePanel(`run:${i}`, i, state.cfg?.[i], state.history || [], state.prev)}</div>
+          <div>${sidePanel(`run:${i}`, i, state.cfg?.[i], state.history || [], state.prev, { label: "This run", html: thisRun(s, i) })}</div>
         </div>` : ""}
       </li>`).join("")}
     </ol>`;
@@ -435,6 +434,15 @@ function renderRun(state) {
   }));
   main.querySelectorAll("[data-show-bg]").forEach((b) => (b.onclick = () => showTerm(b.dataset.showBg)));
   main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
+  main.querySelectorAll("[data-reopen]").forEach((b) => (b.onclick = async (ev) => {
+    ev.stopPropagation();
+    b.disabled = true;
+    try {
+      await api("POST", `/api/runs/${enc(run.id)}/steps/${+b.dataset.reopen + 1}/reopen`);
+      side.tab.set(`run:${b.dataset.reopen}`, "run");
+      toast(`Step ${+b.dataset.reopen + 1} re-opened: it waits for you before running again`);
+    } catch (e) { b.disabled = false; toast(e.message); }
+  }));
   main.querySelectorAll("[data-edit-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); editRunStep(state, +b.dataset.editStep); }));
   $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
   $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
@@ -590,6 +598,18 @@ function abortRun(state) {
   };
   dlg.showModal();
   (saved ? f("reason") : f("by")).focus();
+}
+
+// thisRun is what step i has done in this run: its output as it arrives,
+// errors, checks and shell sessions (the "This run" tab).
+function thisRun(s, i) {
+  if (s.status === "pending" && !s.log.length) return `<p class="muted">Not reached yet in this run.</p>`;
+  const meta = [s.way && `way: ${s.way}`, s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean);
+  return `<p><span class="s-${esc(s.status)}">${ICONS[s.status] || ""} ${esc(s.status)}</span>${meta.length ? ` <span class="muted">${meta.map(esc).join(" · ")}</span>` : ""}</p>
+    ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : s.status === "running" ? `<p class="muted">No output yet.</p>` : ""}
+    ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}
+    ${renderChecks(s.checks)}${renderSub(s)}
+    ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}`;
 }
 
 async function saveRunEdits(state) {

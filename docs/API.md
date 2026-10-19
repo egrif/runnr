@@ -126,6 +126,7 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | GET | `/api/runs/{id}` | | `{run, live}` |
 | GET | `/api/runs/{id}/events` | | Server-Sent Events (live runs only) |
 | POST | `/api/runs/{id}/answer` | `{question_id, value, note?}` | `204` |
+| POST | `/api/runs/{id}/steps/{n}/reopen` | | `204`: goes back to step `n`, the last that succeeded, while the run waits on a question at the next one (questions carry `reopenable`, the step that can be); `n` waits before running again |
 | POST | `/api/runs/{id}/cancel` | `{author?, reason?, force?}` | `{aborted, message}`: aborts it. A run this server runs stops now; one running elsewhere is asked to stop (waits up to 8s); one whose process is gone, or with `force`, is marked aborted |
 | POST | `/api/runs/{id}/resume` | start request (no `runbook`/`from`) | like `POST /api/runs` |
 | POST | `/api/runs/{id}/notes` | `{step, text, author?}` (`step` 1-based; `0` = the run) | `201 {time, author, text}` |

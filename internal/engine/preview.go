@@ -20,7 +20,7 @@ type Previewer struct {
 // optionally, an earlier run's state. hasFuncs says whether the run will
 // have functions to load (from its libraries or the runbook's own).
 func NewPreviewer(rb *runbook.Runbook, vars, state map[string]string, hasFuncs bool) *Previewer {
-	x := &executor{rb: rb, ui: Unattended{}, vars: map[string]string{}, secretVars: map[string]bool{}, run: &Run{}, masker: runbook.NewMasker(rb)}
+	x := &executor{rb: rb, ui: Unattended{}, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, run: &Run{}, masker: runbook.NewMasker(rb)}
 	for k, v := range state {
 		if v != "****" {
 			x.vars[k] = v

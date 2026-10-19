@@ -56,7 +56,7 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 	x.openWindow(i)
 
 	confirmed := false
-	if _, before, _ := x.ctl.Get(i); before && x.canPause() {
+	if _, before, _ := x.ctl.Get(i); (x.takePause(i) || before) && x.canPause() {
 		d, err := x.ui.(Stepper).BeforeStep(ctx, x.View(i))
 		if err != nil {
 			return x.fail(i, err)
@@ -181,6 +181,7 @@ func (x *executor) openWindow(i int) {
 		return
 	}
 	w.Opened = time.Now()
+	x.windowOpenedBy = i
 	x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "🔴 maintenance window open: production is down" + targetNote(w)})
 	x.notify(Event{Kind: EventWindow, Step: i, Run: x.snapshot()})
 }

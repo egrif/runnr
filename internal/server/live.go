@@ -25,6 +25,9 @@ type Question struct {
 	Input   *runbook.Input `json:"input,omitempty"`
 	// Confirm is what must be typed to choose "run" (danger questions).
 	Confirm string `json:"confirm,omitempty"`
+	// Reopenable is the step (1-based) that can be re-opened while this
+	// question waits: the last one that succeeded (0: none).
+	Reopenable int `json:"reopenable,omitempty"`
 }
 
 type Answer struct {
@@ -124,12 +127,31 @@ func (l *liveRun) answer(a Answer) error {
 	return nil
 }
 
-// answerEdited withdraws a question because its step was edited.
-const answerEdited = "\x00edited"
+// answerEdited withdraws a question because its step was edited;
+// answerReopen because the run goes back to an earlier step.
+const (
+	answerEdited = "\x00edited"
+	answerReopen = "\x00reopen"
+)
 
 // restartStep withdraws the questions waiting on step i, so it starts again
 // with its new definition. It reports whether there were any.
-func (l *liveRun) restartStep(i int) bool {
+func (l *liveRun) restartStep(i int) bool { return l.withdraw(i, answerEdited) }
+
+// waitingOn reports whether a question is waiting on step i.
+func (l *liveRun) waitingOn(i int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, st := range l.qstep {
+		if st == i {
+			return true
+		}
+	}
+	return false
+}
+
+// withdraw answers the questions waiting on step i with value.
+func (l *liveRun) withdraw(i int, value string) bool {
 	l.mu.Lock()
 	var ids []string
 	for id, st := range l.qstep {
@@ -139,7 +161,7 @@ func (l *liveRun) restartStep(i int) bool {
 	}
 	l.mu.Unlock()
 	for _, id := range ids {
-		_ = l.answer(Answer{QuestionID: id, Value: answerEdited})
+		_ = l.answer(Answer{QuestionID: id, Value: value})
 	}
 	return len(ids) > 0
 }
@@ -152,12 +174,18 @@ func (l *liveRun) ask(ctx context.Context, q Question) (Answer, error) {
 	l.pending[q.ID] = ch
 	l.qstep[q.ID] = q.Step
 	l.mu.Unlock()
+	if r, ok := l.session.(engine.Reopener); ok && q.Step >= 0 {
+		q.Reopenable = r.Reopenable() + 1
+	}
 	l.publish(WireEvent{Event: engine.Event{Kind: "question", Step: q.Step}, Question: &q})
 	select {
 	case a := <-ch:
 		l.publish(WireEvent{Event: engine.Event{Kind: "answered", Step: q.Step, Text: a.Value}, Answered: q.ID})
 		if a.Value == answerEdited {
 			return a, engine.ErrStepEdited
+		}
+		if a.Value == answerReopen {
+			return a, engine.ErrReopen
 		}
 		if a.Value == "abort" && q.Type != "input" {
 			return a, engine.ErrAborted
