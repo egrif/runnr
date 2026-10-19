@@ -21,7 +21,8 @@ import (
 //go:embed page.html
 var pageHTML string
 
-// markPNG is runnr's mark (the sprout), for the page's icon and header.
+// markPNG is runnr's mark (the sprout, the hub and its conduits), for the
+// page's icon and header.
 //
 //go:embed mark.png
 var markPNG []byte

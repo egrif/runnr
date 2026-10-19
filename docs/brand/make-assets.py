@@ -41,21 +41,34 @@ t.crop(box).save(f"{out}/logo.png", optimize=True)        # transparent: use thi
 im.crop(box).save(f"{out}/logo-black.png", optimize=True)  # on black
 im.save(f"{out}/logo-square-black.png", optimize=True)     # the original, square
 
-# The mark (favicon): just the sprout and the hub, no traces.
+def fade(t, frac):
+    """Fade the left and right edges out, so the conduits run on past it."""
+    w, h = t.size
+    p = t.load()
+    f = max(1, int(w * frac))
+    for y in range(h):
+        for x in range(w):
+            d = min(x, w - 1 - x)
+            if d < f:
+                r, g, b, a = p[x, y]
+                p[x, y] = (r, g, b, round(a * (d / f) ** 1.3))
+    return t
+
+
+# The mark: the sprout, the hub and the conduits leaving it sideways (the
+# bus lines and the inner nodes), fading out at the sides.
 m = Image.new("RGB", im.size)
 mp = m.load()
-for y in range(H):
-    for x in range(W):
-        sprout = 436 <= x <= 588 and 372 <= y <= 466
-        hub = (x - 512) ** 2 + (y - 512) ** 2 <= 34 ** 2
-        if sprout or hub:
-            mp[x, y] = px[x, y]
+for y in range(365, 557):
+    for x in range(352, 673):
+        mp[x, y] = px[x, y]
 mt = cutout(m)
-mb = mt.getchannel("A").point(lambda v: 255 if v > 24 else 0).getbbox()
-cx, cy = (mb[0] + mb[2]) // 2, (mb[1] + mb[3]) // 2
-half = max(mb[2] - mb[0], mb[3] - mb[1]) // 2 + 6
-sq = (cx - half, cy - half, cx + half, cy + half)
-mark = mt.crop(sq)
+bb = mt.getchannel("A").point(lambda v: 255 if v > 24 else 0).getbbox()
+wide = fade(mt.crop((bb[0] - 2, bb[1] - 2, bb[2] + 2, bb[3] + 2)), 0.16)
+wide.resize((wide.width * 160 // wide.height, 160), Image.LANCZOS).save(f"{out}/mark-wide.png", optimize=True)
+cx, cy = (bb[0] + bb[2]) // 2, (bb[1] + bb[3]) // 2
+half = max(bb[2] - bb[0], bb[3] - bb[1]) // 2 + 4
+mark = fade(mt.crop((cx - half, cy - half, cx + half, cy + half)), 0.16)
 mark.resize((256, 256), Image.LANCZOS).save(f"{out}/mark.png", optimize=True)
 for s in (16, 32, 48):
     mark.resize((s, s), Image.LANCZOS).save(f"{out}/favicon-{s}.png", optimize=True)
@@ -64,4 +77,4 @@ mark.resize((256, 256), Image.LANCZOS).save(f"{out}/favicon.ico", sizes=[(16, 16
 bg = Image.new("RGBA", (180, 180), (0, 0, 0, 255))
 bg.alpha_composite(mark.resize((140, 140), Image.LANCZOS), (20, 20))
 bg.convert("RGB").save(f"{out}/apple-touch-icon.png", optimize=True)
-print("logo", box, "mark", sq)
+print("logo", box, "mark", bb)
