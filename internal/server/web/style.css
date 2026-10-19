@@ -54,8 +54,8 @@ code, pre, textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospac
   padding: 16px; gap: 12px; overflow-y: auto;
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 24px; color: var(--text); letter-spacing: -0.02em; }
-.brand img { display: block; }
-.empty .logo { display: block; width: min(760px, 100%); height: auto; margin: 0 auto 8px; }
+.brand img { display: block; border-radius: 8px; }
+.empty .logo { display: block; width: min(760px, 100%); height: auto; margin: 0 auto 16px; border-radius: 16px; }
 .side-actions { display: flex; flex-direction: column; gap: 8px; }
 .nav-link { padding: 4px 0; }
 #filter { width: 100%; }
