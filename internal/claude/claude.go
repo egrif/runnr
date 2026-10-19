@@ -29,22 +29,9 @@ type Client struct {
 	// minutes) or "1h" (writes cost more, but reads last an hour).
 	CacheTTL string
 	HTTP     *http.Client
-	// For gateways: BearerCmd prints a short-lived token sent as
-	// "Authorization: Bearer" (run when needed, and again after a 401);
-	// Headers go on every request; Label names the provider.
-	BearerCmd string
-	Headers   map[string]string
-	Label     string
-
-	tok cmdToken
 }
 
-func (c *Client) Name() string {
-	if c.Label != "" {
-		return c.Label
-	}
-	return "anthropic"
-}
+func (c *Client) Name() string      { return "anthropic" }
 func (c *Client) ModelName() string { return c.Model }
 
 // Block is part of the system prompt. Cache marks the end of a prefix to
@@ -75,14 +62,6 @@ type Message struct {
 // Stream asks a question (after the conversation so far, if any) and calls
 // onText with the answer as it arrives.
 func (c *Client) Stream(ctx context.Context, system []Block, history []Message, question string, maxTokens int, onText func(string)) (Usage, error) {
-	u, err := c.stream(ctx, system, history, question, maxTokens, onText, false)
-	if errors.Is(err, errUnauthorized) && c.BearerCmd != "" {
-		u, err = c.stream(ctx, system, history, question, maxTokens, onText, true) // a fresh token
-	}
-	return u, err
-}
-
-func (c *Client) stream(ctx context.Context, system []Block, history []Message, question string, maxTokens int, onText func(string), renew bool) (Usage, error) {
 	var usage Usage
 	type cacheControl struct {
 		Type string `json:"type"`
@@ -122,16 +101,6 @@ func (c *Client) stream(ctx context.Context, system []Block, history []Message, 
 	req.Header.Set("x-api-key", c.Key)
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("content-type", "application/json")
-	if c.BearerCmd != "" {
-		tok, err := c.tok.get(ctx, c.BearerCmd, renew)
-		if err != nil {
-			return usage, err
-		}
-		req.Header.Set("authorization", "Bearer "+tok)
-	}
-	for k, v := range c.Headers {
-		req.Header.Set(k, v)
-	}
 	hc := c.HTTP
 	if hc == nil {
 		hc = http.DefaultClient
@@ -146,14 +115,10 @@ func (c *Client) stream(ctx context.Context, system []Block, history []Message, 
 		var e struct {
 			Error struct{ Message string } `json:"error"`
 		}
-		msg := res.Status
 		if json.Unmarshal(b, &e) == nil && e.Error.Message != "" {
-			msg = fmt.Sprintf("%s (%d)", e.Error.Message, res.StatusCode)
+			return usage, fmt.Errorf("claude: %s (%d)", e.Error.Message, res.StatusCode)
 		}
-		if res.StatusCode == http.StatusUnauthorized {
-			return usage, &unauthorized{c.Name() + ": " + msg}
-		}
-		return usage, fmt.Errorf("%s: %s", c.Name(), msg)
+		return usage, fmt.Errorf("claude: %s", res.Status)
 	}
 
 	// Server-sent events: message_start (input usage), content_block_delta
@@ -203,10 +168,3 @@ func (c *Client) stream(ctx context.Context, system []Block, history []Message, 
 	}
 	return usage, sc.Err()
 }
-
-// unauthorized is a 401 from the API: the message, and errUnauthorized so a
-// gateway token can be renewed and the request tried again.
-type unauthorized struct{ msg string }
-
-func (e *unauthorized) Error() string        { return e.msg }
-func (e *unauthorized) Is(target error) bool { return target == errUnauthorized }
