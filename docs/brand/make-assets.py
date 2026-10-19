@@ -43,15 +43,17 @@ logo = im.crop((32, 356, 992, 671))
 logo.save(f"{out}/logo-black.png", optimize=True)
 transparent(logo).save(f"{out}/logo.png", optimize=True)
 
-# The mark: the sprout and hub with the conduits leaving it.
-wide = transparent(im.crop((340, 352, 684, 572)))
-wide.resize((wide.width * 160 // wide.height, 160), Image.LANCZOS).save(f"{out}/mark-wide.png", optimize=True)
-square = im.crop((392, 350, 632, 590))
-sq = transparent(square)
+# The icon (beside the wordmark) is the logo, shrunk.
+t = transparent(logo)
+t.resize((t.width * 160 // t.height, 160), Image.LANCZOS).save(f"{out}/mark-wide.png", optimize=True)
+# The favicon: the sprout and hub with the conduits leaving it, cropped
+# square (the whole logo is too wide to read at tab size).
+sq = transparent(im.crop((392, 350, 632, 590)))
 sq.resize((256, 256), Image.LANCZOS).save(f"{out}/mark.png", optimize=True)
 for s in (16, 32, 48):
     sq.resize((s, s), Image.LANCZOS).save(f"{out}/favicon-{s}.png", optimize=True)
 sq.resize((256, 256), Image.LANCZOS).save(f"{out}/favicon.ico", sizes=[(16, 16), (32, 32), (48, 48)])
+square = im.crop((392, 350, 632, 590))
 # iOS home screen icons can't be transparent: the crop on its black.
 square.resize((180, 180), Image.LANCZOS).save(f"{out}/apple-touch-icon.png", optimize=True)
 print("ok")

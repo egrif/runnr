@@ -9,8 +9,8 @@ transparent, so they blend into light and dark backgrounds alike).
 | File | Use |
 | --- | --- |
 | `logo.png` | The whole graphic, transparent. Use this almost everywhere: banners, the home screen. |
-| `mark.png` | The sprout and hub with the conduits leaving it, transparent, square (256×256): favicons. |
-| `mark-wide.png` | The same, cropped wide, for beside the wordmark. |
+| `mark-wide.png` | The logo, shrunk (160px tall): the icon beside the wordmark. |
+| `mark.png` | The sprout and hub with the conduits leaving it, cropped square (256×256): favicons, where the whole logo is too wide to read. |
 | `logo-black.png` | `logo.png` on its original black, where a solid background is needed. |
 | `logo-square.png` | The original artwork (1024×1024, on black), e.g. for avatars and social cards. |
 
