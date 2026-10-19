@@ -62,19 +62,16 @@ func (o *OpenAI) key(ctx context.Context, renew bool) (string, error) {
 	if !renew && o.keyed != "" && time.Since(o.keyAt) < 10*time.Minute {
 		return o.keyed, nil
 	}
-	cmd := exec.CommandContext(ctx, "sh", "-c", o.KeyCmd)
-	// From the home directory: credential helpers such as sso-token-cli
-	// look for their config (.sso-token-cli) in the directory they run in,
-	// and runnr may have been started anywhere.
-	if home, err := os.UserHomeDir(); err == nil {
-		cmd.Dir = home
-	}
-	out, err := cmd.Output()
+	out, err := exec.CommandContext(ctx, "sh", "-c", o.KeyCmd).Output()
 	if err != nil {
 		msg := err.Error()
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
 			msg = strings.TrimSpace(string(ee.Stderr))
+		}
+		if strings.Contains(msg, ".sso-token-cli") && os.Getenv("SSO_TOKEN_CLI_CONFIG") == "" {
+			// It reads its config from the directory it runs in by default.
+			msg += " (set SSO_TOKEN_CLI_CONFIG to the path of your sso-token-cli config file, or start runnr in the directory that has it)"
 		}
 		return "", fmt.Errorf("getting a key (%s): %s", o.KeyCmd, msg)
 	}

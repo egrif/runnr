@@ -7,8 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -159,21 +157,5 @@ func TestGatewayKeyCommandHeadersAndCacheHints(t *testing.T) {
 	}
 	if o.Name() != "bifrost" || got["model"] != "anthropic/claude-x" {
 		t.Fatalf("%s %v", o.Name(), got["model"])
-	}
-}
-
-// The key command runs from the home directory, where helpers such as
-// sso-token-cli find their config, wherever runnr was started.
-func TestKeyCmdRunsFromHome(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	if err := os.WriteFile(filepath.Join(home, ".helper"), []byte("tok-123\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(t.TempDir())
-	o := &OpenAI{KeyCmd: "cat .helper"}
-	k, err := o.key(context.Background(), false)
-	if err != nil || k != "tok-123" {
-		t.Fatalf("key = %q, %v", k, err)
 	}
 }
