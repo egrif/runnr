@@ -55,6 +55,19 @@ Membership (these change only the `runbooks` list, keeping the rest of the YAML)
 | PUT | `/api/collections/{name}/runbooks` | `{runbooks: [...]}` | replace the list (e.g. to reorder); runbooks new to it must exist |
 | PATCH | `/api/collections/{name}` | `{name?, description?, expect?}` | change those fields in place (empty removes description/expect) |
 
+## Claude
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/claude` | | `{enabled, model?}`: whether runnr was started with `ANTHROPIC_API_KEY` |
+| POST | `/api/explain` | `{runbook \| raw, step, question?, history?}` | server-sent events: `{"text"}` pieces of the answer, then `{"usage", "model"}` or `{"error"}` |
+
+`step` is 1-based (0: the whole runbook). `raw` is runbook YAML being edited
+(it needn't be saved). `history` is the conversation so far
+(`[{role, content}]`) for follow-ups. The runbook (masked) and its library
+functions are sent as a cached system prompt; `usage` says how many input
+tokens came from the cache (`cache_read_input_tokens`) or were written to it.
+
 ## Schedules
 
 Runs planned ahead of time. Nothing starts them yet.

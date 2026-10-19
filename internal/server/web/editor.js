@@ -638,6 +638,7 @@ function stepItem(ed, d, s, i) {
       <span class="grip" draggable="true" data-grip="step" data-i="${i}" title="Drag to move the step">⠿</span>
       <span class="n">${i + 1}</span><span class="name">${esc(s.name || "(unnamed)")} ${stepBadges(s)} ${plannedBadge(d.steps, d.sections, i)}</span>${cmtBtn([s, "#"])}
       <span class="spacer"></span>
+      <button class="icon-btn claude-only" data-act="explain" data-i="${i}" title="Ask Claude about this step, as edited (the whole runbook goes along as context)">✨</button>
       <button class="icon-btn" data-act="run-this" data-i="${i}" title="Run just this step with the test values">▶ Run this</button>
       <button class="icon-btn" data-act="up" data-i="${i}" title="Move up (into the section above, from the top of a section)" ${i === 0 ? "disabled" : ""}>↑</button>
       <button class="icon-btn" data-act="down" data-i="${i}" title="Move down (into the section below, from the end of a section)" ${i === d.steps.length - 1 ? "disabled" : ""}>↓</button>
@@ -896,6 +897,9 @@ function renderStruct(ed) {
       case "stop-run": { const r = ed.runs.get(s); if (r?.id) api("POST", `/api/runs/${enc(r.id)}/cancel`).catch(() => {}); return; }
       case "close-run": ed.runs.get(s)?.es?.close(); ed.runs.delete(s); break;
       case "way-tab": ed.wayTab.set(s, j); break;
+      case "explain":
+        formatDoc(ed).then((y) => y.ok ? openExplain({ raw: y.raw }, i + 1, `${i + 1}. ${s.name} (as edited)`) : toast(y.error));
+        return;
       case "repeat-off": delete s.repeat; break;
       case "sec-toggle": toggle(ed.secOpen, b.dataset.sec); break;
       case "sec-add-step": {

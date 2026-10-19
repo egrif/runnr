@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/egrif/runnr/internal/claude"
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
@@ -37,11 +38,18 @@ type Config struct {
 	// Token, when set, is required on every API request, either as
 	// "Authorization: Bearer <token>" or via the GUI's login cookie.
 	Token string
+	// Claude answers questions about runbooks (Explain); nil turns that
+	// off. New sets it from ANTHROPIC_API_KEY unless NoClaude.
+	Claude   *claude.Client
+	NoClaude bool
 	// NoUI serves only the API.
 	NoUI bool
 }
 
 func New(st *store.Store, cfg Config) *Server {
+	if cfg.Claude == nil && !cfg.NoClaude {
+		cfg.Claude = claude.FromEnv()
+	}
 	return &Server{st: st, cfg: cfg, live: map[string]*liveRun{}}
 }
 
@@ -82,6 +90,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/collections/{name}/runbooks/{runbook}", s.removeFromCollection)
 	mux.HandleFunc("POST /api/runbooks/{name}/move", s.moveRunbook)
 	mux.HandleFunc("GET /api/runbooks/{name}/export", s.exportRunbook)
+	mux.HandleFunc("GET /api/claude", s.claudeStatus)
+	mux.HandleFunc("POST /api/explain", s.explain)
 	mux.HandleFunc("GET /api/schedules", s.listSchedules)
 	mux.HandleFunc("POST /api/schedules", s.saveSchedule)
 	mux.HandleFunc("GET /api/schedules/{id}", s.getSchedule)
@@ -1183,6 +1193,81 @@ func (s *Server) exportRunbook(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.md"`, rb.Name))
 	}
 	io.WriteString(w, md)
+}
+
+// ---------- Claude ----------
+
+func (s *Server) claudeStatus(w http.ResponseWriter, _ *http.Request) {
+	c := s.cfg.Claude
+	if c == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "model": c.Model})
+}
+
+// explain asks Claude about a runbook step: {runbook, raw?, step, question?}.
+// raw is the runbook as being edited (it needn't be saved); without it, the
+// saved runbook. The whole runbook goes as cached context, so questions
+// about its other steps soon after cost much less. The answer streams back
+// as server-sent events: {"text"}, then {"usage"} (or {"error"}).
+func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
+	c := s.cfg.Claude
+	if c == nil {
+		writeErr(w, errors.New("Claude isn't set up: start runnr with ANTHROPIC_API_KEY set"))
+		return
+	}
+	var req struct {
+		Runbook  string           `json:"runbook"`
+		Raw      string           `json:"raw"`
+		Step     int              `json:"step"`
+		Question string           `json:"question"`
+		History  []claude.Message `json:"history"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	var rb *runbook.Runbook
+	raw := []byte(req.Raw)
+	var err error
+	if len(raw) > 0 {
+		rb, err = runbook.Parse(raw)
+	} else {
+		var d *store.Doc
+		if d, err = s.st.Load(req.Runbook); err == nil {
+			rb, raw, err = d.Runbook, d.Raw, d.ParseErr
+		}
+	}
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	libs, err := s.st.Libraries(rb.Libraries)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if _, err := claude.Question(rb, req.Step, req.Question); err != nil {
+		writeErr(w, err)
+		return
+	}
+	flusher, _ := w.(http.Flusher)
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	send := func(v any) {
+		b, _ := json.Marshal(v)
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	usage, err := c.Explain(r.Context(), rb, raw, libs, req.Step, req.Question, req.History, func(t string) { send(map[string]string{"text": t}) })
+	if err != nil {
+		send(map[string]string{"error": err.Error()})
+		return
+	}
+	send(map[string]any{"usage": usage, "model": c.Model})
 }
 
 // ---------- schedules ----------

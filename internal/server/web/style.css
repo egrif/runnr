@@ -493,3 +493,20 @@ kbd { font-size: 11px; border: 1px solid var(--border); border-radius: 3px; padd
 .fn-icon { display: inline-block; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); border: 1px solid currentColor; border-radius: 8px; padding: 0 6px; margin: 0 4px; cursor: help; white-space: nowrap; vertical-align: middle; }
 #tip.code { white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; max-width: min(720px, 90vw); max-height: calc(100vh - 16px); overflow: hidden; }
 .fn-dialog pre { max-height: 70vh; overflow: auto; white-space: pre; font-size: 12px; }
+
+/* Claude: Explain */
+.explain-btn, .claude-only { display: none; }
+body.claude-on .explain-btn, body.claude-on .claude-only { display: revert; }
+body.claude-on .icon-btn.claude-only { display: inline-flex; }
+#explain-panel { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); z-index: 60; background: var(--panel); border-left: 1px solid var(--border); box-shadow: -6px 0 20px rgba(0,0,0,.12); display: flex; flex-direction: column; padding: 12px 14px; gap: 8px; }
+#explain-panel[hidden] { display: none; }
+.ex-head { gap: 8px; }
+.ex-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-body { flex: 1; overflow-y: auto; font-size: 14px; line-height: 1.5; }
+.ex-body h4 { margin: 12px 0 4px; font-size: 14px; }
+.ex-body p { margin: 4px 0; }
+.ex-body ul { margin: 4px 0; padding-left: 20px; }
+.ex-body pre.cmd { font-size: 12px; white-space: pre-wrap; }
+.ex-q { margin: 12px 0 4px; padding: 6px 10px; border-radius: 8px; background: var(--bg); font-weight: 600; }
+.ex-ask { gap: 6px; }
+.ex-ask input { flex: 1; }

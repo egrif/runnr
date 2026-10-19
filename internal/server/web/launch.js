@@ -145,6 +145,13 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
       location.hash = `#/runs/${id}`;
     } catch (e) { toast(e.message); }
   });
+  $("#launch-steps").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-explain]");
+    if (!b) return;
+    e.stopPropagation();
+    const n = +b.dataset.explain;
+    openExplain({ runbook: rb.name }, n, `${n}. ${rb.steps[n - 1].name}`);
+  }, true);
   $("#export-btn").onclick = () => {
     const q = Object.entries(vars()).filter(([, v]) => v !== "").map(([k, v]) => `v=${enc(`${k}=${v}`)}`);
     location.href = `/api/runbooks/${enc(rb.name)}/export?download=1${q.length ? "&" + q.join("&") : ""}`;
@@ -295,7 +302,7 @@ function renderLaunchSteps(st) {
           <button type="button" class="pill ${st.after.has(i) ? "on" : ""}" data-after="${i}" title="Stop after this step to check the result">⏸ after</button>
         </div>
         ${st.open.has(i) ? `<div class="step-body two-col">
-          <div><h4>Will do</h4>${stepDetails(view, st.fns)}</div>
+          <div><h4>Will do</h4>${stepDetails(view, st.fns)}${explainBtn(i + 1)}</div>
           <div>${sidePanel(`launch:${i}`, i, s, st.history, prev)}</div>
         </div>` : ""}
       </li>`;

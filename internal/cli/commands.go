@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/egrif/runnr/internal/claude"
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/server"
@@ -75,7 +76,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -791,6 +792,59 @@ would publish show as <name>.`,
 	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "fill in an input (key=value)")
 	cmd.Flags().BoolVar(&all, "all", false, "show every step in full")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
+	return cmd
+}
+
+func explainCmd(s func() *store.Store) *cobra.Command {
+	var ask string
+	cmd := &cobra.Command{
+		Use:   "explain <runbook|file> [step]",
+		Short: "Ask Claude about a step (or, without one, the whole runbook)",
+		Long: `Asks Claude what a step does, what it relies on from earlier steps (the
+setup steps especially), what to check, its risks and how to improve it;
+-q asks your own question instead. The whole runbook (credentials masked)
+and its library functions go along as context, cached for a few minutes,
+so asking about other steps of it soon after costs much less.
+
+Needs ANTHROPIC_API_KEY; RUNNR_CLAUDE_MODEL picks the model (default ` + claude.DefaultModel + `).`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c := claude.FromEnv()
+			if c == nil {
+				return errors.New("set ANTHROPIC_API_KEY to ask Claude")
+			}
+			rb, _, err := s().Resolve(args[0])
+			if err != nil {
+				return err
+			}
+			var raw []byte
+			if d, err := s().Load(args[0]); err == nil {
+				raw = d.Raw
+			} else if b, err := os.ReadFile(args[0]); err == nil {
+				raw = b
+			}
+			libs, err := s().Libraries(rb.Libraries)
+			if err != nil {
+				return err
+			}
+			step := 0
+			if len(args) == 2 {
+				i, err := rb.StepIndex(args[1])
+				if err != nil {
+					return err
+				}
+				step = i + 1
+			}
+			u, err := c.Explain(cmd.Context(), rb, raw, libs, step, ask, nil, func(t string) { fmt.Print(t) })
+			fmt.Println()
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(os.Stderr, "\n%s · %d tokens in (%d from the cache, %d cached), %d out\n", c.Model, u.Input+u.CacheRead+u.CacheWrite, u.CacheRead, u.CacheWrite, u.Output)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&ask, "question", "q", "", "your own question about the step (or runbook)")
 	return cmd
 }
 

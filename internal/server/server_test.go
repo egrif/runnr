@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"github.com/egrif/runnr/internal/claude"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -473,5 +476,40 @@ func TestSchedulesOverHTTP(t *testing.T) {
 	}
 	if r := do(t, "DELETE", ts.URL+"/api/schedules/"+sc.ID, "", nil); r.StatusCode != http.StatusNoContent {
 		t.Fatalf("delete: %d", r.StatusCode)
+	}
+}
+
+func TestExplainOverHTTP(t *testing.T) {
+	var asked map[string]any
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&asked)
+		fmt.Fprint(w, "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"cache_read_input_tokens\":2000}}}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Sets the region.\"}}\n\n")
+		fmt.Fprint(w, "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":4}}\n\n")
+	}))
+	defer api.Close()
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{Claude: &claude.Client{Key: "k", Model: "m", BaseURL: api.URL}}).Handler())
+	defer ts.Close()
+
+	if r := do(t, "GET", ts.URL+"/api/claude", "", nil); r.StatusCode != 200 {
+		t.Fatalf("status %d", r.StatusCode)
+	}
+	// An unsaved runbook from the editor.
+	body := `{"raw":"name: t\nsteps:\n  - {name: setup, always: true, run: 'region=use1', outputs: [region]}\n","step":1,"question":"why?"}`
+	r := do(t, "POST", ts.URL+"/api/explain", body, nil)
+	b, _ := io.ReadAll(r.Body)
+	out := string(b)
+	if !strings.Contains(out, `{"text":"Sets the region."}`) || !strings.Contains(out, `"cache_read_input_tokens":2000`) {
+		t.Fatalf("%s", out)
+	}
+	if q := asked["messages"].([]any)[0].(map[string]any)["content"]; q != `About step 1 ("setup"): why?` {
+		t.Fatalf("question %q", q)
+	}
+	// Without Claude set up, it says how.
+	ts2 := httptest.NewServer(New(st, Config{NoClaude: true}).Handler())
+	defer ts2.Close()
+	if r := do(t, "POST", ts2.URL+"/api/explain", body, nil); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("without a key: %d", r.StatusCode)
 	}
 }

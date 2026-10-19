@@ -47,6 +47,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr collection list/show/new/edit/import/delete` | Group runbooks that belong together, with what they're for |
 | `runnr collection add <col> <runbook>...` / `remove <col> <runbook>...` | Put runbooks in a collection (`--create` to make it) or take them out (they stay in runnr) |
 | `runnr schedule add/list/rm` | Plan runs ahead; `list` prints the agenda |
+| `runnr explain <runbook> [step] [-q question]` | Ask Claude about a step, or review the whole runbook (needs `ANTHROPIC_API_KEY`) |
 | `runnr export <runbook> [-v k=v] [-o file]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
@@ -360,6 +361,20 @@ due" date on the schedule.
 (sections, steps, the notification) that land on a weekend move back to the
 Friday before, same time; only the window, and what happens during it,
 falls on a weekend.
+
+**Ask Claude.** With `ANTHROPIC_API_KEY` set when runnr starts, every step
+gets **✨ Explain** (run, launch and editor pages; the editor asks about the
+step as edited, unsaved) and each runbook a **✨ Review**: what the step does,
+what it relies on from earlier steps (the setup steps especially), what to
+check, its risks, and suggested changes; ask follow-ups in the panel. The
+CLI is `runnr explain <runbook> [step] [-q question]`. The whole runbook
+(credentials masked by its sensitive patterns) and its library functions go
+along as context, marked for prompt caching: the first question writes it
+to Anthropic's cache, and questions about any step of that runbook in the
+next few minutes read it back at about a tenth of the price (the panel
+shows how much came from the cache). `RUNNR_CLAUDE_MODEL` picks the model
+(default `claude-sonnet-5-5`; `claude-opus-5-5` for deeper reviews).
+Step code and descriptions are sent to Anthropic's API.
 
 **Export.** `runnr export` (or **Export as Markdown**) writes a runbook as
 a document to follow by hand, like a wiki runbook: a collapsed overview,

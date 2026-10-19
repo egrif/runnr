@@ -179,6 +179,7 @@ async function viewRunbook(name, tab, query) {
       ${rb?.description ? `<div class="rb-desc">${esc(rb.description)}</div>` : ""}
       ${rb?.expect ? `<div class="rb-desc muted"><b>By the end:</b> ${esc(rb.expect)}</div>` : ""}
       ${rb ? membership(name) : ""}
+      ${rb ? `<div class="claude-only">${explainBtn(0, "✨ Review this runbook with Claude")}</div>` : ""}
       <div>${(rb?.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>
     </div></div>
     <nav class="tabs">
@@ -188,6 +189,7 @@ async function viewRunbook(name, tab, query) {
     </nav>
     <section id="tab"></section>`;
   bindMembership(main, name, () => route());
+  main.querySelector('.claude-only [data-explain="0"]')?.addEventListener("click", () => openExplain({ runbook: name }, 0, `Review: ${name}`));
   if (tab === "edit" || !rb) return renderEditor($("#tab"), data.raw, name, data.error, data.version, data.updated_at);
   const mode = query.get("resume") ? "resume" : query.get("rerun") ? "rerun" : "run";
   await viewLaunch($("#tab"), name, mode, query.get("resume") || query.get("rerun") || "", query.get("schedule") || "");
@@ -399,7 +401,7 @@ function renderRun(state) {
             ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}`}
           ${renderChecks(s.checks)}${renderSub(s)}
           ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
-          <button class="link" data-note="${i + 1}">✎ Add note</button></div>
+          <button class="link" data-note="${i + 1}">✎ Add note</button> ${explainBtn(i + 1)}</div>
           <div>${sidePanel(`run:${i}`, i, state.cfg?.[i], state.history || [], state.prev)}</div>
         </div>` : ""}
       </li>`).join("")}
@@ -426,6 +428,11 @@ function renderRun(state) {
   }));
   $("#step-all") && ($("#step-all").onchange = (e) => setControls(run.id, { ...ctl, step_mode: e.target.checked }, state));
   bindSide(main, () => renderRun(state));
+  main.querySelectorAll("[data-explain]").forEach((b) => (b.onclick = (ev) => {
+    ev.stopPropagation();
+    const n = +b.dataset.explain;
+    openExplain({ runbook: run.runbook }, n, n ? `${n}. ${state.steps[n - 1].name}` : run.runbook);
+  }));
   main.querySelectorAll("[data-show-bg]").forEach((b) => (b.onclick = () => showTerm(b.dataset.showBg)));
   main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
   main.querySelectorAll("[data-edit-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); editRunStep(state, +b.dataset.editStep); }));
