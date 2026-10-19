@@ -37,7 +37,8 @@ type Cache interface {
 //	           RUNNR_AI_VIRTUAL_KEY (x-bf-vk), RUNNR_AI_BIFROST_ENV (dev,
 //	           staging, prod, prod-eu, prod-apac; default dev), the key from
 //	           sso-token-cli -e <env>-bifrost (or RUNNR_AI_API_KEY_CMD), model
-//	           as the gateway names it (default DefaultBifrostModel)
+//	           as <provider>/<model> (default DefaultBifrostModel; a bare
+//	           gpt-…/o… or claude-… name gets openai/ or anthropic/)
 func FromEnv() Provider {
 	model := firstEnv("RUNNR_AI_MODEL", "RUNNR_CLAUDE_MODEL")
 	prov := strings.ToLower(os.Getenv("RUNNR_AI_PROVIDER"))
@@ -79,6 +80,7 @@ func FromEnv() Provider {
 		if !ok {
 			host = env // a host name
 		}
+		model = bifrostModel(or(model, DefaultBifrostModel))
 		h := parseHeaders(os.Getenv("RUNNR_AI_HEADERS"))
 		if vk := os.Getenv("RUNNR_AI_VIRTUAL_KEY"); vk != "" {
 			h["x-bf-vk"] = vk
@@ -91,7 +93,7 @@ func FromEnv() Provider {
 			Headers: h,
 			// Claude's cache markers, for Claude models only.
 			CacheHints: os.Getenv("RUNNR_AI_CACHE_HINTS") != "0" && strings.Contains(strings.ToLower(model), "claude"),
-			Model:      or(model, DefaultBifrostModel),
+			Model:      model,
 		}
 	}
 	return nil
@@ -99,7 +101,22 @@ func FromEnv() Provider {
 
 // DefaultBifrostModel is the model Greenhouse's agents use through the
 // gateway; it serves the models (and providers) it's configured for.
-const DefaultBifrostModel = "gpt-5.4"
+const DefaultBifrostModel = "openai/gpt-5.4"
+
+// bifrostModel names the provider, which the gateway needs
+// (<provider>/<model>), for bare OpenAI and Claude model names.
+func bifrostModel(m string) string {
+	if strings.Contains(m, "/") {
+		return m
+	}
+	switch l := strings.ToLower(m); {
+	case strings.HasPrefix(l, "gpt-"), strings.HasPrefix(l, "o1"), strings.HasPrefix(l, "o3"), strings.HasPrefix(l, "o4"):
+		return "openai/" + m
+	case strings.HasPrefix(l, "claude-"):
+		return "anthropic/" + m
+	}
+	return m
+}
 
 // bifrostHosts are the gateway's environments.
 var bifrostHosts = map[string]string{

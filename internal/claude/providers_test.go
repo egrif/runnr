@@ -159,3 +159,11 @@ func TestGatewayKeyCommandHeadersAndCacheHints(t *testing.T) {
 		t.Fatalf("%s %v", o.Name(), got["model"])
 	}
 }
+
+func TestBifrostModelNamesProvider(t *testing.T) {
+	for in, want := range map[string]string{"gpt-5.4": "openai/gpt-5.4", "claude-sonnet-5-5": "anthropic/claude-sonnet-5-5", "openai/gpt-5.4": "openai/gpt-5.4", "mistral/x": "mistral/x", "llama3": "llama3"} {
+		if got := bifrostModel(in); got != want {
+			t.Errorf("%s: %s, want %s", in, got, want)
+		}
+	}
+}
