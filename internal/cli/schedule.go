@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -145,22 +146,28 @@ func parseWhen(v string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("--at %q: use local time like \"2026-11-01 22:00\" (or RFC 3339)", v)
 }
 
-// printAgenda prints scheduled runs by day: each run, then (by level) its
-// window, sections and steps at their planned times.
+// printAgenda prints scheduled runs by day, in date order: on each day,
+// each run with something then (its start, then by level its window,
+// sections and steps at their planned times). A run that spans days shows
+// again on each of them.
 func printAgenda(ag []store.PlannedRun, level int) {
 	t := NewTerminal(0)
 	if !isTTY(os.Stdout) {
 		t.color = false
 	}
-	day := ""
-	line := func(at time.Time, text string) {
-		if d := at.Local().Format("Mon 2 Jan 2006"); d != day {
-			day = d
-			fmt.Println(t.c("1", "\n"+d))
-		}
-		fmt.Printf("  %s  %s\n", t.c("36", at.Local().Format("15:04")), text)
+	type item struct {
+		at   time.Time
+		text string
 	}
-	for _, pr := range ag {
+	type dayRun struct {
+		head  string
+		cont  string     // head on the run's later days
+		start *time.Time // set on the day the run starts
+		items []item
+	}
+	days := map[string][]*dayRun{}
+	for i := range ag {
+		pr := &ag[i]
 		name := pr.Runbook
 		if pr.Title != "" {
 			name += " — " + pr.Title
@@ -175,15 +182,25 @@ func printAgenda(ag []store.PlannedRun, level int) {
 		if pr.Error != "" {
 			head += t.c("31", "  "+pr.Error)
 		}
-		line(first, head)
+		byDay := map[string]*dayRun{}
+		on := func(at time.Time) *dayRun {
+			k := at.Local().Format("2006-01-02")
+			if byDay[k] == nil {
+				byDay[k] = &dayRun{head: head, cont: t.c("1", name) + t.c("2", "  (continued)")}
+				days[k] = append(days[k], byDay[k])
+			}
+			return byDay[k]
+		}
+		on(first).start = &first
 		for _, e := range pr.Entries {
 			moved := ""
 			if e.Planned != nil {
 				moved = t.c("2", " (moved from "+e.Planned.Local().Format("Mon")+")")
 			}
+			var text string
 			switch {
 			case e.Kind == "notify":
-				line(e.At, t.c("33", "  📣 maintenance window notification due")+t.c("2", " T"+e.Offset)+moved)
+				text = t.c("33", "  📣 maintenance window notification due") + t.c("2", " T"+e.Offset) + moved
 			case e.Kind == "window":
 				w := "🔴 maintenance window opens"
 				if e.Name == "open now" {
@@ -196,11 +213,44 @@ func printAgenda(ag []store.PlannedRun, level int) {
 					}
 					w += fmt.Sprintf(" · until %s (%s)", until, runbook.FormatSpan(e.End.Sub(e.At)))
 				}
-				line(e.At, t.c("31", "  "+w))
+				text = t.c("31", "  "+w)
 			case e.Kind == "section" && level >= 1:
-				line(e.At, t.c("35", "  ▸ "+e.Name)+t.c("2", " T"+e.Offset)+moved)
+				text = t.c("35", "  ▸ "+e.Name) + t.c("2", " T"+e.Offset) + moved
 			case e.Kind == "step" && level >= 2:
-				line(e.At, fmt.Sprintf("    · %d. %s", e.Step+1, e.Name)+t.c("2", " T"+e.Offset)+moved)
+				text = fmt.Sprintf("    · %d. %s", e.Step+1, e.Name) + t.c("2", " T"+e.Offset) + moved
+			default:
+				continue
+			}
+			d := on(e.At)
+			d.items = append(d.items, item{e.At, text})
+		}
+	}
+	keys := make([]string, 0, len(days))
+	for k := range days {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		runs := days[k]
+		earliest := func(d *dayRun) time.Time {
+			if d.start != nil {
+				return *d.start
+			}
+			sort.SliceStable(d.items, func(i, j int) bool { return d.items[i].at.Before(d.items[j].at) })
+			return d.items[0].at
+		}
+		sort.SliceStable(runs, func(i, j int) bool { return earliest(runs[i]).Before(earliest(runs[j])) })
+		day, _ := time.ParseInLocation("2006-01-02", k, time.Local)
+		fmt.Println(t.c("1", "\n"+day.Format("Mon 2 Jan 2006")))
+		for _, d := range runs {
+			if d.start != nil {
+				fmt.Printf("  %s  %s\n", t.c("36", d.start.Local().Format("15:04")), d.head)
+			} else {
+				fmt.Printf("  %s  %s\n", "     ", d.cont)
+			}
+			sort.SliceStable(d.items, func(i, j int) bool { return d.items[i].at.Before(d.items[j].at) })
+			for _, it := range d.items {
+				fmt.Printf("  %s  %s\n", t.c("36", it.at.Local().Format("15:04")), it.text)
 			}
 		}
 	}

@@ -232,7 +232,7 @@ func (x *executor) attemptManual(ctx context.Context, i int, step runbook.Step, 
 	case ManualSkip:
 		return attemptResult{kind: outSkipped, note: nonEmpty(note, "skipped by operator")}
 	}
-	return attemptResult{kind: outFailed, err: strings.TrimSpace("marked failed " + suffix(note))}
+	return attemptResult{kind: outFailed, err: "marked failed" + suffix(note)}
 }
 
 func (x *executor) confirm(ctx context.Context, i int, step runbook.Step, what string, confirmed bool) (bool, error) {

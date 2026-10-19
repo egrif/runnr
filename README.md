@@ -15,7 +15,7 @@ unattended for cron/CI.
 - **SQLite or Postgres** storage: zero-setup locally, shared for a team.
 - **HTTP API** for CI, cron and chatops ([docs/API.md](docs/API.md)).
 
-See it in action: **[a tour of the GUI, with screenshots](docs/TOUR.md)**.
+See it in action: tours of **[the GUI](docs/TOUR.md)** and **[the CLI](docs/CLI.md)**, with screenshots.
 
 ## Install
 
@@ -360,9 +360,10 @@ the real downtime, and a run that stops with the window open says so.
 due" date on the schedule.
 
 **Business days.** On the schedule, dates worked out from offsets
-(sections, steps, the notification) that land on a weekend move back to the
-Friday before, same time; only the window, and what happens during it,
-falls on a weekend.
+(sections, steps, the notification) that land on a weekend move to a
+weekday at the same time: back to the Friday before when they come before
+the run's start, forward to the Monday after when they follow it. Only the
+window, and what happens during it, falls on a weekend.
 
 **Ask Claude (or another model).** With a model set up when runnr starts,
 every step gets **✨ Explain** (run, launch and editor pages; the editor asks

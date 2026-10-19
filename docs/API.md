@@ -88,8 +88,8 @@ needs one), the window (with `end` if it has a target),
 and each section and step with a planned start, from the runbook as saved
 now with the schedule's `inputs` (which can override offsets and the
 target). Dates that land on a weekend in `tz` (default: the server's time
-zone) move back to the Friday before, with `planned` holding the date
-worked out; the window, and entries during it, don't move. Secret inputs
+zone) move back to the Friday before (or, after the run's start, forward
+to the Monday after), with `planned` holding the date worked out; the window, and entries during it, don't move. Secret inputs
 aren't stored.
 
 ## Trying steps out ("Run this")

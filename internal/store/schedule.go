@@ -185,7 +185,7 @@ func (s *Store) Agenda(from time.Time, loc *time.Location) ([]PlannedRun, error)
 				pr.Entries = append(pr.Entries, ae)
 			}
 		}
-		toBusinessDays(pr.Entries, loc)
+		toBusinessDays(pr.Entries, sc.At, loc)
 		slices.SortStableFunc(pr.Entries, func(a, b AgendaEntry) int { return a.At.Compare(b.At) })
 		// Keep runs any part of which is at or after from.
 		last := sc.At
@@ -204,11 +204,13 @@ func (s *Store) Agenda(from time.Time, loc *time.Location) ([]PlannedRun, error)
 	return out, nil
 }
 
-// toBusinessDays moves entries that fall on a weekend back to the Friday
-// before (same time of day), except the window and anything during it:
-// from its opening to its end, or, without a target length, the rest of
-// the day it opens.
-func toBusinessDays(es []AgendaEntry, loc *time.Location) {
+// toBusinessDays moves entries that fall on a weekend to a weekday at the
+// same time of day: back to the Friday before when they lead up to the
+// run's start (anchor), forward to the Monday after when they follow it, so
+// follow-up work never lands before what it follows. The window and anything
+// during it stay put: from its opening to its end, or, without a target
+// length, the rest of the day it opens.
+func toBusinessDays(es []AgendaEntry, anchor time.Time, loc *time.Location) {
 	var open, end time.Time
 	for _, e := range es {
 		if e.Kind == "window" {
@@ -227,13 +229,16 @@ func toBusinessDays(es []AgendaEntry, loc *time.Location) {
 			continue
 		}
 		t := e.At.In(loc)
-		back := map[time.Weekday]int{time.Saturday: 1, time.Sunday: 2}[t.Weekday()]
-		if back == 0 {
+		shift := map[time.Weekday]int{time.Saturday: -1, time.Sunday: -2}[t.Weekday()]
+		if shift == 0 {
 			continue
+		}
+		if e.At.After(anchor) {
+			shift += 3 // Saturday +2, Sunday +1: the Monday after
 		}
 		planned := e.At
 		e.Planned = &planned
-		e.At = t.AddDate(0, 0, -back)
+		e.At = t.AddDate(0, 0, shift)
 	}
 }
 

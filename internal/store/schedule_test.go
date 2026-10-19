@@ -68,14 +68,15 @@ steps:
   - {name: down, section: Cut, run: x, window: open}
   - {name: mid, run: x, window_offset: +2h}
   - {name: up, run: x, window: close}
+  - {name: late, run: x, window_offset: +10h}
   - {name: after, section: After, run: x}
 `
 			if _, _, err := st.Save([]byte(rb), SaveOpts{}); err != nil {
 				t.Fatal(err)
 			}
 			// Sunday 1 Nov 2026, 02:00 UTC: prep (Saturday) moves to Friday; the
-			// window and the step during it stay on Sunday; After (Tuesday) stays;
-			// the notification, two weeks before (a Sunday), moves to that Friday.
+			// window and the step during it stay on Sunday; late (Sunday, after the
+			// window) moves forward to Monday; After (Tuesday) stays; the notification, two weeks before (a Sunday), moves to that Friday.
 			at := time.Date(2026, 11, 1, 2, 0, 0, 0, time.UTC)
 			if err := st.SaveSchedule(&Schedule{Runbook: "wk", At: at}); err != nil {
 				t.Fatal(err)
@@ -97,6 +98,7 @@ steps:
 				"window:Maintenance window": "Sun 1 Nov 02:00",
 				"section:Cut":               "Sun 1 Nov 02:00",
 				"step:mid":                  "Sun 1 Nov 04:00",
+				"step:late":                 "Mon 2 Nov 12:00 (was Sun)",
 				"section:After":             "Tue 3 Nov 02:00",
 			}
 			for k, v := range want {

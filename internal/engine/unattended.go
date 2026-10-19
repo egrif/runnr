@@ -36,6 +36,9 @@ func (u Unattended) Manual(_ context.Context, _ int, step runbook.Step, _ string
 	case runbook.UnattendedSkip:
 		return ManualSkip, "auto-skipped (unattended)", nil
 	}
+	if step.TTY {
+		return ManualFail, "needs a terminal (tty), so it can't run unattended", nil
+	}
 	return ManualFail, "manual step cannot run unattended", nil
 }
 
