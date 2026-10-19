@@ -33,7 +33,7 @@ async function openExplain(source, step, title) {
   p.querySelector(".ex-title").textContent = `✨ ${title}`;
   // The conversation so far, so follow-ups know what "it" is.
   const history = [];
-  const ask = async (question) => {
+  const ask = async (question, fresh = false) => {
     p._abort?.abort();
     const ctl = (p._abort = new AbortController());
     const body = p.querySelector(".ex-body");
@@ -48,7 +48,7 @@ async function openExplain(source, step, title) {
       const res = await fetch("/api/explain", {
         method: "POST", signal: ctl.signal,
         headers: { "X-Runnr": "1", "Content-Type": "application/json" },
-        body: JSON.stringify({ ...source, step, question, history }),
+        body: JSON.stringify({ ...source, step, question, history, fresh }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
       const reader = res.body.getReader();
@@ -66,10 +66,20 @@ async function openExplain(source, step, title) {
           try { ev = JSON.parse(line); } catch { continue; }
           if (ev.text) { text += ev.text; out.innerHTML = md(text); }
           if (ev.error) throw new Error(ev.error);
+          if (ev.usage?.local) {
+            const again = document.createElement("button");
+            again.className = "link";
+            again.textContent = "Ask again";
+            again.onclick = () => { history.splice(-2, 2); entry.remove(); ask(question, true); };
+            const u = p.querySelector(".ex-usage");
+            u.textContent = `${ev.provider} ${ev.model} · answered from runnr's store, free · `;
+            u.append(again);
+            continue;
+          }
           if (ev.usage) {
             const u = ev.usage;
             const read = u.cache_read_input_tokens || 0, wrote = u.cache_creation_input_tokens || 0;
-            p.querySelector(".ex-usage").textContent = `${ev.model} · ${u.input_tokens + read + wrote} tokens in (${read ? `${read} from the cache` : wrote ? `${wrote} cached for the next question` : "not cached: the runbook is short"}), ${u.output_tokens} out`;
+            p.querySelector(".ex-usage").textContent = `${ev.provider} ${ev.model} · ${u.input_tokens + read + wrote} tokens in (${read ? `${read} from the cache` : wrote ? `${wrote} cached for the next question` : "not cached: the runbook is short"}), ${u.output_tokens} out`;
           }
         }
         body.scrollTop = body.scrollHeight;

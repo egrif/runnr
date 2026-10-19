@@ -1,7 +1,7 @@
-// Package claude asks Claude (Anthropic's Messages API) about runbooks,
-// streaming the answer. Long context that's sent again and again (a whole
-// runbook) is marked for prompt caching, so later questions about the same
-// runbook read it from the cache at a fraction of the price.
+// Package claude asks a model (Claude through Anthropic or Amazon Bedrock,
+// or any OpenAI-compatible endpoint) about runbooks. Long context that's
+// sent again and again (a whole runbook) is marked for prompt caching
+// where the provider supports it, and answers can be kept locally.
 package claude
 
 import (
@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 )
 
@@ -21,27 +20,19 @@ import (
 // claude-opus-5-5) for deeper reviews.
 const DefaultModel = "claude-sonnet-5-5"
 
-// Client calls the Messages API.
+// Client calls Anthropic's Messages API.
 type Client struct {
 	Key     string
 	Model   string
 	BaseURL string // default https://api.anthropic.com
-	HTTP    *http.Client
+	// CacheTTL is how long the prompt cache keeps the runbook: "" (5
+	// minutes) or "1h" (writes cost more, but reads last an hour).
+	CacheTTL string
+	HTTP     *http.Client
 }
 
-// FromEnv is a client from ANTHROPIC_API_KEY (nil without one), with
-// RUNNR_CLAUDE_MODEL and ANTHROPIC_BASE_URL if set.
-func FromEnv() *Client {
-	key := os.Getenv("ANTHROPIC_API_KEY")
-	if key == "" {
-		return nil
-	}
-	c := &Client{Key: key, Model: os.Getenv("RUNNR_CLAUDE_MODEL"), BaseURL: os.Getenv("ANTHROPIC_BASE_URL")}
-	if c.Model == "" {
-		c.Model = DefaultModel
-	}
-	return c
-}
+func (c *Client) Name() string      { return "anthropic" }
+func (c *Client) ModelName() string { return c.Model }
 
 // Block is part of the system prompt. Cache marks the end of a prefix to
 // cache: it and everything before it are reused by later requests that
@@ -58,6 +49,8 @@ type Usage struct {
 	Output     int `json:"output_tokens"`
 	CacheRead  int `json:"cache_read_input_tokens"`
 	CacheWrite int `json:"cache_creation_input_tokens"`
+	// Local: the answer came from runnr's own store, at no cost.
+	Local bool `json:"local,omitempty"`
 }
 
 // Message is one turn of a conversation.
@@ -72,6 +65,7 @@ func (c *Client) Stream(ctx context.Context, system []Block, history []Message, 
 	var usage Usage
 	type cacheControl struct {
 		Type string `json:"type"`
+		TTL  string `json:"ttl,omitempty"`
 	}
 	type textBlock struct {
 		Type         string        `json:"type"`
@@ -82,7 +76,7 @@ func (c *Client) Stream(ctx context.Context, system []Block, history []Message, 
 	for _, b := range system {
 		tb := textBlock{Type: "text", Text: b.Text}
 		if b.Cache {
-			tb.CacheControl = &cacheControl{Type: "ephemeral"}
+			tb.CacheControl = &cacheControl{Type: "ephemeral", TTL: c.CacheTTL}
 		}
 		sys = append(sys, tb)
 	}

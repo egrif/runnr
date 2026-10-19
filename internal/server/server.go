@@ -40,7 +40,7 @@ type Config struct {
 	Token string
 	// Claude answers questions about runbooks (Explain); nil turns that
 	// off. New sets it from ANTHROPIC_API_KEY unless NoClaude.
-	Claude   *claude.Client
+	Claude   claude.Provider
 	NoClaude bool
 	// NoUI serves only the API.
 	NoUI bool
@@ -48,7 +48,9 @@ type Config struct {
 
 func New(st *store.Store, cfg Config) *Server {
 	if cfg.Claude == nil && !cfg.NoClaude {
-		cfg.Claude = claude.FromEnv()
+		if p := claude.FromEnv(); p != nil {
+			cfg.Claude = p
+		}
 	}
 	return &Server{st: st, cfg: cfg, live: map[string]*liveRun{}}
 }
@@ -1203,7 +1205,7 @@ func (s *Server) claudeStatus(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "model": c.Model})
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": true, "provider": c.Name(), "model": c.ModelName()})
 }
 
 // explain asks Claude about a runbook step: {runbook, raw?, step, question?}.
@@ -1214,7 +1216,7 @@ func (s *Server) claudeStatus(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 	c := s.cfg.Claude
 	if c == nil {
-		writeErr(w, errors.New("Claude isn't set up: start runnr with ANTHROPIC_API_KEY set"))
+		writeErr(w, errors.New("no model is set up: start runnr with ANTHROPIC_API_KEY (or RUNNR_AI_PROVIDER, see runnr explain --help)"))
 		return
 	}
 	var req struct {
@@ -1223,6 +1225,8 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 		Step     int              `json:"step"`
 		Question string           `json:"question"`
 		History  []claude.Message `json:"history"`
+		// Fresh asks again rather than replaying a stored answer.
+		Fresh bool `json:"fresh"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, err)
@@ -1262,12 +1266,12 @@ func (s *Server) explain(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-	usage, err := c.Explain(r.Context(), rb, raw, libs, req.Step, req.Question, req.History, func(t string) { send(map[string]string{"text": t}) })
+	usage, err := claude.Explain(r.Context(), c, s.st, rb, raw, libs, req.Step, req.Question, req.History, req.Fresh, func(t string) { send(map[string]string{"text": t}) })
 	if err != nil {
 		send(map[string]string{"error": err.Error()})
 		return
 	}
-	send(map[string]any{"usage": usage, "model": c.Model})
+	send(map[string]any{"usage": usage, "model": c.ModelName(), "provider": c.Name()})
 }
 
 // ---------- schedules ----------

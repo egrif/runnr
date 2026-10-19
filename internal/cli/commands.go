@@ -797,21 +797,35 @@ would publish show as <name>.`,
 
 func explainCmd(s func() *store.Store) *cobra.Command {
 	var ask string
+	var fresh bool
 	cmd := &cobra.Command{
 		Use:   "explain <runbook|file> [step]",
-		Short: "Ask Claude about a step (or, without one, the whole runbook)",
+		Short: "Ask a model (Claude by default) about a step, or the whole runbook",
 		Long: `Asks Claude what a step does, what it relies on from earlier steps (the
 setup steps especially), what to check, its risks and how to improve it;
 -q asks your own question instead. The whole runbook (credentials masked)
 and its library functions go along as context, cached for a few minutes,
 so asking about other steps of it soon after costs much less.
 
-Needs ANTHROPIC_API_KEY; RUNNR_CLAUDE_MODEL picks the model (default ` + claude.DefaultModel + `).`,
+Answers are kept: the same question about an unchanged runbook is answered
+from runnr's store, free (--fresh asks again).
+
+Set up a model with environment variables:
+  ANTHROPIC_API_KEY            Claude through Anthropic (default ` + claude.DefaultModel + `)
+  RUNNR_AI_PROVIDER=bedrock    Claude through Amazon Bedrock: RUNNR_AI_MODEL is
+                               the model or inference profile id, with
+                               RUNNR_AI_AWS_PROFILE (or AWS_PROFILE) and AWS_REGION
+  RUNNR_AI_PROVIDER=openai     any OpenAI-compatible API: RUNNR_AI_BASE_URL
+                               (default OpenAI; e.g. http://localhost:11434/v1
+                               for Ollama), RUNNR_AI_API_KEY or OPENAI_API_KEY
+  RUNNR_AI_MODEL               the model (RUNNR_CLAUDE_MODEL also works)
+  RUNNR_AI_CACHE_TTL=1h        Anthropic: keep the runbook in the prompt cache
+                               for an hour instead of five minutes`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := claude.FromEnv()
 			if c == nil {
-				return errors.New("set ANTHROPIC_API_KEY to ask Claude")
+				return errors.New("no model is set up: set ANTHROPIC_API_KEY, or see runnr explain --help for Bedrock and others")
 			}
 			rb, _, err := s().Resolve(args[0])
 			if err != nil {
@@ -835,16 +849,21 @@ Needs ANTHROPIC_API_KEY; RUNNR_CLAUDE_MODEL picks the model (default ` + claude.
 				}
 				step = i + 1
 			}
-			u, err := c.Explain(cmd.Context(), rb, raw, libs, step, ask, nil, func(t string) { fmt.Print(t) })
+			u, err := claude.Explain(cmd.Context(), c, s(), rb, raw, libs, step, ask, nil, fresh, func(t string) { fmt.Print(t) })
 			fmt.Println()
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(os.Stderr, "\n%s · %d tokens in (%d from the cache, %d cached), %d out\n", c.Model, u.Input+u.CacheRead+u.CacheWrite, u.CacheRead, u.CacheWrite, u.Output)
+			if u.Local {
+				fmt.Fprintf(os.Stderr, "\n%s %s · answered from runnr's store, free (--fresh to ask again)\n", c.Name(), c.ModelName())
+			} else {
+				fmt.Fprintf(os.Stderr, "\n%s %s · %d tokens in (%d from the prompt cache, %d written to it), %d out\n", c.Name(), c.ModelName(), u.Input+u.CacheRead+u.CacheWrite, u.CacheRead, u.CacheWrite, u.Output)
+			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVarP(&ask, "question", "q", "", "your own question about the step (or runbook)")
+	cmd.Flags().BoolVar(&fresh, "fresh", false, "ask again instead of using a stored answer")
 	return cmd
 }
 

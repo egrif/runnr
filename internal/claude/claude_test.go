@@ -45,7 +45,7 @@ steps:
 	lib := &runbook.Library{Name: "h", Functions: map[string]runbook.Function{"kpsql": {Body: "psql \"$1\""}}}
 	c := &Client{Key: "k", Model: "m", BaseURL: srv.URL}
 	var text strings.Builder
-	u, err := c.Explain(context.Background(), rb, nil, []*runbook.Library{lib}, 2, "", nil, func(s string) { text.WriteString(s) })
+	u, err := Explain(context.Background(), c, nil, rb, nil, []*runbook.Library{lib}, 2, "", nil, false, func(s string) { text.WriteString(s) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,11 +75,11 @@ steps:
 	}
 	// A follow-up goes after the conversation so far, as asked.
 	hist := []Message{{Role: "user", Content: `Explain step 2 ("deploy").`}, {Role: "assistant", Content: "It derives the region."}}
-	c.Explain(context.Background(), rb, nil, nil, 2, "And if it's empty?", hist, func(string) {})
+	Explain(context.Background(), c, nil, rb, nil, nil, 2, "And if it's empty?", hist, false, func(string) {})
 	if msgs := got["messages"].([]any); len(msgs) != 3 || msgs[2].(map[string]any)["content"] != "And if it's empty?" {
 		t.Fatalf("follow-up messages %v", msgs)
 	}
-	if _, err := c.Explain(context.Background(), rb, nil, nil, 9, "", nil, func(string) {}); err == nil {
+	if _, err := Explain(context.Background(), c, nil, rb, nil, nil, 9, "", nil, false, func(string) {}); err == nil {
 		t.Fatal("no step 9")
 	}
 }

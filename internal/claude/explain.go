@@ -2,6 +2,8 @@ package claude
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -93,12 +95,15 @@ func Question(rb *runbook.Runbook, step int, ask string) (string, error) {
 }
 
 // Explain answers a question about a runbook step. The instructions and the
-// runbook context come first and are cached, so asking about other steps of
-// the same runbook soon after reads them from the cache.
+// runbook context come first and are marked for caching, so asking about
+// other steps of the same runbook soon after reads them from the
+// provider's cache.
 //
 // history is the conversation so far about this step: a follow-up goes
-// after it, as is (the step was named in the first question).
-func (c *Client) Explain(ctx context.Context, rb *runbook.Runbook, raw []byte, libs []*runbook.Library, step int, ask string, history []Message, onText func(string)) (Usage, error) {
+// after it, as is (the step was named in the first question). With a
+// local cache, the same question about an unchanged runbook (same model,
+// context and conversation) is answered from it unless fresh is set.
+func Explain(ctx context.Context, p Provider, cache Cache, rb *runbook.Runbook, raw []byte, libs []*runbook.Library, step int, ask string, history []Message, fresh bool, onText func(string)) (Usage, error) {
 	q, err := Question(rb, step, ask)
 	if err != nil {
 		return Usage{}, err
@@ -107,5 +112,31 @@ func (c *Client) Explain(ctx context.Context, rb *runbook.Runbook, raw []byte, l
 		q = strings.TrimSpace(ask)
 	}
 	system := []Block{{Text: instructions}, {Text: RunbookContext(rb, raw, libs), Cache: true}}
-	return c.Stream(ctx, system, history, q, 2000, onText)
+	key := answerKey(p, system, history, q)
+	if cache != nil && !fresh {
+		if a, ok := cache.GetAnswer(key); ok {
+			onText(a)
+			return Usage{Local: true}, nil
+		}
+	}
+	var answer strings.Builder
+	u, err := p.Stream(ctx, system, history, q, 2000, func(t string) { answer.WriteString(t); onText(t) })
+	if err == nil && cache != nil && answer.Len() > 0 {
+		_ = cache.PutAnswer(key, p.Name()+" "+p.ModelName(), answer.String())
+	}
+	return u, err
+}
+
+// answerKey fingerprints everything an answer depends on.
+func answerKey(p Provider, system []Block, history []Message, q string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\x00%s\x00", p.Name(), p.ModelName())
+	for _, b := range system {
+		fmt.Fprintf(h, "%d\x00%s\x00", len(b.Text), b.Text)
+	}
+	for _, m := range history {
+		fmt.Fprintf(h, "%s\x00%d\x00%s\x00", m.Role, len(m.Content), m.Content)
+	}
+	fmt.Fprintf(h, "%s", q)
+	return hex.EncodeToString(h.Sum(nil))
 }
