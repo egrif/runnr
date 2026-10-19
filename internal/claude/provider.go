@@ -29,7 +29,15 @@ type Cache interface {
 //	bedrock:   RUNNR_AI_AWS_PROFILE or AWS_PROFILE, AWS_REGION; the model is
 //	           a Bedrock model or inference profile id
 //	openai:    RUNNR_AI_BASE_URL (e.g. http://localhost:11434/v1 for
-//	           Ollama), RUNNR_AI_API_KEY or OPENAI_API_KEY
+//	           Ollama), RUNNR_AI_API_KEY or OPENAI_API_KEY, or
+//	           RUNNR_AI_API_KEY_CMD (a command that prints one);
+//	           RUNNR_AI_HEADERS ("Name: value; Name: value");
+//	           RUNNR_AI_CACHE_HINTS=1 (mark the runbook for Claude's cache)
+//	bifrost:   Greenhouse's AI gateway (OpenAI-compatible, behind SSO):
+//	           RUNNR_AI_VIRTUAL_KEY (x-bf-vk), RUNNR_AI_BIFROST_ENV (dev,
+//	           staging, prod, prod-eu, prod-apac; default dev), the key from
+//	           sso-token-cli -e <env>-bifrost (or RUNNR_AI_API_KEY_CMD), model
+//	           <provider>/<model> (default anthropic/claude-sonnet-5-5)
 func FromEnv() Provider {
 	model := firstEnv("RUNNR_AI_MODEL", "RUNNR_CLAUDE_MODEL")
 	prov := strings.ToLower(os.Getenv("RUNNR_AI_PROVIDER"))
@@ -58,12 +66,54 @@ func FromEnv() Provider {
 		}
 	case "openai":
 		return &OpenAI{
-			BaseURL: or(os.Getenv("RUNNR_AI_BASE_URL"), "https://api.openai.com/v1"),
-			Key:     firstEnv("RUNNR_AI_API_KEY", "OPENAI_API_KEY"),
-			Model:   or(model, DefaultOpenAIModel),
+			BaseURL:    or(os.Getenv("RUNNR_AI_BASE_URL"), "https://api.openai.com/v1"),
+			Key:        firstEnv("RUNNR_AI_API_KEY", "OPENAI_API_KEY"),
+			KeyCmd:     os.Getenv("RUNNR_AI_API_KEY_CMD"),
+			Headers:    parseHeaders(os.Getenv("RUNNR_AI_HEADERS")),
+			CacheHints: os.Getenv("RUNNR_AI_CACHE_HINTS") != "",
+			Model:      or(model, DefaultOpenAIModel),
+		}
+	case "bifrost":
+		env := or(os.Getenv("RUNNR_AI_BIFROST_ENV"), "dev")
+		host, ok := bifrostHosts[env]
+		if !ok {
+			host = env // a host name
+		}
+		h := parseHeaders(os.Getenv("RUNNR_AI_HEADERS"))
+		if vk := os.Getenv("RUNNR_AI_VIRTUAL_KEY"); vk != "" {
+			h["x-bf-vk"] = vk
+		}
+		return &OpenAI{
+			Label:      "bifrost",
+			BaseURL:    or(os.Getenv("RUNNR_AI_BASE_URL"), "https://"+host+"/v1"),
+			Key:        os.Getenv("RUNNR_AI_API_KEY"),
+			KeyCmd:     or(os.Getenv("RUNNR_AI_API_KEY_CMD"), "sso-token-cli -e "+env+"-bifrost"),
+			Headers:    h,
+			CacheHints: os.Getenv("RUNNR_AI_CACHE_HINTS") != "0",
+			Model:      or(model, "anthropic/"+DefaultModel),
 		}
 	}
 	return nil
+}
+
+// bifrostHosts are the gateway's environments.
+var bifrostHosts = map[string]string{
+	"dev":       "dev-bifrost.dev-use1-0.gh.team",
+	"staging":   "staging-bifrost.prod-use1-0.gh.team",
+	"prod":      "bifrost.prod-use1-0.gh.team",
+	"prod-eu":   "bifrost.prod-euc1-0.gh.team",
+	"prod-apac": "bifrost.prod-apse2-0.gh.team",
+}
+
+// parseHeaders reads "Name: value; Name: value".
+func parseHeaders(s string) map[string]string {
+	h := map[string]string{}
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool { return r == ';' || r == '\n' }) {
+		if k, v, ok := strings.Cut(part, ":"); ok && strings.TrimSpace(k) != "" {
+			h[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	return h
 }
 
 func firstEnv(keys ...string) string {

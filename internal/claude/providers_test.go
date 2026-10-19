@@ -125,3 +125,37 @@ func TestLocalAnswerCache(t *testing.T) {
 		t.Fatalf("calls %d, want 4", p.calls)
 	}
 }
+
+func TestGatewayKeyCommandHeadersAndCacheHints(t *testing.T) {
+	var got map[string]any
+	var auths, vks []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auths = append(auths, r.Header.Get("authorization"))
+		vks = append(vks, r.Header.Get("x-bf-vk"))
+		if len(auths) == 1 {
+			w.WriteHeader(401) // the first token has expired
+			return
+		}
+		json.NewDecoder(r.Body).Decode(&got)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	// The key command prints a new token each time it runs.
+	cmd := fmt.Sprintf(`n=$(cat %[1]s/n 2>/dev/null || echo 0); n=$((n+1)); echo $n > %[1]s/n; echo "tok$n"`, dir)
+	o := &OpenAI{Label: "bifrost", BaseURL: srv.URL + "/v1", KeyCmd: cmd, Headers: parseHeaders("x-bf-vk: sk-bf-123; X-Guardrails: enabled"), CacheHints: true, Model: "anthropic/claude-x"}
+	var text strings.Builder
+	if _, err := o.Stream(context.Background(), []Block{{Text: "instr"}, {Text: "runbook", Cache: true}}, nil, "q", 10, func(s string) { text.WriteString(s) }); err != nil || text.String() != "ok" {
+		t.Fatalf("%v %q", err, text.String())
+	}
+	if strings.Join(auths, ",") != "Bearer tok1,Bearer tok2" || vks[1] != "sk-bf-123" {
+		t.Fatalf("auths %v vks %v", auths, vks)
+	}
+	parts := got["messages"].([]any)[0].(map[string]any)["content"].([]any)
+	if len(parts) != 2 || parts[1].(map[string]any)["cache_control"] == nil || parts[0].(map[string]any)["cache_control"] != nil {
+		t.Fatalf("system parts %v", parts)
+	}
+	if o.Name() != "bifrost" || got["model"] != "anthropic/claude-x" {
+		t.Fatalf("%s %v", o.Name(), got["model"])
+	}
+}
