@@ -6,6 +6,7 @@ package htmlview
 import (
 	"bytes"
 	_ "embed"
+	"encoding/base64"
 	"fmt"
 	"html/template"
 	"maps"
@@ -19,6 +20,13 @@ import (
 
 //go:embed page.html
 var pageHTML string
+
+// markPNG is runnr's mark (the sprout), for the page's icon and header.
+//
+//go:embed mark.png
+var markPNG []byte
+
+var markURL = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(markPNG))
 
 var page = template.Must(template.New("page").Funcs(template.FuncMap{
 	"join": strings.Join,
@@ -86,6 +94,7 @@ type data struct {
 	Libraries                 []library
 	Generated                 string
 	Steps                     int
+	Mark                      template.URL
 }
 
 // Render writes the page.
@@ -99,7 +108,7 @@ func Render(rb *runbook.Runbook, o Options) ([]byte, error) {
 	}
 	p := engine.NewPreviewer(rb, o.Vars, nil, hasFuncs)
 	plan := p.Plan()
-	d := data{Name: rb.Name, Description: strings.TrimSpace(p.Render(rb.Description)), Expect: strings.TrimSpace(p.Render(rb.Expect)), Steps: len(rb.Steps), Generated: o.Now.Format("2 Jan 2006 15:04 MST")}
+	d := data{Mark: markURL, Name: rb.Name, Description: strings.TrimSpace(p.Render(rb.Description)), Expect: strings.TrimSpace(p.Render(rb.Expect)), Steps: len(rb.Steps), Generated: o.Now.Format("2 Jan 2006 15:04 MST")}
 
 	shell := rb.Shell
 	if shell == "" {

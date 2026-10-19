@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/brand/logo.png" alt="runnr" width="520"></p>
+
 # runnr
 
 A runbook manager and automater. Write runbooks as YAML, then run them from the

@@ -162,9 +162,10 @@ async function route() {
 window.addEventListener("hashchange", route);
 
 function viewHome() {
+  const logo = `<img class="logo" src="brand/logo.png" alt="">`;
   main.innerHTML = runbooks.length
-    ? `<div class="empty"><h1>runnr</h1><p>Pick a runbook on the left, or create a new one.</p></div>`
-    : `<div class="empty"><h1>Welcome to runnr</h1><p>You don't have any runbooks yet.</p><p><button class="primary" onclick="location.hash='#/new'">Create your first runbook</button></p></div>`;
+    ? `<div class="empty">${logo}<h1>runnr</h1><p>Pick a runbook on the left, or create a new one.</p></div>`
+    : `<div class="empty">${logo}<h1>Welcome to runnr</h1><p>You don't have any runbooks yet.</p><p><button class="primary" onclick="location.hash='#/new'">Create your first runbook</button></p></div>`;
 }
 
 // ---------- runbook: run + edit ----------

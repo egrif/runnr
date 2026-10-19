@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="runnr">
 <title>{{.Name}} · runnr</title>
+<link rel="icon" type="image/png" href="{{.Mark}}">
 <style>
 :root {
   --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1f23; --muted: #6b7079; --line: #e3e4e8;
-  --accent: #2f6fdc; --accent-soft: #e8f0fd; --code-bg: #f3f4f6; --code-ink: #1d1f23;
+  --accent: #277a3e; --accent-soft: #e6f3e9; --code-bg: #f3f4f6; --code-ink: #1d1f23;
   --danger: #c0352b; --danger-soft: #fdecea; --warn: #9a6200; --warn-soft: #fdf3e1;
   --ok: #23863b; --ok-soft: #e6f4ea; --violet: #7a3fc4; --violet-soft: #f2eafc;
   --shadow: 0 1px 2px rgba(0,0,0,.05);
@@ -16,7 +17,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #15171b; --panel: #1d2026; --ink: #e4e6ea; --muted: #959ba6; --line: #2e323a;
-    --accent: #6ea2ff; --accent-soft: #1f2b40; --code-bg: #14161a; --code-ink: #dfe3ea;
+    --accent: #5cc26f; --accent-soft: #1b3122; --code-bg: #14161a; --code-ink: #dfe3ea;
     --danger: #ff7b72; --danger-soft: #3a1f1f; --warn: #e3b341; --warn-soft: #3a2f17;
     --ok: #6fd18a; --ok-soft: #1c3324; --violet: #c49cff; --violet-soft: #2b2140;
     --shadow: none;
@@ -43,7 +44,9 @@ button:hover { border-color: var(--muted); }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: var(--panel); }
 .seg button { border: 0; border-radius: 0; background: transparent; padding: 4px 10px; }
 .seg button + button { border-left: 1px solid var(--line); }
-.seg button.on { background: var(--accent); color: #fff; }
+.seg button.on { background: var(--accent); color: var(--panel); }
+.brand { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--ink); text-decoration: none; letter-spacing: -.01em; }
+.brand img { width: 22px; height: 22px; }
 .seg-label { font-size: 13px; color: var(--muted); }
 
 /* Overview */
@@ -142,7 +145,8 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
 </head>
 <body>
 <div class="bar"><div class="bar-in">
-  <span class="title">{{.Name}}</span>
+  <span class="brand" title="Made by runnr"><img src="{{.Mark}}" alt="">runnr</span>
+  <span class="title">· {{.Name}}</span>
   <button type="button" data-all="open">Expand all</button>
   <button type="button" data-all="close">Collapse all</button>
   <span class="seg-label">Code:</span>
