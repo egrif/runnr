@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/brand/logo.png" alt="runnr" width="520"></p>
+<p align="center"><img src="docs/brand/logo.png" alt="runnr" width="680"></p>
 
 # runnr
 

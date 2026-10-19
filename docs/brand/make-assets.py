@@ -66,8 +66,10 @@ mt = cutout(m)
 bb = mt.getchannel("A").point(lambda v: 255 if v > 24 else 0).getbbox()
 wide = fade(mt.crop((bb[0] - 2, bb[1] - 2, bb[2] + 2, bb[3] + 2)), 0.16)
 wide.resize((wide.width * 160 // wide.height, 160), Image.LANCZOS).save(f"{out}/mark-wide.png", optimize=True)
+# Square, the conduits cropped short (they fade out anyway) so the sprout
+# and hub fill more of it.
 cx, cy = (bb[0] + bb[2]) // 2, (bb[1] + bb[3]) // 2
-half = max(bb[2] - bb[0], bb[3] - bb[1]) // 2 + 4
+half = (bb[3] - bb[1]) * 2 // 3 + 4
 mark = fade(mt.crop((cx - half, cy - half, cx + half, cy + half)), 0.16)
 mark.resize((256, 256), Image.LANCZOS).save(f"{out}/mark.png", optimize=True)
 for s in (16, 32, 48):
