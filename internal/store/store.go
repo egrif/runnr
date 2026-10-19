@@ -417,6 +417,16 @@ func (s *Store) SaveRun(r *engine.Run) error {
 }
 
 func (s *Store) LoadRun(id string) (*engine.Run, error) {
+	r, err := s.loadRunRecord(id)
+	if err != nil {
+		return nil, err
+	}
+	return r, s.attachNotes(r)
+}
+
+// loadRunRecord is the run as its process saved it, without the notes
+// kept apart from it.
+func (s *Store) loadRunRecord(id string) (*engine.Run, error) {
 	var rec string
 	err := s.db.QueryRow(s.q(`SELECT record FROM runs WHERE id = ?`), id).Scan(&rec)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -429,7 +439,7 @@ func (s *Store) LoadRun(id string) (*engine.Run, error) {
 	if err := json.Unmarshal([]byte(rec), &r); err != nil {
 		return nil, err
 	}
-	return &r, s.attachNotes(&r)
+	return &r, nil
 }
 
 // AddNote records an operator note on a step (0-based), or on the run

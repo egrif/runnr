@@ -59,6 +59,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |
 | `runnr rerun <run-id>` | Run again with an earlier run's inputs, comparing each step with what it did then |
 | `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped |
+| `runnr abort <run-id> [-m reason] [--force]` | Abort a run running elsewhere (another terminal, the GUI), or one left "running" by a process that's gone |
 | `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open a shell (the runbook's `shell`, else `$SHELL`) with that environment |
 | `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
 | `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail |
@@ -158,6 +159,16 @@ inputs (secret inputs are asked again) and the same state (secrets excepted),
 starting at the step that didn't finish. Steps marked `always` (typically
 environment setup) run again and re-derive the secrets. For
 multi-day procedures, abort at a "wait" step and resume later.
+
+**Aborting.** In the terminal running it, Ctrl-C or `a` at a prompt aborts
+a run. From anywhere else, `runnr abort <run-id> -m "why"` (or **Abort
+run** on its page in the GUI) asks the runnr running it to stop, whether
+that's a terminal or `runnr serve`, here or on another machine sharing the
+database: the step running now is stopped and the run ends aborted, with
+who and why, ready to resume. A run whose process is gone (it exited on
+this machine) is marked aborted straight away; one left "running" by a
+process on another machine is marked with `--force` (in the GUI: **Mark
+it aborted now**).
 
 ## GUI
 

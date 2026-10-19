@@ -437,7 +437,7 @@ function renderRun(state) {
   main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
   main.querySelectorAll("[data-edit-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); editRunStep(state, +b.dataset.editStep); }));
   $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
-  $("#cancel") && ($("#cancel").onclick = () => api("POST", `/api/runs/${run.id}/cancel`).catch((e) => toast(e.message)));
+  $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
   $("#resume") && ($("#resume").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?resume=${enc(run.id)}`));
   $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?rerun=${enc(run.id)}`));
   const q = $(".question");
@@ -548,6 +548,48 @@ async function editRunStep(state, i) {
   };
   dlg.showModal();
   ta.focus();
+}
+
+// abortRun asks first, with an optional reason. A run this server isn't
+// running (it's in a terminal, or its process is gone) is asked to stop,
+// or marked aborted when its process is gone (or with "now").
+function abortRun(state) {
+  const run = state.run, o = run.owner;
+  const elsewhere = !state.live;
+  let saved = "";
+  try { saved = localStorage.getItem("runnr.author") || ""; } catch {}
+  const where = !elsewhere ? "The step running now is stopped and the run ends aborted; it can be resumed."
+    : o ? `It's running ${o.via === "cli" ? "in a terminal" : "in another runnr server"} on ${esc(o.host)} (pid ${o.pid}). runnr asks that process to stop it, or marks the run aborted if the process is gone.`
+    : "This server isn't running it. runnr asks whichever runnr is to stop it, and marks it aborted if none does.";
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step abort-dialog";
+  dlg.innerHTML = `<h3>Abort this run?</h3>
+    <p class="muted small">${where}</p>
+    <label>Your name <input name="by" value="${esc(saved)}" autocomplete="name"></label>
+    <label>Why (optional, recorded with the run) <input name="reason" autocomplete="off"></label>
+    ${elsewhere ? `<label class="check"><input type="checkbox" name="force"> Mark it aborted now, without waiting (its process is gone)</label>` : ""}
+    <div class="error-text"></div>
+    <div class="row"><button class="danger" data-ok>Abort run</button><button data-close>Keep running</button></div>`;
+  document.body.append(dlg);
+  const f = (n) => dlg.querySelector(`[name=${n}]`);
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  dlg.querySelector("[data-ok]").onclick = async (e) => {
+    const ok = e.currentTarget;
+    const by = f("by").value.trim();
+    if (by) try { localStorage.setItem("runnr.author", by); } catch {}
+    ok.disabled = true;
+    if (elsewhere) ok.textContent = "Waiting for it to stop…";
+    try {
+      const res = await api("POST", `/api/runs/${enc(run.id)}/cancel`, { author: by, reason: f("reason").value.trim(), force: !!f("force")?.checked });
+      if (!res.aborted) { dlg.querySelector(".error-text").textContent = res.message; ok.disabled = false; ok.textContent = "Abort run"; return; }
+      dlg.close();
+      toast(elsewhere ? `Run aborted: ${res.message}` : "Aborting…");
+      if (elsewhere) viewRun(run.id);
+    } catch (err) { dlg.querySelector(".error-text").textContent = err.message; ok.disabled = false; ok.textContent = "Abort run"; }
+  };
+  dlg.showModal();
+  (saved ? f("reason") : f("by")).focus();
 }
 
 async function saveRunEdits(state) {

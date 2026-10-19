@@ -48,7 +48,7 @@ type WireEvent struct {
 // It implements engine.Interactor.
 type liveRun struct {
 	id      string
-	cancel  context.CancelFunc
+	cancel  context.CancelCauseFunc
 	session engine.Session
 	ctl     *engine.Controls
 	terms   map[string]*engine.PipeConn
@@ -64,7 +64,7 @@ type liveRun struct {
 	qseq  int
 }
 
-func newLiveRun(id string, cancel context.CancelFunc) *liveRun {
+func newLiveRun(id string, cancel context.CancelCauseFunc) *liveRun {
 	return &liveRun{id: id, cancel: cancel, subs: map[chan WireEvent]struct{}{}, pending: map[string]chan Answer{}, qstep: map[string]int{}}
 }
 

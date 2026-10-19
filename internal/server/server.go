@@ -197,7 +197,7 @@ func (s *Server) ListenAndServe(ctx context.Context, addr string) error {
 	}
 	s.mu.Lock()
 	for _, l := range s.live {
-		l.cancel()
+		l.cancel(&engine.AbortError{Reason: "runnr serve stopped"})
 	}
 	s.mu.Unlock()
 	s.wg.Wait()
@@ -527,8 +527,12 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		}
 	}
 	id := engine.NewRunID()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancelCause(context.Background())
 	l := newLiveRun(id, cancel)
+	if !req.test && !req.DryRun {
+		// Another runnr (runnr abort) can ask for it to stop.
+		go s.st.WatchAbort(ctx, id, cancel)
+	}
 	l.ctl = engine.NewControls(cv)
 	var ui engine.Interactor = l
 	if req.Unattended {
@@ -542,8 +546,9 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		defer cancel()
+		defer cancel(nil)
 		done <- engine.Execute(ctx, rb, ui, id, engine.Options{
+			Owner:          engine.ThisProcess("server"),
 			Vars:           req.Vars,
 			DryRun:         req.DryRun,
 			Interactive:    !req.Unattended,
@@ -988,14 +993,33 @@ func (s *Server) addNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, n)
 }
 
+// cancelRun aborts a run: one this server is running stops now; one
+// running elsewhere (runnr run in a terminal, another server) is asked to,
+// and one whose process is gone is marked aborted (force: without asking).
 func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
-	l := s.getLive(r.PathValue("id"))
-	if l == nil {
-		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+	var body struct {
+		Author string `json:"author"`
+		Reason string `json:"reason"`
+		Force  bool   `json:"force"`
+	}
+	if r.ContentLength != 0 {
+		if err := decode(r, &body); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	by := nonEmpty(strings.TrimSpace(body.Author), "anonymous")
+	if l := s.getLive(r.PathValue("id")); l != nil {
+		l.cancel(&engine.AbortError{By: by, Reason: strings.TrimSpace(body.Reason)})
+		writeJSON(w, http.StatusOK, store.AbortResult{Aborted: true, Message: "aborted"})
 		return
 	}
-	l.cancel()
-	w.WriteHeader(http.StatusNoContent)
+	res, err := s.st.AbortRun(r.PathValue("id"), by, strings.TrimSpace(body.Reason), body.Force, 8*time.Second)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // ---------- libraries ----------

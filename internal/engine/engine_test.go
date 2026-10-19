@@ -964,3 +964,16 @@ steps:
 		})
 	}
 }
+
+func TestAbortCauseRecorded(t *testing.T) {
+	rb := mustParse(t, `name: ab
+steps:
+  - {name: wait, run: sleep 5}
+`)
+	ctx, cancel := context.WithCancelCause(context.Background())
+	time.AfterFunc(200*time.Millisecond, func() { cancel(&AbortError{By: "ann", Reason: "wrong env"}) })
+	run := Execute(ctx, rb, Unattended{}, "", Options{})
+	if run.Status != StatusAborted || run.Error != "aborted by ann: wrong env" || run.Steps[0].Error != run.Error {
+		t.Errorf("run = %s %q, step %q", run.Status, run.Error, run.Steps[0].Error)
+	}
+}

@@ -100,6 +100,39 @@ type Run struct {
 	// Secrets names the secret variables in State and Inputs; their
 	// values can't be restored from the record.
 	Secrets []string `json:"secrets,omitempty"`
+	// Owner is the runnr process running it (while it runs).
+	Owner *Owner `json:"owner,omitempty"`
+}
+
+// Owner identifies the runnr process running a run, so another runnr can
+// tell whether it's still there (to abort a run whose process is gone).
+type Owner struct {
+	Host string `json:"host"`
+	PID  int    `json:"pid"`
+	Via  string `json:"via"` // cli | server
+}
+
+// ThisProcess is this runnr process as a run's owner.
+func ThisProcess(via string) *Owner {
+	host, _ := os.Hostname()
+	return &Owner{Host: host, PID: os.Getpid(), Via: via}
+}
+
+// AbortError is why a run was aborted from outside it: cancel the run's
+// context with one as the cause and it's recorded as the run's error.
+type AbortError struct {
+	By, Reason string
+}
+
+func (e *AbortError) Error() string {
+	msg := "aborted"
+	if e.By != "" {
+		msg += " by " + e.By
+	}
+	if e.Reason != "" {
+		msg += ": " + e.Reason
+	}
+	return msg
 }
 
 type EventKind string
@@ -181,6 +214,8 @@ type Interactor interface {
 }
 
 type Options struct {
+	// Owner is the process running it, recorded with the run.
+	Owner  *Owner
 	Vars   map[string]string
 	DryRun bool
 	// Interactive controls whether missing inputs are asked for.
@@ -387,7 +422,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	own.Steps = slices.Clone(rb.Steps)
 	rb = &own
 	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
-	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}}
+	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending})
 	}
@@ -471,6 +506,15 @@ func (x *executor) finish(ctx context.Context, err error) {
 	case ctx.Err() != nil || errors.Is(err, errAborted):
 		x.run.Status = StatusAborted
 		x.run.Error = x.mask(err.Error())
+		if ae := (*AbortError)(nil); errors.As(context.Cause(ctx), &ae) {
+			x.run.Error = x.mask(ae.Error())
+			// The step it stopped says why, not "context canceled".
+			for i := range x.run.Steps {
+				if st := &x.run.Steps[i]; st.Status == StatusAborted && st.Error == context.Canceled.Error() {
+					st.Error = x.run.Error
+				}
+			}
+		}
 	default:
 		x.run.Status = StatusFailed
 		x.run.Error = x.mask(err.Error())

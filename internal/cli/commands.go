@@ -77,7 +77,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
@@ -496,9 +496,16 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		ui = engine.Unattended{OnEvent: onEvent, AssumeYes: f.yes}
 	}
 
-	ctx, stop, paused := interruptible()
+	ictx, stop, paused := interruptible()
 	defer stop()
 	term.interrupts = paused
+	// Another runnr (runnr abort, the GUI) can ask for this run to stop.
+	ctx, abort := context.WithCancelCause(ictx)
+	defer abort(nil)
+	id := engine.NewRunID()
+	if !f.noHistory && !f.dry {
+		go st.WatchAbort(ctx, id, abort)
+	}
 	if !f.noHistory {
 		term.addNote = func(step int, text string) error {
 			_, err := st.AddNote(term.runID, step, author(), text)
@@ -510,7 +517,7 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		return err
 	}
 	opts := engine.Options{
-		Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt,
+		Owner: engine.ThisProcess("cli"), Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt,
 		Controls: engine.NewControls(cv), Review: interactive && !f.noReview, Previous: l.previous,
 		State: state, Resumes: resumes, RunbookVersion: ver, Libraries: libs,
 		// Only a recorded run of a saved runbook can run dangerous steps
@@ -524,7 +531,7 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 			}
 		}
 	}
-	run := engine.Execute(ctx, rb, ui, "", opts)
+	run := engine.Execute(ctx, rb, ui, id, opts)
 	if len(run.Edits) > 0 && !f.js {
 		offerSaveEdits(st, run, term, interactive && !f.noHistory)
 	}
@@ -940,6 +947,39 @@ files it sources, how it captures published values).`,
 	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "fill in an input (key=value)")
 	cmd.Flags().StringVarP(&out, "output", "o", "", "write to this file (default: standard output)")
 	cmd.Flags().StringVarP(&format, "format", "f", "", "md, or html for a page to read: sections and steps that expand, code as written or as runnr runs it (default: from -o's extension, else md)")
+	return cmd
+}
+
+func abortCmd(s func() *store.Store) *cobra.Command {
+	var reason string
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "abort <run-id>",
+		Short: "Abort a run that's running elsewhere (another terminal, the GUI), or whose process is gone",
+		Long: `Asks the runnr running a run (a runnr run in another terminal, or runnr
+serve) to abort it, as if its operator had: the step running now is
+stopped and the run ends aborted, ready to resume. In the terminal running
+it, Ctrl-C or [a]bort at a prompt does the same.
+
+When the process that ran it is gone (it exited on this machine), the run
+is marked aborted straight away. --force marks it aborted without waiting,
+for a run left "running" by a process on another machine that's gone.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			res, err := s().AbortRun(args[0], author(), reason, force, 10*time.Second)
+			if err != nil {
+				return err
+			}
+			if res.Aborted {
+				fmt.Printf("■ run %s aborted: %s\n", args[0], res.Message)
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "run %s: %s\n", args[0], res.Message)
+			return ExitError{1}
+		},
+	}
+	cmd.Flags().StringVarP(&reason, "reason", "m", "", "why (recorded with the run)")
+	cmd.Flags().BoolVar(&force, "force", false, "mark it aborted now, without waiting for the process running it")
 	return cmd
 }
 
