@@ -60,6 +60,9 @@ func ExportMarkdown(rb *Runbook, o ExportOptions) (string, error) {
 	if e := strings.TrimSpace(rb.Expect); e != "" {
 		w("**By the end:** %s\n\n", e)
 	}
+	if o := strings.TrimSpace(rb.Overview); o != "" {
+		w("%s\n\n", o)
+	}
 	secs := sectionOrder(rb)
 	if len(secs) > 0 {
 		for _, name := range secs {

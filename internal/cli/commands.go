@@ -736,6 +736,10 @@ would publish show as <name>.`,
 				}
 				fmt.Println(t.c("31", line))
 			}
+			if o := strings.TrimSpace(rb.Overview); o != "" {
+				fmt.Println(t.c("1", "  Overview"))
+				fmt.Println(indent(o))
+			}
 			if rb.Expect != "" {
 				fmt.Println(t.c("32", "  By the end: ") + strings.ReplaceAll(strings.TrimSpace(rb.Expect), "\n", "\n              "))
 			}

@@ -27,8 +27,11 @@ type Runbook struct {
 	// Description says what the runbook is for and what it does.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// Expect is where things stand once the runbook has run.
-	Expect string   `yaml:"expect,omitempty" json:"expect,omitempty"`
-	Tags   []string `yaml:"tags,omitempty" json:"tags,omitempty"`
+	Expect string `yaml:"expect,omitempty" json:"expect,omitempty"`
+	// Overview is the strategy: what the process looks like from a high
+	// level (phases, why in this order, what can go wrong). Markdown.
+	Overview string   `yaml:"overview,omitempty" json:"overview,omitempty"`
+	Tags     []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	// MaintenanceWindow is the time production is down: from the step
 	// marked window: open to the one marked window: close.
 	MaintenanceWindow *MaintenanceWindow `yaml:"maintenance_window,omitempty" json:"maintenance_window,omitempty"`

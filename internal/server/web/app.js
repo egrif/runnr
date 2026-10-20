@@ -179,6 +179,7 @@ async function viewRunbook(name, tab, query) {
       <h1>${esc(name)}</h1>
       ${rb?.description ? `<div class="rb-desc">${esc(rb.description)}</div>` : ""}
       ${rb?.expect ? `<div class="rb-desc muted"><b>By the end:</b> ${esc(rb.expect)}</div>` : ""}
+      ${rb?.overview ? `<details class="rb-overview"><summary>Overview: the process from a high level</summary><div class="md">${md(rb.overview)}</div></details>` : ""}
       ${rb ? membership(name) : ""}
       ${rb ? `<div class="claude-only">${explainBtn(0, "✨ Review this runbook with Claude")}</div>` : ""}
       <div>${(rb?.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>

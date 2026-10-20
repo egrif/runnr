@@ -7,6 +7,7 @@ const FIELD_HELP = {
     name: "The runbook's identifier: lowercase letters, digits, '.', '_' or '-'. Used in URLs and `runnr run <name>`.",
     description: "What the runbook is for and what it does. The first line is shown in lists.",
     expect: "How things should stand once the runbook has run.",
+    overview: "The strategy: what the process looks like from a high level — its phases, why they come in this order, where the risks are. Markdown (headings, lists, **bold**, `code`). Shown, collapsible, above the steps and at the top of the HTML view and the Markdown export.",
     sections: "Descriptions for the groups of steps: for each section name used by steps, what it does and how things should stand at its end.",
     tags: "Labels for filtering the runbook list.",
     shell: "Shell that runs every step (sh by default). Use zsh or bash if your commands need their syntax.",

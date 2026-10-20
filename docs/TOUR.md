@@ -43,10 +43,11 @@ while the run goes on; terminal steps run in the browser too.
 ## HTML view
 
 **View as HTML** on the run page (or `runnr export <runbook> -o page.html`)
-makes one self-contained page to read or share. Sections and steps expand
-and collapse, ways are tabs, and each step's code can be shown as written
-or exactly as runnr runs it: templates filled in with the inputs, the
-files sourced first, and the trap that publishes its outputs.
+makes one self-contained page to read or share: the overview and the
+sections at a glance, then sections and steps that expand and collapse,
+with ways as tabs. Each step's code is in one box with a Copy button, as
+written or as runnr runs it: a script to paste into one shell, with the
+setup (inputs, functions, setup steps) once at the top or in each step.
 
 ![A runbook as an HTML page, with a step shown as runnr runs it](screenshots/html-view.png)
 

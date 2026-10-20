@@ -10,6 +10,9 @@ import (
 func TestRender(t *testing.T) {
 	rb, err := runbook.Parse([]byte(`name: demo
 shell: zsh
+overview: |
+  ## Phases
+  - **Switch** traffic, then verify.
 inputs:
   - {name: env, default: staging}
   - {name: token, secret: true}
@@ -37,10 +40,16 @@ steps:
 	out := string(page)
 	for _, want := range []string{
 		`id="step-2"`, `id="section-cut"`, "Switch it over.",
-		// As written: the template; as runnr runs it: filled in, with the
-		// outputs trap and the functions file.
+		// As written: the template; as runnr runs it: filled in, in a
+		// subshell with the outputs trap, published values passed back.
 		"db=orders-{{.env}}", "db=orders-prod", "trap __runnr_outputs EXIT",
-		". &#39;/tmp/runnr-functions-XXXXXX.sh&#39;",
+		"while IFS= read -r __l", "(\n  __runnr_outputs()",
+		// The setup: inputs, runnr's variables, the functions, setup steps;
+		// once at the top, or in every step.
+		"export env=&#39;prod&#39;", "read -rs token", "export RUNNR_OUTPUT=", "greet() {", "# Setup steps (always)",
+		`id="setup"`, `class="setup-inline"`, `data-setup="step"`,
+		// Checks in one box; the overview; inputs collapsible.
+		"&amp;&amp; echo &#39;✓ up&#39;", "<h4>Phases</h4>", "<li><b>Switch</b> traffic, then verify.</li>", "The process at a glance", `class="inputs-wrap" open`,
 		// Ways as tabs, preferred first; the manual way rendered.
 		`data-tab="1"`, "preferred", "Flip it in the console for prod.",
 		// A value a step publishes isn't known yet; the secret is masked.

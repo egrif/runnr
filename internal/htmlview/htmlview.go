@@ -52,18 +52,14 @@ type input struct {
 	Secret                           bool
 }
 
-type check struct {
-	Name, Written string
-	Run           engine.Invocation
-}
-
 type way struct {
-	Name, Kind      string
-	Preferred       bool
-	Written, Manual string // run (as written) or manual instructions (as written)
-	ManualRendered  string
-	Run             *engine.Invocation
-	Checks          []check
+	Name, Kind string
+	Preferred  bool
+	// Written is the code as written (checks one after another); Script
+	// is the code as runnr runs it, to paste after the setup.
+	Written, Script string
+	// Manual instructions, as written and filled in.
+	Manual, ManualRendered string
 }
 
 type step struct {
@@ -74,11 +70,15 @@ type step struct {
 	Meta                []kv
 	Ways                []way
 	Choose              bool
+	// Setup is what to paste before this step on its own: the common
+	// setup and the setup steps before it.
+	Setup string
 }
 
 type section struct {
 	Name, Anchor, Description, Expect, Offset string
 	Steps                                     []step
+	Window                                    bool // the maintenance window is open during some of it
 }
 
 type library struct {
@@ -89,13 +89,17 @@ type library struct {
 
 type data struct {
 	Name, Description, Expect string
-	Facts                     []kv
-	Inputs                    []input
-	Sections                  []section
-	Libraries                 []library
-	Generated                 string
-	Steps                     int
-	Mark                      template.URL
+	Overview                  template.HTML
+	// Setup is everything runnr gives the steps, with every setup step.
+	Setup     string
+	Facts     []kv
+	Inputs    []input
+	Sections  []section
+	Libraries []library
+	Generated string
+	Steps     int
+	Mark      template.URL
+	Shell     string
 }
 
 // Render writes the page.
@@ -109,13 +113,18 @@ func Render(rb *runbook.Runbook, o Options) ([]byte, error) {
 	}
 	p := engine.NewPreviewer(rb, o.Vars, nil, hasFuncs)
 	plan := p.Plan()
-	d := data{Mark: markURL, Name: rb.Name, Description: strings.TrimSpace(p.Render(rb.Description)), Expect: strings.TrimSpace(p.Render(rb.Expect)), Steps: len(rb.Steps), Generated: o.Now.Format("2 Jan 2006 15:04 MST")}
-
-	shell := rb.Shell
-	if shell == "" {
-		shell = "sh"
+	shellName := rb.Shell
+	if shellName == "" {
+		shellName = "sh"
 	}
-	d.Facts = append(d.Facts, kv{"Shell", shell})
+	sc := &scripter{rb: rb, p: p, vars: o.Vars, libs: o.Libraries, shell: shellName}
+	base := sc.base()
+	d := data{Mark: markURL, Shell: shellName, Setup: sc.setup(base, len(rb.Steps)), Name: rb.Name, Description: strings.TrimSpace(p.Render(rb.Description)), Expect: strings.TrimSpace(p.Render(rb.Expect)), Steps: len(rb.Steps), Generated: o.Now.Format("2 Jan 2006 15:04 MST")}
+
+	if ov := strings.TrimSpace(p.Render(rb.Overview)); ov != "" {
+		d.Overview = markdown(ov)
+	}
+	d.Facts = append(d.Facts, kv{"Shell", shellName})
 	if len(rb.Libraries) > 0 {
 		d.Facts = append(d.Facts, kv{"Libraries", strings.Join(rb.Libraries, ", ")})
 	}
@@ -195,7 +204,12 @@ func Render(rb *runbook.Runbook, o Options) ([]byte, error) {
 			})
 		}
 		sec := &d.Sections[len(d.Sections)-1]
-		sec.Steps = append(sec.Steps, buildStep(p, rb, i, st, plan[i], open, closing, byID))
+		s := buildStep(p, sc, rb, i, st, plan[i], open, closing, byID)
+		s.Setup = sc.setup(base, i)
+		sec.Steps = append(sec.Steps, s)
+		if open >= 0 && i >= open && (closing < 0 || i <= closing) {
+			sec.Window = true
+		}
 	}
 
 	add := func(name, desc string, fns map[string]runbook.Function) {
@@ -216,7 +230,7 @@ func Render(rb *runbook.Runbook, o Options) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func buildStep(p *engine.Previewer, rb *runbook.Runbook, i int, st runbook.Step, v engine.StepView, open, closing int, byID map[string]int) step {
+func buildStep(p *engine.Previewer, sc *scripter, rb *runbook.Runbook, i int, st runbook.Step, v engine.StepView, open, closing int, byID map[string]int) step {
 	s := step{N: i + 1, Anchor: fmt.Sprintf("step-%d", i+1), Name: st.Name, Description: v.Description, Expect: strings.TrimSpace(v.Expect), Choose: st.Choose}
 	b := func(text, class, title string) { s.Badges = append(s.Badges, badge{text, class, title}) }
 	ways := st.WayList()
@@ -311,23 +325,27 @@ func buildStep(p *engine.Previewer, rb *runbook.Runbook, i int, st runbook.Step,
 
 	pref := st.PreferredWay()
 	for j, w := range ways {
-		ws := st
-		if len(st.Ways) > 0 {
-			ws = st.WithWay(w)
-		}
 		wv := way{Name: w.Name, Kind: w.Kind(), Preferred: len(ways) > 1 && j == pref}
 		switch w.Kind() {
 		case "manual":
 			wv.Manual = strings.TrimSpace(w.Manual)
 			wv.ManualRendered = strings.TrimSpace(p.Render(w.Manual))
 		case "checks":
-			for _, c := range w.Checks {
-				wv.Checks = append(wv.Checks, check{Name: c.Name, Written: strings.TrimSpace(c.Run), Run: p.CheckInvocation(i, ws, p.Render(c.Run))})
+			var b strings.Builder
+			for k, c := range w.Checks {
+				if k > 0 {
+					b.WriteString("\n\n")
+				}
+				b.WriteString("# ✓ " + c.Name + " (passes on exit 0)\n" + strings.TrimSpace(c.Run))
 			}
+			wv.Written = b.String()
+			wv.Script = sc.stepScript(i, st, w)
 		default:
 			wv.Written = strings.TrimSpace(w.Run)
-			inv := p.Invocation(i, ws, p.Render(w.Run))
-			wv.Run = &inv
+			wv.Script = sc.stepScript(i, st, w)
+		}
+		if st.Always && wv.Script != "" {
+			wv.Script = "# A setup step: the setup at the top runs it already.\n" + wv.Script
 		}
 		s.Ways = append(s.Ways, wv)
 	}

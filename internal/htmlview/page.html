@@ -37,7 +37,7 @@ h1 { font-size: 28px; margin: 28px 0 6px; letter-spacing: -.01em; }
 
 /* Toolbar */
 .bar { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--line); }
-.bar-in { max-width: 980px; margin: 0 auto; padding: 10px 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.bar-in { max-width: 1180px; margin: 0 auto; padding: 10px 20px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .bar .title { font-weight: 600; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
 button { font: inherit; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button:hover { border-color: var(--muted); }
@@ -102,8 +102,8 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .code { position: relative; margin: 6px 0; }
 .code .file { font-size: 12px; color: var(--muted); font-family: "SF Mono", ui-monospace, Menlo, monospace; margin: 8px 0 3px; }
 pre { margin: 0; background: var(--code-bg); color: var(--code-ink); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; line-height: 1.5; }
-.code .copy { position: absolute; top: 6px; right: 6px; font-size: 11.5px; padding: 2px 8px; opacity: 0; transition: opacity .15s; }
-.code:hover .copy, .code .copy:focus { opacity: 1; }
+.code .copy { position: absolute; top: 6px; right: 6px; font-size: 12px; padding: 3px 10px; background: var(--panel); }
+.code pre { padding-right: 72px; }
 .inv-head { font-size: 13px; margin: 2px 0 6px; }
 .inv-env { font-size: 13px; margin: 4px 0 8px; }
 .inv-env summary { color: var(--muted); }
@@ -116,6 +116,28 @@ pre { margin: 0; background: var(--code-bg); color: var(--code-ink); border: 1px
 /* Mode: as written / as runnr runs it */
 .step[data-mode="written"] .as-run { display: none; }
 .step[data-mode="run"] .as-written { display: none; }
+/* Setup once at the top, or in every step's script. */
+body[data-setup="once"] .setup-inline { display: none; }
+body[data-setup="step"] #setup, body:not([data-any-run]) #setup { display: none; }
+body:not([data-any-run]) .setup-choice { display: none; }
+.setup-inline { color: var(--muted); }
+#setup { padding: 4px 18px 14px; margin: 16px 0; }
+#setup h2 { font-size: 16px; margin: 12px 0 4px; }
+
+/* The process at a glance */
+.glance { padding: 6px 18px 14px; margin: 16px 0; }
+.glance > summary h2 { display: inline; font-size: 17px; margin: 0; }
+.glance .md h3, .glance .md h4 { margin: 14px 0 4px; font-size: 15px; }
+.glance .md p, .glance .md ul, .glance .md ol { margin: 6px 0; }
+.outline { list-style: none; padding: 0; margin: 12px 0 0; border-top: 1px solid var(--line); }
+.outline li { padding: 8px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 7em 1fr; gap: 2px 12px; }
+.outline li:last-child { border-bottom: 0; }
+.outline .when { color: var(--violet); font-variant-numeric: tabular-nums; }
+.outline .what a { font-weight: 600; color: var(--ink); text-decoration: none; }
+.outline .what .muted { display: block; font-size: 13.5px; }
+.outline .down { color: var(--danger); font-size: 12px; font-weight: 600; }
+details.inputs-wrap > summary { list-style: none; cursor: pointer; }
+details.inputs-wrap > summary h2 { display: inline; }
 
 /* Ways as tabs */
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 6px 0 8px; flex-wrap: wrap; }
@@ -144,7 +166,7 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
 }
 </style>
 </head>
-<body>
+<body data-setup="once">
 <div class="bar"><div class="bar-in">
   <span class="brand" title="Made by runnr"><img src="{{.Mark}}" alt="">runnr</span>
   <span class="title">· {{.Name}}</span>
@@ -153,8 +175,13 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
   <span class="seg-label">Code:</span>
   <span class="seg" role="group" aria-label="How to show code">
     <button type="button" data-mode-all="written" class="on" title="The step's code as written in the runbook, with its templates">As written</button>
-    <button type="button" data-mode-all="run" title="Exactly what runnr hands the shell: templates filled in, the files it sources, and how it captures published values">As runnr runs it</button>
+    <button type="button" data-mode-all="run" title="A script to paste into one shell that runs each step as runnr does: templates filled in, in a shell of its own, with what it publishes passed on">As runnr runs it</button>
   </span>
+  <span class="setup-choice"><span class="seg-label">Setup:</span>
+  <span class="seg" role="group" aria-label="Where the setup goes">
+    <button type="button" data-setup="once" class="on" title="The setup (inputs, functions, setup steps) once, at the top: paste it first">At the top</button>
+    <button type="button" data-setup="step" title="Every step's script starts with the setup it needs, so each can be pasted on its own">In each step</button>
+  </span></span>
 </div></div>
 <main>
 <h1>{{.Name}}</h1>
@@ -167,7 +194,8 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
     {{range .Facts}}<dt>{{.K}}</dt><dd>{{.V}}</dd>{{end}}
   </dl>
   {{if .Inputs}}
-  <h2 class="sub">Inputs</h2>
+  <details class="inputs-wrap" open>
+  <summary><span class="chev">▸</span> <h2 class="sub">Inputs ({{len .Inputs}})</h2></summary>
   <table class="inputs">
     <tr><th>Name</th><th>Value used here</th><th>What it's for</th></tr>
     {{range .Inputs}}<tr>
@@ -176,7 +204,25 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
       <td class="muted">{{.Description}}</td>
     </tr>{{end}}
   </table>
+  </details>
   {{end}}
+</section>
+
+{{if or .Overview (gt (len .Sections) 1)}}
+<details class="card glance" open>
+  <summary><span class="chev">▸</span> <h2>The process at a glance</h2></summary>
+  {{with .Overview}}<div class="md">{{.}}</div>{{end}}
+  <ol class="outline">
+    {{range .Sections}}<li><span class="when">{{or .Offset "—"}}</span><span class="what"><a href="#{{if .Name}}{{.Anchor}}{{else}}step-{{(index .Steps 0).N}}{{end}}">{{or .Name "Before the sections"}}</a> <span class="muted small">· {{len .Steps}} step{{if ne (len .Steps) 1}}s{{end}}</span>{{if .Window}} <span class="down">● production down</span>{{end}}
+      {{with .Description}}<span class="muted">{{.}}</span>{{end}}{{with .Expect}}<span class="muted"><b>By the end:</b> {{.}}</span>{{end}}</span></li>{{end}}
+  </ol>
+</details>
+{{end}}
+
+<section class="card" id="setup">
+  <h2>Setup</h2>
+  <p class="note">Paste this first, into one {{.Shell}}: then each step's “as runnr runs it” script, in order.</p>
+  <div class="code"><pre><code>{{.Setup}}</code></pre></div>
 </section>
 
 {{range .Sections}}
@@ -207,16 +253,11 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
           <div class="as-written"><div class="manual">{{$w.Manual}}</div></div>
           <div class="as-run"><div class="manual">{{$w.ManualRendered}}</div>
             <p class="note">Nothing runs: runnr shows these instructions and waits for you to mark the step done, skipped or failed.</p></div>
-        {{else if eq $w.Kind "checks"}}
-          {{range $w.Checks}}
-          <div class="check-name">{{.Name}}</div>
-          <div class="as-written"><div class="code"><pre><code>{{.Written}}</code></pre></div></div>
-          <div class="as-run">{{template "inv" .Run}}</div>
-          {{end}}
-          <p class="note">Each check passes when its command exits 0.</p>
         {{else}}
           <div class="as-written"><div class="code"><pre><code>{{$w.Written}}</code></pre></div></div>
-          <div class="as-run">{{template "inv" $w.Run}}</div>
+          <div class="as-run"><div class="code"><pre><code>{{with $step.Setup}}<span class="setup-inline">{{.}}
+
+</span>{{end}}{{$w.Script}}</code></pre></div></div>
         {{end}}
       </div>
       {{end}}
@@ -238,18 +279,8 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
 {{end}}
 {{end}}
 
-<footer>Made by runnr · {{.Generated}} · “As runnr runs it” shows what each step's shell is given; values that steps publish while running show as &lt;name&gt;, and the paths of runnr's temporary files as XXXXXX.</footer>
+<footer>Made by runnr · {{.Generated}} · “As runnr runs it” is a script to paste into one shell, after the setup: each step runs in a shell of its own, as in a run, and what it publishes comes back as environment variables. Values only a run can know show as &lt;name&gt;.</footer>
 </main>
-
-{{define "inv"}}
-<div class="inv-head">runnr runs <code>{{.Shell}} -c "$script"</code>{{with .Dir}} in <code>{{.}}</code>{{end}}{{with .Timeout}} · timeout {{.}}{{end}}{{if .TTY}} · in a terminal you're connected to{{end}}</div>
-<details class="inv-env"><summary>Environment runnr adds ({{len .Values}} values, {{len .Env}} more)</summary>
-  <div class="vars">Inputs and values published by earlier steps: {{range $i, $v := .Values}}{{if $i}}, {{end}}<code>${{$v}}</code>{{end}}</div>
-  <div class="vars">{{range $i, $v := .Env}}{{if $i}}, {{end}}<code>{{$v}}</code>{{end}}</div>
-</details>
-<div class="code"><div class="file">$script{{if .StepFile}} · loads the <a href="#functions">functions</a> (and any profile files) first, then the step's file{{end}}</div><pre><code>{{.Script}}</code></pre></div>
-{{with .StepFile}}<div class="code"><div class="file" title="The step is read from a file so it's parsed after the functions are defined">/tmp/runnr-step-XXXXXX/step.sh</div><pre><code>{{.}}</code></pre></div>{{end}}
-{{end}}
 
 <script>
 (() => {
@@ -257,13 +288,19 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
   // Expand / collapse everything.
   $$("[data-all]").forEach((b) => b.onclick = () => {
     const open = b.dataset.all === "open";
-    $$("details.section, details.step, details.lib").forEach((d) => d.open = open);
+    $$("details.section, details.step, details.lib, details.glance, details.inputs-wrap").forEach((d) => d.open = open);
   });
   // How a step shows its code: per step, or all at once.
   const setMode = (step, mode) => {
     step.dataset.mode = mode;
     $$(".codehead [data-mode]", step).forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+    // The setup (and the choice of where it goes) shows once any step is shown as run.
+    document.body.toggleAttribute("data-any-run", $$("details.step[data-mode=run]").length > 0);
   };
+  $$("button[data-setup]").forEach((b) => b.onclick = () => {
+    $$("button[data-setup]").forEach((x) => x.classList.toggle("on", x === b));
+    document.body.dataset.setup = b.dataset.setup;
+  });
   $$("[data-mode-all]").forEach((b) => b.onclick = () => {
     $$("[data-mode-all]").forEach((x) => x.classList.toggle("on", x === b));
     $$("details.step").forEach((s) => setMode(s, b.dataset.modeAll));

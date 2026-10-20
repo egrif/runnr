@@ -681,6 +681,7 @@ function renderStruct(ed) {
         ${row("Name", H.runbook.name, control("name", "text", d.name))}
         ${row("What it's for", H.runbook.description, control("description", "area", d.description, { rows: 3 }))}
         ${row("By the end", H.runbook.expect, control("expect", "area", d.expect))}
+        ${row("Overview", H.runbook.overview, control("overview", "area", d.overview, { rows: 6, placeholder: "the strategy: the phases, why in this order, what can go wrong (Markdown)" }))}
         ${row("Tags", H.runbook.tags, control("tags", "list", d.tags, { placeholder: "ops, deploy" }))}
         ${row("Libraries", H.runbook.libraries, control("libraries", "list", d.libraries, { placeholder: "aurora-helpers" }))}
       </div>

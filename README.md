@@ -236,6 +236,9 @@ name: deploy-service            # lowercase identifier
 description: |                  # what it's for and what it does (first line shows in lists)
   Deploy a service with a short confirmation gate.
 expect: The new version serves traffic and dashboards are green.   # how things stand at the end
+overview: |                     # the strategy, from a high level (Markdown): run page, HTML view, export
+  Build and push, then roll out region by region. Stop at the first region
+  whose error rate rises: the rollback is redeploying the old tag.
 sections:                       # what each group of steps does, and how things stand after it
   - name: Deploy
     description: Roll the new version out.
@@ -286,6 +289,7 @@ steps:
     when: '{{eq .env "production"}}'
     unattended: skip            # fail (default) | skip | pass
   - name: Deploy
+    section: Deploy             # starts the Deploy section
     run: ./deploy.sh {{quote .version}}
     confirm: true               # ask first; unattended needs --yes
     dangerous: true             # out of sequence, type the step number to run it
@@ -316,7 +320,7 @@ steps:
     choose: true                # ask which way each time (else: the preferred)
     ways:
       - { name: Scripted, run: ./rotate.sh, preferred: true }
-      - { name: Manual, manual: Update the secrets in the console, then restart. }
+      - { name: Manual, manual: "Update the secrets in the console, then restart." }
 ```
 
 Each step has exactly one of `run`, `manual`, `checks` or `ways`. Every input and published
@@ -436,14 +440,19 @@ values.
 
 **HTML view.** `runnr export <runbook> -o page.html` (or **View as HTML**
 on the run page) writes one self-contained page to read or share:
-sections and steps that expand and collapse, ways as tabs (the preferred
-one first), checks one by one, and each step's code either **as written**
-(with its templates) or **as runnr runs it**: templates filled in with the
-inputs, then exactly what the step's shell is given (the shell, directory
-and timeout; the files sourced first: profile files, then the functions;
-the trap that publishes its outputs), with the environment runnr adds.
-Values that steps publish during a run show as `<name>`, secret inputs as
-`****`, and runnr's temporary files as `XXXXXX` paths.
+the overview and the sections at a glance, collapsible inputs, sections
+and steps that expand and collapse, and ways as tabs (the preferred one
+first). Each step's code is in one box with a Copy button, either **as
+written** (with its templates; checks one after another) or **as runnr
+runs it**: a script to paste into one shell, in which the step runs in a
+shell of its own as in a run (templates filled in, its directory and
+environment, the trap that publishes its outputs), and what it publishes
+comes back as environment variables for the steps after it. The setup it
+needs (inputs, runnr's variables, the runbook's environment, profile
+files, functions and the setup steps) goes either **once, at the top**,
+or **in each step**, so any step can be pasted on its own. Values only a
+run can know show as `<name>`, secret inputs as `****` (the setup asks for
+them).
 
 **Schedule.** Plan runs ahead: `runnr schedule add <runbook> --at "2026-11-01
 22:00" -v env=prod` (for a runbook with a window, the time is when it
