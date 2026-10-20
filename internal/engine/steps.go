@@ -56,7 +56,8 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 	x.openWindow(i)
 
 	confirmed := false
-	if _, before, _ := x.ctl.Get(i); (x.takePause(i) || before) && x.canPause() {
+	// Optional steps aren't required: an interactive run asks first.
+	if _, before, _ := x.ctl.Get(i); (x.takePause(i) || before || (step.Optional && !x.opts.DryRun)) && x.canPause() {
 		d, err := x.ui.(Stepper).BeforeStep(ctx, x.View(i))
 		if err != nil {
 			return x.fail(i, err)
@@ -125,6 +126,12 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 		res.Error = x.mask(a.err)
 		if step.ContinueOnError {
 			res.Status, res.Note = StatusFailed, "continue_on_error"
+			x.stepDone(i)
+			return nil
+		}
+		if step.Optional && !x.opts.Interactive {
+			// Not required: nobody's there to decide, so carry on without it.
+			res.Status, res.Note = StatusFailed, "optional: carried on without it"
 			x.stepDone(i)
 			return nil
 		}

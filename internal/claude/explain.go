@@ -19,7 +19,7 @@ How runnr runs a runbook (YAML):
 - Values carry over as the run's state: every input, and every variable a step publishes (outputs / secret_outputs name shell variables captured when the step ends; capture saves stdout; lines written to $RUNNR_OUTPUT / $RUNNR_SECRET). Later steps get all of them as {{.name}} templates and as $name environment variables. secret_outputs are masked everywhere and not stored.
 - Steps marked always (usually the first, "setup" steps) run on every run, resume and later start, to rebuild that state. Most steps depend on what they publish.
 - run is a script; manual is instructions for a person; checks are commands that each pass on exit 0 (repeat retries the group; retry_checks says what a retry reruns); ways are alternative ways to do a step (one preferred). tty means it needs a keyboard; background runs alongside later steps until stop_after.
-- confirm asks first; dangerous needs a typed double check when out of sequence; when skips a step unless its template is true; continue_on_error carries on after a failure.
+- confirm asks first; dangerous needs a typed double check when out of sequence; when skips a step unless its template is true; continue_on_error carries on after a failure; optional steps aren't required (interactive runs ask before them; unattended runs carry on if they fail).
 - Templates are Go templates ({{.x}}, quote, default, eq...). Library functions (listed below the runbook) are shell functions every step can call.
 - maintenance_window marks where production is down (window: open/close steps).
 
@@ -52,7 +52,7 @@ func RunbookContext(rb *runbook.Runbook, raw []byte, libs []*runbook.Library) st
 		for _, t := range []struct {
 			on   bool
 			name string
-		}{{st.Always, "always (setup)"}, {st.Confirm, "confirm"}, {st.Dangerous, "dangerous"}, {st.Background, "background"}, {st.Window != "", "window " + st.Window}} {
+		}{{st.Always, "always (setup)"}, {st.Optional, "optional"}, {st.Confirm, "confirm"}, {st.Dangerous, "dangerous"}, {st.Background, "background"}, {st.Window != "", "window " + st.Window}} {
 			if t.on {
 				tags = append(tags, t.name)
 			}

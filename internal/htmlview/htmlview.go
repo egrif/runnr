@@ -228,6 +228,9 @@ func buildStep(p *engine.Previewer, rb *runbook.Runbook, i int, st runbook.Step,
 	if st.Always {
 		b("always", "setup", "Runs on every run, resume and later start, to set up values later steps use")
 	}
+	if st.Optional {
+		b("optional", "optional", "Not required: an interactive run asks before it, and the run can carry on without it")
+	}
 	if i == open {
 		b("opens the window", "window", "Production is down from here")
 	}

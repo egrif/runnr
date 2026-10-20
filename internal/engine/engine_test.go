@@ -977,3 +977,29 @@ steps:
 		t.Errorf("run = %s %q, step %q", run.Status, run.Error, run.Steps[0].Error)
 	}
 }
+
+func TestOptionalSteps(t *testing.T) {
+	rb := mustParse(t, `name: opt
+steps:
+  - {name: a, run: 'true'}
+  - {name: nice to have, run: 'exit 3', optional: true}
+  - {name: c, run: 'true'}
+`)
+	if rb.Steps[1].Optional != true {
+		t.Fatal("optional not parsed")
+	}
+	// Unattended: it runs, fails, and the run carries on without it.
+	run := Execute(context.Background(), rb, Unattended{}, "", Options{})
+	if run.Status != StatusSucceeded || run.Steps[1].Status != StatusFailed || !run.Steps[1].Optional || run.Steps[2].Status != StatusSucceeded {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+	// Interactive: it asks before the optional step only; skipping it is fine.
+	ui := &stepper{decisions: []StepDecision{StepSkip}}
+	run = Execute(context.Background(), rb, ui, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded || run.Steps[1].Status != StatusSkipped || len(ui.decisions) != 0 {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+	if _, err := runbook.Parse([]byte("name: x\nsteps: [{name: s, run: 'true', always: true, optional: true}]\n")); err == nil {
+		t.Fatal("always and optional together should be invalid")
+	}
+}

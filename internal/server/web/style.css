@@ -519,3 +519,7 @@ body.claude-on .icon-btn.claude-only { display: inline-flex; }
 .ex-q { margin: 12px 0 4px; padding: 6px 10px; border-radius: 8px; background: var(--bg); font-weight: 600; }
 .ex-ask { gap: 6px; }
 .ex-ask input { flex: 1; }
+
+/* Optional steps: not required. */
+.badge-k.opt { border-style: dashed; color: var(--warn); border-color: var(--warn); }
+.optional-note { margin: 0 0 8px; color: var(--warn); }

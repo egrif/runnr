@@ -58,6 +58,9 @@ func (t *Terminal) header(i int, r *engine.StepResult, dim bool) string {
 	if r.Owner != "" {
 		title += t.c("2", " ("+r.Owner+")")
 	}
+	if r.Optional {
+		title += " " + t.c("33", "◇ optional, not required")
+	}
 	if dim {
 		fmt.Fprintf(&b, "\n%s %s", t.c("2", n), t.c("2", title))
 	} else {
@@ -418,7 +421,7 @@ func (t *Terminal) viewText(v engine.StepView, in string) string {
 	for _, f := range []struct {
 		on   bool
 		name string
-	}{{true, v.Kind}, {v.Choose, "asks which way"}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.Dangerous, "⚠ dangerous"}, {v.StopAfter != "", "until " + v.StopAfter}, {v.When != "", "when " + v.When},
+	}{{true, v.Kind}, {v.Optional, "optional"}, {v.Choose, "asks which way"}, {v.Always, "always"}, {v.Confirm, "confirms on its own"}, {v.Dangerous, "⚠ dangerous"}, {v.StopAfter != "", "until " + v.StopAfter}, {v.When != "", "when " + v.When},
 		{v.Window != "", "window " + v.Window + "s"}, {v.Offset != "", "planned T" + v.Offset}, {v.IgnoredOffset != "", "T" + v.IgnoredOffset + " out of order, ignored"},
 		{v.Timeout != "", "timeout " + v.Timeout}, {v.Retries > 0, fmt.Sprintf("retries %d", v.Retries)}} {
 		if f.on {
@@ -495,6 +498,9 @@ func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.St
 	prompt := "[r]un"
 	if r := t.previousStep(v.Index); r != nil && r.Status != engine.StatusPending {
 		fmt.Fprintln(t.out, t.c("2", fmt.Sprintf("  last time: %s %s %s (l to see)", statusIcon[r.Status], r.Status, r.Note)))
+	}
+	if v.Optional {
+		fmt.Fprintln(t.out, t.c("33", "  ◇ Optional: this step isn't required. Run it, or skip it and carry on."))
 	}
 	prompt += " / [s]kip / [c]ontinue without pausing / [a]bort"
 	a, err := t.stepPrompt(ctx, v.Index, prompt, opts, "r")
@@ -601,6 +607,9 @@ func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, c *engine
 				tags = append(tags, t.c("33", "⏸ after"))
 			}
 			flags := v.Kind
+			if v.Optional {
+				flags += " · " + t.c("33", "optional")
+			}
 			if v.Confirm {
 				flags += " · confirms on its own"
 			}

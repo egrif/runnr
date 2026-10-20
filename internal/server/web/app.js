@@ -382,7 +382,7 @@ function renderRun(state) {
         <div class="step-head" data-toggle="${i}">
           <span class="icon s-${s.status}">${ICONS[s.status] || ""}</span>
           <span class="n">${i + 1}</span>
-          <span class="name">${esc(s.name)} <span class="kind">${esc(s.kind)}</span>${s.edited ? ` <span class="badge-k warn" title="Changed during this run">edited</span>` : ""}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
+          <span class="name">${esc(s.name)} <span class="kind">${esc(s.kind)}</span>${s.optional ? ` <span class="badge-k opt" title="Not required: the run asks before it, and can carry on without it">optional</span>` : ""}${s.edited ? ` <span class="badge-k warn" title="Changed during this run">edited</span>` : ""}${s.owner ? ` <span class="owner">${esc(s.owner)}</span>` : ""}</span>
           <span class="meta">${[s.way && `way: ${s.way}`, s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}${stepTiming(state, i)}</span>
           ${state.preview?.[i]?.confirm ? `<span class="badge-k warn" title="Asks before running">confirms on its own</span>` : ""}
           ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<span class="last s-${esc(state.prev.steps[i].status)}" title="Last time: ${esc(state.prev.steps[i].status)}">${ICONS[state.prev.steps[i].status]}</span>` : ""}
@@ -676,6 +676,7 @@ function renderQuestion(q, runId) {
   let text = q.type === "choose" ? `<pre class="cmd">${esc(q.text)}</pre>` : q.type === "danger" ? `<p class="danger-why">Type <b>${esc(q.confirm)}</b> (the step number) to run it anyway.</p><pre class="cmd">${esc(q.text)}</pre>`
     : ["confirm", "before"].includes(q.type) ? `<pre class="cmd">${esc(q.text)}</pre>` : q.text ? `<div class="text">${esc(q.text)}</div>` : "";
   if (q.expect) text += `<div class="expect"><b>Expect:</b> ${esc(q.expect)}</div>`;
+  if (q.optional) text = `<p class="optional-note">◇ <b>Optional:</b> this step isn't required. Run it, or skip it and carry on.</p>` + text;
   if (q.options?.includes("shell")) text += `<div class="muted">“Open shell” opens a terminal below, with this run's variables loaded and this step's commands beside it. The question stays here for when you're back.</div>`;
   return `<div class="question ${q.type === "danger" ? "q-danger" : ""}"><h3>${esc(q.title)}</h3>${text}<div class="actions">${body}</div></div>`;
 }
@@ -773,6 +774,7 @@ steps:
     run: terraform apply
     tty: true                # needs a keyboard: runs on a terminal you type into; output still recorded
     continue_on_error: true
+    optional: true           # not required: interactive runs ask first; unattended runs carry on if it fails
     dir: /tmp
     env: { FOO: bar }
   - name: Human step

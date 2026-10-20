@@ -71,6 +71,7 @@ function stepConfig(s) {
     ["Confirm first", H.confirm, s.confirm && yes],
     ["Dangerous", H.dangerous, s.dangerous && yes],
     ["Always run", H.always, s.always && yes],
+    ["Optional (not required)", H.optional, s.optional && yes],
     ["Keep going if it fails", H.continue_on_error, s.continue_on_error && yes],
     ["Needs a terminal", H.tty, s.tty && yes],
     ["Background", H.background, s.background && (s.stop_after ? `until ${s.stop_after} finishes` : "until the run ends")],

@@ -66,9 +66,11 @@ type StepResult struct {
 	Alternative string       `json:"alternative,omitempty"`
 	Sub         []StepResult `json:"sub,omitempty"`
 	// Edited: the step was changed during the run.
-	Edited  bool      `json:"edited,omitempty"`
-	Started time.Time `json:"started,omitzero"`
-	Ended   time.Time `json:"ended,omitzero"`
+	Edited bool `json:"edited,omitempty"`
+	// Optional: the step isn't required.
+	Optional bool      `json:"optional,omitempty"`
+	Started  time.Time `json:"started,omitzero"`
+	Ended    time.Time `json:"ended,omitzero"`
 }
 
 type Run struct {
@@ -267,6 +269,7 @@ type StepView struct {
 	Confirm       bool     `json:"confirm,omitempty"`
 	Dangerous     bool     `json:"dangerous,omitempty"`
 	Always        bool     `json:"always,omitempty"`
+	Optional      bool     `json:"optional,omitempty"`
 	Timeout       string   `json:"timeout,omitempty"`
 	Retries       int      `json:"retries,omitempty"`
 	Outputs       []string `json:"outputs,omitempty"`
@@ -430,7 +433,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
-		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending})
+		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
 	}
 
 	if opts.Previous != nil {

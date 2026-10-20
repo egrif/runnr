@@ -55,6 +55,7 @@ const FIELD_HELP = {
     background: "Start the command and move on; it keeps running on its own terminal (a tab in the GUI, w in the CLI) until the “stop after” step finishes, or the run ends.",
     stop_after: "The step after which this background command is stopped (hung up).",
     continue_on_error: "If the step fails, record it and carry on instead of stopping.",
+    optional: "The step isn't required. It's labelled optional everywhere; an interactive run asks before it (run or skip), and an unattended run carries on if it fails. It can't also be always.",
     when: "Only run the step if this template is true, e.g. {{eq .env \"production\"}}. Otherwise it's skipped.",
     timeout: "Stop the command if it runs longer than this, e.g. 30s, 10m.",
     retries: "Run a failing command again this many times before asking what to do.",
@@ -186,7 +187,7 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
 
     <h2 id="help-steps">Steps</h2>
     <p>Every step has a <code>name</code> and exactly one of <code>run</code>, <code>manual</code>, <code>checks</code> or <code>ways</code>. The rest is optional.</p>
-    ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["confirm"], ["dangerous"], ["choose"], ["window"], ["window_offset"], ["always"], ["when"], ["continue_on_error"],
+    ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["confirm"], ["dangerous"], ["choose"], ["window"], ["window_offset"], ["always"], ["optional"], ["when"], ["continue_on_error"],
       ["tty"], ["background"], ["stop_after"], ["timeout"], ["retries"], ["retry_delay"], ["dir"], ["step_shell", "shell"], ["step_env", "env"],
       ["outputs"], ["secret_outputs", "secret_outputs"], ["capture"], ["unattended"]])}
 

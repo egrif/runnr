@@ -116,7 +116,10 @@ type Step struct {
 	Always          bool   `yaml:"always,omitempty" json:"always,omitempty"`
 	Capture         string `yaml:"capture,omitempty" json:"capture,omitempty"`
 	ContinueOnError bool   `yaml:"continue_on_error,omitempty" json:"continue_on_error,omitempty"`
-	Unattended      string `yaml:"unattended,omitempty" json:"unattended,omitempty"`
+	// Optional steps aren't required: interactive runs ask before them
+	// (run or skip), and if one fails the run can carry on without it.
+	Optional   bool   `yaml:"optional,omitempty" json:"optional,omitempty"`
+	Unattended string `yaml:"unattended,omitempty" json:"unattended,omitempty"`
 	// Description says what this step is doing and why. Template.
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	// Expect is how things should stand when the step is done (shown when
@@ -787,6 +790,9 @@ func validateStep(where string, s Step) []error {
 	}
 	if s.ID != "" && !identRe.MatchString(s.ID) {
 		add("id %q must be a valid identifier", s.ID)
+	}
+	if s.Optional && s.Always {
+		add("a step can't be both always (setup that every run needs) and optional")
 	}
 	if s.Capture != "" && !identRe.MatchString(s.Capture) {
 		add("capture %q must be a valid identifier", s.Capture)

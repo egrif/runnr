@@ -179,6 +179,7 @@ function stepKindName(s) {
 function stepBadges(s) {
   return [
     `<span class="badge-k">${stepKindName(s)}</span>`,
+    s.optional && `<span class="badge-k opt" title="Not required: the run asks before it, and can carry on without it">optional</span>`,
     s.stop_after && `<span class="badge-k" title="Runs in the background until this step finishes">until ${esc(s.stop_after)}</span>`,
     s.repeat && `<span class="badge-k" title="Re-runs the checks until they all pass">repeats</span>`,
     s.confirm && `<span class="badge-k warn" title="Asks before running, even without pauses">confirms on its own</span>`,

@@ -779,6 +779,9 @@ would publish show as <name>.`,
 				if v.Always {
 					flags = append(flags, "always")
 				}
+				if v.Optional {
+					flags = append(flags, t.c("33", "optional"))
+				}
 				if v.Confirm {
 					flags = append(flags, "confirm")
 				}

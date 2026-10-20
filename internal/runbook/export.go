@@ -185,6 +185,9 @@ func ExportMarkdown(rb *Runbook, o ExportOptions) (string, error) {
 		if st.Always {
 			flags = append(flags, "setup")
 		}
+		if st.Optional {
+			flags = append(flags, "optional: not required")
+		}
 		if st.Background {
 			flags = append(flags, "in its own terminal")
 		}

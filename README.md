@@ -136,6 +136,12 @@ earlier run finished). Otherwise (a later start, skipped steps, Run this, a
 runbook file) it lists what didn't run and waits for you to type the step
 number. Unattended runs refuse it then, even with `--yes`.
 
+**Optional steps.** A step with `optional: true` isn't required. It's
+labelled optional in the plan, the step list, the GUI and the exports. An
+interactive run stops before it to ask: run it, or skip it and carry on. An
+unattended run runs it, and if it fails, records the failure and carries on
+without it. (A step can't be both `always` and `optional`.)
+
 At any step prompt you can also:
 
 - **`v`**: view the step as it will run: commands with current values filled
@@ -291,6 +297,10 @@ steps:
   - name: Smoke test
     run: curl -fsS https://example.com/healthz
     continue_on_error: true
+  - name: Post the release notes
+    run: ./post-notes.sh
+    optional: true              # not required: labelled optional; interactive runs ask first
+                                # (run or skip); unattended runs carry on if it fails
   - id: watcher
     name: Status dashboard
     run: ./status.sh --watch

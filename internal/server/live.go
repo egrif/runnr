@@ -25,6 +25,8 @@ type Question struct {
 	Input   *runbook.Input `json:"input,omitempty"`
 	// Confirm is what must be typed to choose "run" (danger questions).
 	Confirm string `json:"confirm,omitempty"`
+	// Optional: the step isn't required (run or skip it).
+	Optional bool `json:"optional,omitempty"`
 	// Reopenable is the step (1-based) that can be re-opened while this
 	// question waits: the last one that succeeded (0: none).
 	Reopenable int `json:"reopenable,omitempty"`
@@ -354,7 +356,11 @@ func (l *liveRun) AfterStep(ctx context.Context, v engine.StepView, res engine.S
 // BeforeStep implements engine.Stepper for step mode.
 func (l *liveRun) BeforeStep(ctx context.Context, v engine.StepView) (engine.StepDecision, error) {
 	opts := []string{"run", "skip", "continue", "abort"}
-	a, err := l.askStep(ctx, Question{Type: "before", Step: v.Index, Title: "Next: " + v.Name, Text: v.Command, Expect: v.Expect, Options: opts})
+	q := Question{Type: "before", Step: v.Index, Title: "Next: " + v.Name, Text: v.Command, Expect: v.Expect, Options: opts, Optional: v.Optional}
+	if v.Optional {
+		q.Title = "Optional: " + v.Name
+	}
+	a, err := l.askStep(ctx, q)
 	if err != nil {
 		return "", err
 	}
