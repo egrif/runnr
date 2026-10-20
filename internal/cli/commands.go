@@ -1121,6 +1121,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		filter string
 		limit  int
 		asJSON bool
+		raw    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "history [run-id]",
@@ -1134,6 +1135,10 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				}
 				if asJSON {
 					return printJSON(r)
+				}
+				if raw {
+					fmt.Print(engine.RawLog(r))
+					return nil
 				}
 				printRun(r)
 				return nil
@@ -1162,6 +1167,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&filter, "runbook", "r", "", "only runs of this runbook")
+	cmd.Flags().BoolVar(&raw, "raw", false, "show the run as a plain log: each step's command, output and result in order")
 	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "max runs to list")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	cmd.AddCommand(pruneCmd(s))

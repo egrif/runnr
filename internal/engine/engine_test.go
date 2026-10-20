@@ -1032,3 +1032,21 @@ steps:
 		t.Fatal("a background step's ways must all be commands")
 	}
 }
+
+func TestRawLog(t *testing.T) {
+	rb := mustParse(t, `name: raw
+steps:
+  - {name: hello, run: 'echo hi there'}
+  - {name: probe, checks: [{name: up, run: 'echo pong'}]}
+  - {name: broken, run: 'echo oops; exit 3', continue_on_error: true}
+  - {name: never, run: 'true', when: 'false'}
+`)
+	run := Execute(context.Background(), rb, Unattended{}, "", Options{Vars: map[string]string{}})
+	log := RawLog(run)
+	for _, want := range []string{"run " + run.ID + " · raw", "▶ 1. hello (run)", "$ echo hi there", "hi there", "✔ succeeded · exit 0",
+		"✓ check: up (attempt 1)", "pong", "✘ failed · exit 3", "error: exit status 3", "↷ skipped", "condition false"} {
+		if !strings.Contains(log, want) {
+			t.Errorf("raw log lacks %q:\n%s", want, log)
+		}
+	}
+}

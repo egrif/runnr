@@ -363,7 +363,7 @@ function renderRun(state) {
       </div>
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
-      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
+      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${editsBanner(run, state)}
@@ -448,6 +448,26 @@ function renderRun(state) {
   main.querySelectorAll("[data-edit-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); editRunStep(state, +b.dataset.editStep); }));
   $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
   $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
+  $("#raw-log") && ($("#raw-log").onclick = async () => {
+    state.raw = !state.raw;
+    if (state.raw && state.rawText == null) {
+      try { state.rawText = await (await fetch(`/api/runs/${enc(run.id)}/log`, { headers: { "X-Runnr": "1" } })).text(); }
+      catch (e) { state.raw = false; return toast(e.message); }
+    }
+    renderRun(state);
+  });
+  if (state.raw && state.rawText != null) {
+    const panel = document.createElement("div");
+    panel.className = "raw-log";
+    panel.innerHTML = `<div class="row"><span class="muted small">The run as a plain log, credentials masked.</span><span class="spacer"></span>
+        <button type="button" data-raw-copy>Copy</button><a class="button" href="/api/runs/${enc(run.id)}/log?download=1">Download</a></div>
+      <pre class="log">${esc(state.rawText)}</pre>`;
+    panel.querySelector("[data-raw-copy]").onclick = async (e) => {
+      try { await navigator.clipboard.writeText(state.rawText); e.target.textContent = "Copied"; } catch { toast("Select the text and copy it"); }
+      setTimeout(() => (e.target.textContent = "Copy"), 1400);
+    };
+    main.querySelector("ol.steps")?.replaceWith(panel);
+  }
   $("#resume") && ($("#resume").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?resume=${enc(run.id)}`));
   $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?rerun=${enc(run.id)}`));
   const q = $(".question");

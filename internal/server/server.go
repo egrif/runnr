@@ -115,6 +115,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}", s.getRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
+	mux.HandleFunc("GET /api/runs/{id}/log", s.runLog)
 	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
 	mux.HandleFunc("GET /api/runs/{id}/steps/{n}", s.getRunStep)
 	mux.HandleFunc("PUT /api/runs/{id}/steps/{n}", s.editRunStep)
@@ -812,6 +813,20 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// runLog is a run as a plain-text log (?download=1 saves it as a file).
+func (s *Server) runLog(w http.ResponseWriter, r *http.Request) {
+	run, err := s.st.LoadRun(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	if r.URL.Query().Get("download") != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.log"`, run.ID))
+	}
+	io.WriteString(w, engine.RawLog(run))
 }
 
 func (s *Server) runEvents(w http.ResponseWriter, r *http.Request) {

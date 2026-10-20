@@ -124,6 +124,7 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | POST | `/api/runs` | start request | `202 {id}`, or the run record with `wait` |
 | GET | `/api/runs?runbook=&limit=` | | recent runs (no step detail), newest first; limit ≤ 1000, default 100 |
 | GET | `/api/runs/{id}` | | `{run, live}` |
+| GET | `/api/runs/{id}/log?download=1` | | the run as a plain-text log (`download` saves it as a file) |
 | GET | `/api/runs/{id}/events` | | Server-Sent Events (live runs only) |
 | POST | `/api/runs/{id}/answer` | `{question_id, value, note?}` | `204` |
 | POST | `/api/runs/{id}/steps/{n}/reopen` | | `204`: goes back to step `n`, the last that succeeded, while the run waits on a question at the next one (questions carry `reopenable`, the step that can be); `n` waits before running again |

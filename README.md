@@ -64,7 +64,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr abort <run-id> [-m reason] [--force]` | Abort a run running elsewhere (another terminal, the GUI), or one left "running" by a process that's gone |
 | `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open a shell (the runbook's `shell`, else `$SHELL`) with that environment |
 | `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
-| `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail |
+| `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail (`--raw`: as a plain log, each step's command, output and result in order; **Raw log** on a past run's page in the GUI) |
 | `runnr history prune --older-than 90d` | Delete old finished runs |
 | `runnr db info` / `runnr db import <dir>` | Show storage details / import a file-based runnr home |
 | `runnr serve` (alias `ui`) | Serve the GUI and API (`--addr`, `--open`, `--token`, `--no-ui`) |
