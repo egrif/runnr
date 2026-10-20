@@ -452,7 +452,10 @@ needs (inputs, runnr's variables, the runbook's environment, profile
 files, functions and the setup steps) goes either **once, at the top**,
 or **in each step**, so any step can be pasted on its own. Values only a
 run can know show as `<name>`, secret inputs as `****` (the setup asks for
-them).
+them). To follow it by hand, **✓ Mark done** at the end of a step greys it
+out, collapses it, notes the time and opens the next one (optional steps
+can be skipped); a done step can still be opened, or marked not done. The
+page keeps this only while it's open.
 
 **Schedule.** Plan runs ahead: `runnr schedule add <runbook> --at "2026-11-01
 22:00" -v env=prod` (for a runbook with a window, the time is when it

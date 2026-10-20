@@ -139,6 +139,19 @@ body:not([data-any-run]) .setup-choice { display: none; }
 details.inputs-wrap > summary { list-style: none; cursor: pointer; }
 details.inputs-wrap > summary h2 { display: inline; }
 
+/* Marking steps done by hand (kept only while the page is open) */
+.step-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.step-actions .act-done { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+.step-actions .act-undo { display: none; }
+.step.done .step-actions .act-done, .step.done .step-actions [data-skip] { display: none; }
+.step.done .step-actions .act-undo { display: inline-block; }
+.step.done { opacity: .55; }
+.step.done:hover, .step.done[open] { opacity: .85; }
+.step.done > summary .name { text-decoration: line-through; text-decoration-color: var(--muted); }
+.done-tag { margin-left: auto; font-size: 12.5px; color: var(--ok); white-space: nowrap; }
+.step.skipped .done-tag { color: var(--muted); }
+.progress { white-space: nowrap; }
+
 /* Ways as tabs */
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 6px 0 8px; flex-wrap: wrap; }
 .tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px; color: var(--muted); }
@@ -160,7 +173,7 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
   .facts dt, .meta dt { margin-top: 6px; }
 }
 @media print {
-  .bar, .copy, .codehead .seg { display: none; }
+  .bar, .copy, .codehead .seg, .step-actions button { display: none; }
   body { background: #fff; }
   .card { box-shadow: none; }
 }
@@ -177,6 +190,7 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
     <button type="button" data-mode-all="written" class="on" title="The step's code as written in the runbook, with its templates">As written</button>
     <button type="button" data-mode-all="run" title="A script to paste into one shell that runs each step as runnr does: templates filled in, in a shell of its own, with what it publishes passed on">As runnr runs it</button>
   </span>
+  <span class="progress muted small" hidden></span>
   <span class="setup-choice"><span class="seg-label">Setup:</span>
   <span class="seg" role="group" aria-label="Where the setup goes">
     <button type="button" data-setup="once" class="on" title="The setup (inputs, functions, setup steps) once, at the top: paste it first">At the top</button>
@@ -237,7 +251,8 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
   {{range .Steps}}
   <details class="step card{{range .Badges}}{{if eq .Class "danger"}} is-danger{{end}}{{end}}" id="{{.Anchor}}" data-mode="written">
     <summary><span class="chev">▸</span><span class="num">{{.N}}</span><span class="name">{{.Name}}</span>
-      <span class="badges">{{range .Badges}}<span class="badge {{.Class}}"{{with .Title}} title="{{.}}"{{end}}>{{.Text}}</span>{{end}}</span></summary>
+      <span class="badges">{{range .Badges}}<span class="badge {{.Class}}"{{with .Title}} title="{{.}}"{{end}}>{{.Text}}</span>{{end}}</span>
+      <span class="done-tag"></span></summary>
     <div class="step-body">
       {{with .Description}}<div class="prose">{{.}}</div>{{end}}
       {{if .Meta}}<dl class="meta">{{range .Meta}}<dt>{{.K}}</dt><dd>{{.V}}</dd>{{end}}</dl>{{end}}
@@ -262,6 +277,12 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
       </div>
       {{end}}
       {{with .Expect}}<div class="expect"><b>Expect:</b> <span class="prose">{{.}}</span></div>{{end}}
+      <div class="step-actions">
+        <button type="button" class="act-done" data-done>✓ Mark done</button>{{if .Optional}}
+        <button type="button" data-skip title="It's optional: leave it out">Skip</button>{{end}}
+        <button type="button" class="act-undo" data-undo>Mark not done</button>
+        <span class="done-note muted small"></span>
+      </div>
     </div>
   </details>
   {{end}}
@@ -322,6 +343,45 @@ footer { color: var(--muted); font-size: 12.5px; margin-top: 40px; text-align: c
       setTimeout(() => btn.textContent = "Copy", 1400);
     };
     c.append(btn);
+  });
+  // Marking steps done by hand: greys the step out, collapses it and opens
+  // the next. Kept only while the page is open (nothing is saved).
+  const steps = $$("details.step");
+  const t0 = Date.now();
+  const hhmm = (d) => d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const took = (ms) => { const m = Math.round(ms / 60000); return m < 1 ? "under a minute" : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`; };
+  const lastDone = () => Math.max(t0, ...steps.map((s) => +(s.dataset.doneAt || 0)));
+  const progress = () => {
+    const n = steps.filter((s) => s.classList.contains("done")).length;
+    const p = document.querySelector(".progress");
+    p.hidden = n === 0;
+    p.textContent = `${n} of ${steps.length} done`;
+  };
+  const finish = (step, how) => {
+    const now = Date.now(), since = now - lastDone();
+    step.classList.add("done");
+    step.classList.toggle("skipped", how === "skipped");
+    step.dataset.doneAt = now;
+    const label = `${how === "skipped" ? "↷ skipped" : "✓ done"} ${hhmm(new Date(now))}`;
+    step.querySelector(".done-tag").textContent = label;
+    step.querySelector(".done-note").textContent = `${how === "skipped" ? "Skipped" : "Done"} at ${hhmm(new Date(now))}, ${took(since)} after ${steps.some((s) => s !== step && s.dataset.doneAt) ? "the step before" : "opening this page"}.`;
+    step.open = false;
+    const next = steps.slice(steps.indexOf(step) + 1).find((s) => !s.classList.contains("done"));
+    if (next) {
+      for (let d = next; d; d = d.parentElement) if (d.tagName === "DETAILS") d.open = true;
+      next.scrollIntoView({ block: "start", behavior: "smooth" });
+    }
+    progress();
+  };
+  $$("[data-done]").forEach((b) => b.onclick = () => finish(b.closest(".step"), "done"));
+  $$("[data-skip]").forEach((b) => b.onclick = () => finish(b.closest(".step"), "skipped"));
+  $$("[data-undo]").forEach((b) => b.onclick = () => {
+    const step = b.closest(".step");
+    step.classList.remove("done", "skipped");
+    delete step.dataset.doneAt;
+    step.querySelector(".done-tag").textContent = "";
+    step.querySelector(".done-note").textContent = "";
+    progress();
   });
   // A link to a step opens it (and its section).
   const reveal = () => {

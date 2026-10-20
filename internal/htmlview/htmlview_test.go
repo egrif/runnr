@@ -50,6 +50,8 @@ steps:
 		`id="setup"`, `class="setup-inline"`, `data-setup="step"`,
 		// Checks in one box; the overview; inputs collapsible.
 		"&amp;&amp; echo &#39;✓ up&#39;", "<h4>Phases</h4>", "<li><b>Switch</b> traffic, then verify.</li>", "The process at a glance", `class="inputs-wrap" open`,
+		// Marking steps done by hand; optional steps can be skipped.
+		"data-done", "data-undo",
 		// Ways as tabs, preferred first; the manual way rendered.
 		`data-tab="1"`, "preferred", "Flip it in the console for prod.",
 		// A value a step publishes isn't known yet; the secret is masked.

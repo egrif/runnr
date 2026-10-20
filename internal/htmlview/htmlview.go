@@ -70,6 +70,7 @@ type step struct {
 	Meta                []kv
 	Ways                []way
 	Choose              bool
+	Optional            bool
 	// Setup is what to paste before this step on its own: the common
 	// setup and the setup steps before it.
 	Setup string
@@ -231,7 +232,7 @@ func Render(rb *runbook.Runbook, o Options) ([]byte, error) {
 }
 
 func buildStep(p *engine.Previewer, sc *scripter, rb *runbook.Runbook, i int, st runbook.Step, v engine.StepView, open, closing int, byID map[string]int) step {
-	s := step{N: i + 1, Anchor: fmt.Sprintf("step-%d", i+1), Name: st.Name, Description: v.Description, Expect: strings.TrimSpace(v.Expect), Choose: st.Choose}
+	s := step{N: i + 1, Anchor: fmt.Sprintf("step-%d", i+1), Name: st.Name, Description: v.Description, Expect: strings.TrimSpace(v.Expect), Choose: st.Choose, Optional: st.Optional}
 	b := func(text, class, title string) { s.Badges = append(s.Badges, badge{text, class, title}) }
 	ways := st.WayList()
 	if len(ways) > 1 {
