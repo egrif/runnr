@@ -35,6 +35,23 @@ func inSequence(r StepResult) bool {
 	return false
 }
 
+// skipResumedDone, on a resume, leaves out the steps from StartAt on that
+// finished in the resumed run (so a resume doesn't redo work after the step
+// it starts at). Steps marked always still run.
+func (x *executor) skipResumedDone() {
+	prev := x.opts.Resumed
+	if !x.opts.CarryDone || prev == nil || len(prev.Steps) != len(x.run.Steps) {
+		return
+	}
+	for i := max(x.opts.StartAt, 0); i < len(x.run.Steps); i++ {
+		if s := prev.Steps[i].Status; (s == StatusSucceeded || s == StatusForced) && !x.rb.Steps[i].Always {
+			if skip, _, _ := x.ctl.Get(i); !skip {
+				x.ctl.Toggle("skip", i)
+			}
+		}
+	}
+}
+
 // carryResumed marks the steps this run leaves out that already finished,
 // in sequence, in the run it resumes.
 func (x *executor) carryResumed() {

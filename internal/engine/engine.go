@@ -255,6 +255,11 @@ type Options struct {
 	// Resumed is the run this one continues; steps that finished there
 	// count as in sequence here.
 	Resumed *Run
+	// CarryDone (with Resumed) also leaves out the steps from StartAt on
+	// that succeeded or were forced in the resumed run: they're carried
+	// over as done, like those before StartAt, and the review can put one
+	// back. Not for a resume whose steps the operator chose explicitly.
+	CarryDone bool
 	// ShellOnly runs only the steps marked always (the setup), then opens an
 	// interactive shell with the resulting environment.
 	ShellOnly bool
@@ -492,6 +497,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 			x.ctl.Toggle("skip", i)
 		}
 	}
+	x.skipResumedDone()
 	x.carryResumed()
 	x.adoptBackground()
 	x.save()

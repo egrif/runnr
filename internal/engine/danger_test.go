@@ -93,3 +93,55 @@ func TestDangerousResumeCountsEarlierRun(t *testing.T) {
 		t.Fatalf("%s %s asked=%q", run.Status, statuses(run), ui.asked)
 	}
 }
+
+// A resume leaves out every step that finished in the resumed run, not only
+// those before where it starts: it starts at the first unfinished step, and
+// steps after it that were done already (here a restart) aren't done again.
+// They're carried, so a dangerous step after them is in sequence. Steps
+// marked always run again.
+func TestResumeCarriesStepsDoneAfterStart(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - {name: a, run: 'true'}
+  - {name: b, run: 'echo b-ran'}
+  - {name: setup, run: 'echo setup-ran', always: true}
+  - {name: restart, run: 'echo restart-ran'}
+  - {name: fixed, run: 'echo fixed-ran'}
+  - {name: cutover, run: 'echo cut', dangerous: true, confirm: true}
+`)
+	st := func(ss ...Status) *Run {
+		r := &Run{ID: "prev", Status: StatusAborted}
+		for i, s := range ss {
+			r.Steps = append(r.Steps, StepResult{Index: i, Name: rb.Steps[i].Name, Status: s})
+		}
+		return r
+	}
+	prev := st(StatusSucceeded, StatusFailed, StatusSucceeded, StatusSucceeded, StatusForced, StatusAborted)
+	start := ResumePoint(prev)
+	if start != 1 {
+		t.Fatalf("resume point %d", start)
+	}
+	ui := &dangerUI{scripted: scripted{confirms: []bool{true}}}
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Sanctioned: true, StartAt: start, Resumed: prev, CarryDone: true})
+	if run.Status != StatusSucceeded || statuses(run) != "skipped,succeeded,succeeded,skipped,skipped,succeeded" || len(ui.asked) != 0 {
+		t.Fatalf("%s %s asked=%q", run.Status, statuses(run), ui.asked)
+	}
+	for _, i := range []int{0, 3, 4} {
+		if run.Steps[i].Note != NoteCarried {
+			t.Fatalf("step %d: %q", i+1, run.Steps[i].Note)
+		}
+	}
+	out := strings.Join(ui.output, "\n")
+	if !strings.Contains(out, "b-ran") || !strings.Contains(out, "setup-ran") || strings.Contains(out, "restart-ran") || strings.Contains(out, "fixed-ran") {
+		t.Fatalf("output: %q", ui.output)
+	}
+
+	// Without CarryDone (the operator chose the steps), only the steps
+	// they left out are left out.
+	ui = &dangerUI{scripted: scripted{confirms: []bool{true}}}
+	run = Execute(context.Background(), rb, ui, "", Options{Interactive: true, Sanctioned: true, Resumed: prev, Controls: NewControls(ControlsView{Skip: []int{0, 3}})})
+	if statuses(run) != "skipped,succeeded,succeeded,skipped,succeeded,succeeded" || run.Steps[3].Note != NoteCarried {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+}
