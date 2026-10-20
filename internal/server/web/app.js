@@ -347,7 +347,8 @@ function applyEvent(state, e) {
 
 function renderRun(state) {
   const { run } = state;
-  const stopAt = state.steps.findIndex((s) => !["succeeded", "skipped", "forced"].includes(s.status));
+  // Optional steps don't decide where a resume starts (as engine.ResumePoint).
+  const stopAt = state.steps.findIndex((s) => !s.optional && !["succeeded", "skipped", "forced"].includes(s.status));
   state.resumable = ["failed", "aborted"].includes(run.status) && stopAt >= 0 ? stopAt + 1 : 0;
   const scroll = {};
   main.querySelectorAll("pre.log").forEach((p) => (scroll[p.dataset.i] = p.scrollHeight - p.scrollTop - p.clientHeight < 8));

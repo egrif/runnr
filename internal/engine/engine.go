@@ -907,10 +907,12 @@ func (r *Run) HasBegun() bool {
 }
 
 // ResumePoint returns the first step of a previous run that neither
-// succeeded nor was skipped, or -1 if there's nothing left to do.
+// succeeded nor was skipped, or -1 if there's nothing left to do. Optional
+// steps don't count: one that didn't finish (e.g. a watcher that exited)
+// doesn't decide where a resume starts; after that point it runs again.
 func ResumePoint(r *Run) int {
 	for i, s := range r.Steps {
-		if !slices.Contains([]Status{StatusSucceeded, StatusSkipped, StatusForced, StatusBackground}, s.Status) {
+		if !s.Optional && !slices.Contains([]Status{StatusSucceeded, StatusSkipped, StatusForced, StatusBackground}, s.Status) {
 			return i
 		}
 	}
