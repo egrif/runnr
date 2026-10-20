@@ -13,6 +13,19 @@ runnr test replica-demo -s two-replicas -v --log
 runnr fakes check aws-rds                # fakes vs the AWS CLI's real response shapes
 ```
 
+## In the GUI
+
+A runbook's **Tests** tab lists its suite's scenarios with their latest
+results. **Run all tests**, or **Run** one scenario. A result shows what
+didn't go as expected first ("step 4: succeeded, expected failed"), then
+each step's status, and folds out every call (the step that made it, and
+which fake answered it or that it was refused), unused fakes, the
+simulated operator's answers and the run's log.
+
+In the editor, **▶ Run tests** runs the suite against what's in the editor,
+unsaved, so you can see what a change breaks before you save it. Those
+results don't replace the saved runbook's on the Tests tab.
+
 ## How it works
 
 For each scenario, runnr makes a scratch directory with a small *shim* for

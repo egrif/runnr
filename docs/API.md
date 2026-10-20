@@ -124,6 +124,8 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | POST | `/api/runs` | start request | `202 {id}`, or the run record with `wait` |
 | GET | `/api/runs?runbook=&limit=` | | recent runs (no step detail), newest first; limit ≤ 1000, default 100 |
 | GET | `/api/runs/{id}` | | `{run, live}` |
+| GET | `/api/runbooks/{name}/tests` | | the runbook's test suite (`suite`: name, version, fake libraries, isolated commands, scenarios; `null` without one) and its latest results (`last`) |
+| POST | `/api/runbooks/{name}/tests/run` | `{scenario?, raw?}` | runs the suite (or one scenario), against the saved runbook or the draft YAML in `raw`: `{at, draft, results: [{scenario, passed, problems, status, steps, calls, asked, unused, log}]}` |
 | GET | `/api/runs/{id}/log?download=1` | | the run as a plain-text log (`download` saves it as a file) |
 | GET | `/api/runs/{id}/events` | | Server-Sent Events (live runs only) |
 | POST | `/api/runs/{id}/answer` | `{question_id, value, note?}` | `204` |

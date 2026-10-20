@@ -12,12 +12,14 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
     <div class="row editor-bar">
       <button class="primary" id="save">Save</button>
       <button id="validate">Validate</button>
+      ${name ? `<button id="run-tests" title="Run this runbook's tests against what's in the editor, before saving">▶ Run tests</button>` : ""}
       <div class="seg"><button id="as-struct">Structured</button><button id="as-yaml" class="on">YAML</button></div>
       ${version ? `<span class="muted">version ${version} · saved ${new Date(updatedAt).toLocaleString()}</span>` : ""}
       <span class="spacer"></span>
       ${name ? `<button class="danger" id="delete">Delete</button>` : ""}
     </div>
     <div id="validation" class="validation"></div>
+    <div id="draft-tests" class="draft-tests" hidden></div>
     <div id="yaml-pane">
       <textarea class="editor" id="yaml" spellcheck="false">${esc(raw)}</textarea>
       <details class="card" style="margin-top:12px"><summary>Format reference</summary><pre class="cmd">${esc(REFERENCE)}</pre></details>
@@ -61,6 +63,11 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
     $("#as-struct").classList.toggle("on", mode === "struct");
     show({ ok: true });
   };
+  $("#run-tests") && ($("#run-tests").onclick = async () => {
+    const y = await currentYAML();
+    if (!y.ok) return show(y);
+    runDraftTests($("#draft-tests"), name, y.raw);
+  });
   $("#as-yaml").onclick = () => setMode("yaml").catch((e) => toast(e.message));
   $("#as-struct").onclick = () => setMode("struct").catch((e) => toast(e.message));
 

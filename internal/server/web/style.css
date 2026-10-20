@@ -536,3 +536,27 @@ body.claude-on .icon-btn.claude-only { display: inline-flex; }
 .raw-log .row { gap: 8px; margin-bottom: 6px; align-items: center; }
 .raw-log pre.log { max-height: none; white-space: pre-wrap; word-break: break-word; }
 a.button { display: inline-block; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--panel); font-size: 13px; }
+
+/* Tests (runnr test) */
+.tests-head { gap: 10px; align-items: center; margin: 8px 0 12px; }
+.scenarios { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.scenario { padding: 10px 14px; }
+.scenario .row { gap: 10px; align-items: center; }
+.scenario .icon { width: 1.2em; text-align: center; color: var(--muted); }
+.scenario.pass .icon { color: var(--ok); }
+.scenario.fail { border-color: var(--fail); }
+.scenario.fail .icon { color: var(--fail); }
+.problems { margin: 8px 0 4px 1.6em; padding: 0; color: var(--fail); }
+.problems li { margin: 2px 0; }
+.test-steps { display: flex; flex-wrap: wrap; gap: 2px; margin: 8px 0 0 1.6em; font-size: 13px; }
+.test-steps .ts { width: 1.3em; text-align: center; }
+.test-detail { margin: 8px 0 0 1.6em; }
+.test-detail summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+table.calls { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 12.5px; }
+table.calls td { padding: 3px 8px 3px 0; vertical-align: top; border-bottom: 1px solid var(--border); }
+table.calls tr.refused td { color: var(--fail); }
+table.calls code { white-space: pre-wrap; word-break: break-all; }
+.test-detail pre.log { max-height: 400px; }
+.draft-tests { margin: 10px 0; }
+.draft-tests > .row { gap: 10px; align-items: center; margin-bottom: 8px; }
+.tests-empty { padding: 14px 18px; max-width: 760px; }

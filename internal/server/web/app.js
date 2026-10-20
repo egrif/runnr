@@ -144,7 +144,7 @@ async function route() {
   renderSidebar();
   let m;
   try {
-    if ((m = h.match(/^#\/runbooks\/([^/?]+)(?:\/(edit))?(?:\?(.*))?$/))) return await viewRunbook(decodeURIComponent(m[1]), m[2] || "run", new URLSearchParams(m[3] || ""));
+    if ((m = h.match(/^#\/runbooks\/([^/?]+)(?:\/(edit|tests))?(?:\?(.*))?$/))) return await viewRunbook(decodeURIComponent(m[1]), m[2] || "run", new URLSearchParams(m[3] || ""));
     if ((m = h.match(/^#\/runs\/([^/]+)$/))) return await viewRun(decodeURIComponent(m[1]));
     if (h === "#/new") return await viewNew();
     if (h.startsWith("#/history")) return await viewHistory();
@@ -187,11 +187,13 @@ async function viewRunbook(name, tab, query) {
     <nav class="tabs">
       <a href="${href}" class="${tab === "run" ? "active" : ""}">Run</a>
       <a href="${href}/edit" class="${tab === "edit" ? "active" : ""}">Edit</a>
+      <a href="${href}/tests" class="${tab === "tests" ? "active" : ""}">Tests</a>
       <a href="#/history?runbook=${encodeURIComponent(name)}">History</a>
     </nav>
     <section id="tab"></section>`;
   bindMembership(main, name, () => route());
   main.querySelector('.claude-only [data-explain="0"]')?.addEventListener("click", () => openExplain({ runbook: name }, 0, `Review: ${name}`));
+  if (tab === "tests" && rb) return viewTests($("#tab"), name);
   if (tab === "edit" || !rb) return renderEditor($("#tab"), data.raw, name, data.error, data.version, data.updated_at);
   const mode = query.get("resume") ? "resume" : query.get("rerun") ? "rerun" : "run";
   await viewLaunch($("#tab"), name, mode, query.get("resume") || query.get("rerun") || "", query.get("schedule") || "");

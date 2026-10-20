@@ -33,6 +33,8 @@ type Server struct {
 	mu   sync.Mutex
 	live map[string]*liveRun
 	wg   sync.WaitGroup
+	// tests holds each runbook's latest test results (since the server started).
+	tests map[string]*testRun
 }
 
 type Config struct {
@@ -53,7 +55,7 @@ func New(st *store.Store, cfg Config) *Server {
 			cfg.Claude = p
 		}
 	}
-	return &Server{st: st, cfg: cfg, live: map[string]*liveRun{}}
+	return &Server{st: st, cfg: cfg, live: map[string]*liveRun{}, tests: map[string]*testRun{}}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -116,6 +118,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}", s.getRun)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 	mux.HandleFunc("GET /api/runs/{id}/log", s.runLog)
+	mux.HandleFunc("GET /api/runbooks/{name}/tests", s.getTests)
+	mux.HandleFunc("POST /api/runbooks/{name}/tests/run", s.runTests)
 	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
 	mux.HandleFunc("GET /api/runs/{id}/steps/{n}", s.getRunStep)
 	mux.HandleFunc("PUT /api/runs/{id}/steps/{n}", s.editRunStep)
