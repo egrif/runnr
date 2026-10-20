@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/term"
@@ -33,8 +32,9 @@ type Terminal struct {
 	addNote func(step int, text string) error
 	// session is the run being driven (set by the engine via Bind).
 	session engine.Session
-	// interrupts, when set, makes runnr ignore Ctrl-C while a shell runs.
-	interrupts *atomic.Bool
+	// interrupts, when set, makes runnr ignore Ctrl-C while a shell or a
+	// tty step has it.
+	interrupts *interruptHolds
 	// bg holds background steps' terminals, by step index.
 	bg map[int]*bgView
 	// sections maps section names to their descriptions.
@@ -762,10 +762,7 @@ func (t *Terminal) OpenShell(ctx context.Context, idx int) error {
 		}
 	}
 	defer fmt.Fprintln(t.out, t.c("2", "  ── back in runnr"))
-	if t.interrupts != nil {
-		t.interrupts.Store(true)
-		defer t.interrupts.Store(false)
-	}
+	defer t.interrupts.hold("")()
 	return t.session.Shell(ctx, idx)
 }
 
@@ -856,7 +853,12 @@ func (t *Terminal) Manual(ctx context.Context, idx int, _ runbook.Step, text str
 	return "", "", engine.ErrAborted
 }
 
-func (t *Terminal) OnFailure(ctx context.Context, idx int, step runbook.Step, _ engine.StepResult) (engine.FailureAction, string, error) {
+func (t *Terminal) OnFailure(ctx context.Context, idx int, step runbook.Step, res engine.StepResult) (engine.FailureAction, string, error) {
+	if res.Kind == "tty" {
+		// Ctrl-C stopped the step's command (or was meant to): it doesn't
+		// also abort the run.
+		defer t.interrupts.hold("(Ctrl-C: the step has stopped. Choose what to do next; [a]bort ends the run.)")()
+	}
 	opts := map[string]string{"r": "r", "retry": "r", "s": "s", "skip": "s", "f": "f", "force": "f", "a": "a", "abort": "a"}
 	prompt := "Step failed. [r]etry / [s]kip / [f]orce success / [a]bort"
 	if len(step.Ways) > 1 {

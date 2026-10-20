@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -595,22 +594,24 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 	return ExitError{1}
 }
 
-// interruptible returns a context cancelled by SIGINT/SIGTERM. While paused
-// is set (an interactive shell is open), Ctrl-C belongs to the shell.
-func interruptible() (context.Context, func(), *atomic.Bool) {
+// interruptible returns a context cancelled by SIGINT/SIGTERM. While
+// something holds Ctrl-C (an interactive shell is open, a tty step runs or
+// has just failed), Ctrl-C belongs to it.
+func interruptible() (context.Context, func(), *interruptHolds) {
 	ctx, cancel := context.WithCancel(context.Background())
-	paused := &atomic.Bool{}
+	holds := &interruptHolds{out: os.Stdout}
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		for sig := range ch {
-			if sig == os.Interrupt && paused.Load() {
+			if held, _ := holds.held(); sig == os.Interrupt && held {
+				holds.ignored()
 				continue
 			}
 			cancel()
 		}
 	}()
-	return ctx, func() { signal.Stop(ch); cancel() }, paused
+	return ctx, func() { signal.Stop(ch); cancel() }, holds
 }
 
 func author() string {
