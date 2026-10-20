@@ -1003,3 +1003,32 @@ steps:
 		t.Fatal("always and optional together should be invalid")
 	}
 }
+
+// A background step can have ways (all commands): the chosen one runs in
+// the background.
+func TestBackgroundWays(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - name: watcher
+    background: true
+    choose: true
+    stop_after: work
+    ways:
+      - {name: fancy, run: 'echo fancy; sleep 30', preferred: true}
+      - {name: plain, run: 'echo plain; sleep 30'}
+  - {id: work, name: work, run: 'sleep 0.3'}
+`)
+	ui := &chooser{picks: []string{"plain"}}
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
+	if run.Status != StatusSucceeded || ui.asked != 1 {
+		t.Fatalf("%s %s asked %d", run.Status, run.Error, ui.asked)
+	}
+	w := run.Steps[0]
+	if w.Way != "plain" || !strings.Contains(w.Output, "plain") || w.Note != "stopped after step 2" {
+		t.Fatalf("watcher %+v", w)
+	}
+	if _, err := runbook.Parse([]byte("name: x\nsteps: [{name: s, background: true, ways: [{name: a, run: 'true', preferred: true}, {name: b, manual: do it}]}]\n")); err == nil {
+		t.Fatal("a background step's ways must all be commands")
+	}
+}

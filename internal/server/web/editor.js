@@ -402,7 +402,7 @@ const MORE_FIELDS = [
   ["optional", "Optional (not required)", "bool", H.step.optional, () => true, "Behaviour"],
   ["continue_on_error", "Keep going if it fails", "bool", H.step.continue_on_error, () => true, "Behaviour"],
   ["tty", "Needs a terminal", "bool", H.step.tty, (k) => k === "run", "Behaviour"],
-  ["background", "Run in background", "bool", H.step.background, (k) => k === "run", "Behaviour"],
+  ["background", "Run in background", "bool", H.step.background, (k, s) => k === "run" || (s.ways?.length > 0 && s.ways.every((w) => w.run)), "Behaviour"],
   ["when", "Only when", "text", H.step.when, () => true, "Conditions & timing"],
   ["timeout", "Timeout", "text", H.step.timeout, (k, s) => hasKind(s, "run") || hasKind(s, "checks"), "Conditions & timing"],
   ["retries", "Retries", "int", H.step.retries, (k, s) => hasKind(s, "run"), "Conditions & timing"],

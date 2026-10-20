@@ -885,8 +885,17 @@ func validateStep(where string, s Step) []error {
 	}
 
 	if s.Background {
-		if s.Kind() != "run" {
-			add("background only applies to a command")
+		// A command, or ways that are all commands (the way is picked
+		// before it starts).
+		cmds := s.Kind() == "run"
+		if len(s.Ways) > 0 {
+			cmds = true
+			for _, w := range s.Ways {
+				cmds = cmds && w.Kind() == "run"
+			}
+		}
+		if !cmds {
+			add("background only applies to a command (or ways that are all commands)")
 		}
 		if s.Capture != "" || s.Retries > 0 || len(s.Outputs)+len(s.SecretOutputs) > 0 {
 			add("a background command can't capture or publish outputs, or retry")
