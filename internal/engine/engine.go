@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -257,6 +258,15 @@ type Options struct {
 	// Hurry makes retries and repeats wait only a moment, keeping their
 	// timing as simulated time (repeats still give up after their timeout).
 	Hurry bool
+	// BaseEnv, when set, is the environment steps start from instead of
+	// runnr's own (a test's scrubbed one).
+	BaseEnv []string
+	// TempDir is where runnr writes each step's files (default: the
+	// system's).
+	TempDir string
+	// Wrap, when set, rewrites every command runnr starts (e.g. to run it
+	// in a sandbox).
+	Wrap func(name string, args []string) (string, []string)
 }
 
 // StepView is a step as it would run now: templates rendered against the
@@ -823,7 +833,7 @@ func (x *executor) refreshState() {
 // env layers: process env, runnr vars (inputs and outputs), runbook env, step env.
 func (x *executor) env(step runbook.Step) ([]string, error) {
 	extra, err := x.runnrEnv(step)
-	return append(os.Environ(), extra...), err
+	return append(x.baseEnv(), extra...), err
 }
 
 // runnrEnv is what runnr adds to the process environment for step.
@@ -907,4 +917,25 @@ func ResumeState(r *Run) map[string]string {
 		}
 	}
 	return st
+}
+
+// baseEnv is the environment steps start from.
+func (x *executor) baseEnv() []string {
+	if x.opts.BaseEnv != nil {
+		return slices.Clone(x.opts.BaseEnv)
+	}
+	return os.Environ()
+}
+
+// command is exec.CommandContext through the run's Wrap, if any.
+func (x *executor) command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	if x.opts.Wrap != nil {
+		name, args = x.opts.Wrap(name, args)
+	}
+	return exec.CommandContext(ctx, name, args...)
+}
+
+// tempDir makes a directory for a step's files.
+func (x *executor) tempDir(pattern string) (string, error) {
+	return os.MkdirTemp(x.opts.TempDir, pattern)
 }

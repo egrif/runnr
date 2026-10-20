@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +35,7 @@ func (x *executor) setupFunctions() error {
 	if script == "" {
 		return nil
 	}
-	f, err := os.CreateTemp("", "runnr-functions-*.sh")
+	f, err := os.CreateTemp(x.opts.TempDir, "runnr-functions-*.sh")
 	if err != nil {
 		return err
 	}
@@ -59,9 +60,9 @@ func (x *executor) interactiveShell() (cmd *exec.Cmd, env []string, done func(),
 	sh := interactiveShellName(x.rb.Shell)
 	done = func() {}
 	if x.funcFile == "" {
-		return exec.Command(sh), nil, done, nil
+		return x.command(context.Background(), sh), nil, done, nil
 	}
-	dir, err := os.MkdirTemp("", "runnr-rc-")
+	dir, err := x.tempDir("runnr-rc-")
 	if err != nil {
 		return nil, nil, done, err
 	}
@@ -84,15 +85,15 @@ func (x *executor) interactiveShell() (cmd *exec.Cmd, env []string, done func(),
 				return nil, nil, done, err
 			}
 		}
-		return exec.Command(sh), []string{"ZDOTDIR=" + dir, "RUNNR_ZDOTDIR=" + orig}, done, nil
+		return x.command(context.Background(), sh), []string{"ZDOTDIR=" + dir, "RUNNR_ZDOTDIR=" + orig}, done, nil
 	case "bash":
 		rc := filepath.Join(dir, "bashrc")
 		body := `[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"; . "$RUNNR_FUNCTIONS"` + "\n"
 		if err := os.WriteFile(rc, []byte(body), 0o600); err != nil {
 			return nil, nil, done, err
 		}
-		return exec.Command(sh, "--rcfile", rc, "-i"), nil, done, nil
+		return x.command(context.Background(), sh, "--rcfile", rc, "-i"), nil, done, nil
 	}
 	// Other shells: the functions are in $RUNNR_FUNCTIONS to source by hand.
-	return exec.Command(sh), nil, done, nil
+	return x.command(context.Background(), sh), nil, done, nil
 }

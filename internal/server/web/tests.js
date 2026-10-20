@@ -22,33 +22,47 @@ runnr fakes import aws-rds.yaml     # shared fake libraries, if it uses any</pre
     return;
   }
   const su = data.suite;
-  const state = { last: data.last || null, running: "" };
+  const state = { last: data.last || null, running: "", open: new Set() };
   const draw = () => {
     const byName = new Map((state.last?.results || []).map((r) => [r.scenario, r]));
     const passed = state.last ? state.last.results.filter((r) => r.passed).length : 0;
     el.innerHTML = `
       <div class="row tests-head">
-        <div><b>${esc(su.name)}</b> <span class="muted small">suite v${su.version}${su.uses?.length ? ` · fakes: ${su.uses.map(esc).join(", ")}` : ""}${su.isolate?.length ? ` · isolates ${su.isolate.map(esc).join(", ")}` : ""}</span></div>
+        <div><b>${esc(su.name)}</b> <span class="muted small">suite v${su.version}${su.uses?.length ? ` · fakes: ${su.uses.map(esc).join(", ")}` : ""}${su.isolate?.length ? ` · isolates ${su.isolate.map(esc).join(", ")}` : ""}${su.strict ? ` · sandboxed` : ""}</span></div>
         <span class="spacer"></span>
         ${state.last ? `<span class="badge ${passed === state.last.results.length ? "s-succeeded" : "s-failed"}">${passed}/${state.last.results.length} passing</span>
           <span class="muted small">${new Date(state.last.at).toLocaleTimeString()}</span>` : ""}
         <button class="primary" data-run-all ${state.running ? "disabled" : ""}>${state.running === "*" ? "Running…" : "▶ Run all tests"}</button>
       </div>
+      ${warningsHTML(state.last?.results)}
+      ${su.setup ? `<details class="test-def suite-setup" ${state.open.has("") ? "open" : ""} data-def="">
+        <summary>Suite setup <span class="muted small">(every scenario starts from this)</span></summary>
+        <pre class="yaml">${esc(su.setup)}</pre></details>` : ""}
       <ul class="scenarios">${su.scenarios.map((sc) => {
         const r = byName.get(sc.name);
         return `<li class="scenario card ${r ? (r.passed ? "pass" : "fail") : ""}">
-          <div class="row">
+          <div class="row scenario-head" data-toggle="${esc(sc.name)}" title="Show the scenario's definition">
             <span class="icon">${r ? (r.passed ? "✔" : "✘") : "○"}</span>
+            <span class="caret">${state.open.has(sc.name) ? "▾" : "▸"}</span>
             <b>${esc(sc.name)}</b>
             ${sc.description ? `<span class="muted small">${esc(sc.description)}</span>` : ""}
             <span class="spacer"></span>
             ${r ? `<span class="muted small">run ${esc(r.status)} · ${r.calls.length} calls · ${(r.took_ms / 1000).toFixed(1)}s</span>` : ""}
             <button data-run="${esc(sc.name)}" ${state.running ? "disabled" : ""}>${state.running === sc.name ? "Running…" : "Run"}</button>
           </div>
+          ${state.open.has(sc.name) ? `<pre class="yaml test-def">${esc(sc.source || "(not found in the suite's YAML)")}</pre>` : ""}
           ${r ? testResultHTML(r) : ""}
         </li>`;
       }).join("")}</ul>`;
     el.querySelector("[data-run-all]").onclick = () => run("");
+    el.querySelectorAll("[data-toggle]").forEach((h) => (h.onclick = (e) => {
+      if (e.target.closest("button")) return;
+      const n = h.dataset.toggle;
+      state.open.has(n) ? state.open.delete(n) : state.open.add(n);
+      draw();
+    }));
+    const setup = el.querySelector(".suite-setup");
+    if (setup) setup.ontoggle = () => (setup.open ? state.open.add("") : state.open.delete(""));
     el.querySelectorAll("[data-run]").forEach((b) => (b.onclick = () => run(b.dataset.run)));
   };
   const run = async (scenario) => {
@@ -66,6 +80,13 @@ runnr fakes import aws-rds.yaml     # shared fake libraries, if it uses any</pre
     draw();
   };
   draw();
+}
+
+// warningsHTML is code that could get past the fakes (the same for every
+// scenario of a run).
+function warningsHTML(results) {
+  const w = results?.[0]?.warnings || [];
+  return w.length ? `<ul class="problems warnings">${w.map((x) => `<li>⚠ ${esc(x)}</li>`).join("")}</ul>` : "";
 }
 
 // testResultHTML is one scenario's result: problems first, then what happened.
@@ -98,6 +119,7 @@ async function runDraftTests(el, name, raw) {
     el.innerHTML = `<div class="row"><b>Tests against this draft</b>
         <span class="badge ${passed === tr.results.length ? "s-succeeded" : "s-failed"}">${passed}/${tr.results.length} passing</span>
         <span class="spacer"></span><button class="link" data-close>Hide</button></div>
+      ${warningsHTML(tr.results)}
       <ul class="scenarios">${tr.results.map((r) => `<li class="scenario card ${r.passed ? "pass" : "fail"}">
         <div class="row"><span class="icon">${r.passed ? "✔" : "✘"}</span><b>${esc(r.scenario)}</b><span class="spacer"></span>
           <span class="muted small">run ${esc(r.status)} · ${r.calls.length} calls</span></div>

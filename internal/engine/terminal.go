@@ -80,9 +80,9 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 		}
 		extra = append(extra, shellEnv...)
 	} else {
-		cmd = exec.Command(shell, "-c", command)
+		cmd = x.command(context.Background(), shell, "-c", command)
 	}
-	cmd.Env, cmd.Dir = append(os.Environ(), append(extra, "TERM="+termName())...), dir
+	cmd.Env, cmd.Dir = append(x.baseEnv(), append(extra, "TERM="+termName())...), dir
 	rows, cols := conn.Size()
 	f, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: rows, Cols: cols})
 	if err != nil {

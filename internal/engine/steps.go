@@ -467,7 +467,7 @@ func (x *executor) startBackground(ctx context.Context, i int, step runbook.Step
 	if err != nil {
 		return x.fail(i, fmt.Errorf("dir: %w", err))
 	}
-	tmp, err := os.MkdirTemp("", "runnr-bg-")
+	tmp, err := x.tempDir("runnr-bg-")
 	if err != nil {
 		return x.fail(i, err)
 	}

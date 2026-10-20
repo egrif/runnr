@@ -45,6 +45,8 @@ type Result struct {
 	Calls    []Call        `json:"calls"`
 	Unused   []string      `json:"unused_fakes,omitempty"` // fakes no call matched (suite and scenario ones)
 	Asked    []string      `json:"asked,omitempty"`        // the operator's answers
+	Warnings []string      `json:"warnings,omitempty"`     // code that could get past the fakes
+	Strict   bool          `json:"strict,omitempty"`       // ran in the sandbox
 	Dir      string        `json:"dir,omitempty"`          // kept directory
 	Took     time.Duration `json:"took"`
 }
@@ -75,6 +77,12 @@ func Run(ctx context.Context, s *Suite, src Sources, o Options) ([]Result, error
 	if o.Timeout == 0 {
 		o.Timeout = 2 * time.Minute
 	}
+	if s.Strict {
+		if err := SandboxAvailable(); err != nil {
+			return nil, fmt.Errorf("suite %s is strict: %w", s.Runbook, err)
+		}
+	}
+	warnings := escapes(rb, libs, s.Isolate)
 	var out []Result
 	for _, sc := range s.Scenarios {
 		if len(o.Only) > 0 && !slices.Contains(o.Only, sc.Name) {
@@ -84,6 +92,7 @@ func Run(ctx context.Context, s *Suite, src Sources, o Options) ([]Result, error
 		if err != nil {
 			return out, fmt.Errorf("scenario %s: %w", sc.Name, err)
 		}
+		r.Warnings = warnings
 		out = append(out, r)
 	}
 	if len(o.Only) > 0 && len(out) == 0 {
@@ -97,6 +106,9 @@ func runScenario(ctx context.Context, s *Suite, sc Scenario, base *runbook.Runbo
 	start := time.Now()
 	dir, err := os.MkdirTemp("", "runnr-test-")
 	if err != nil {
+		return res, err
+	}
+	if dir, err = filepath.EvalSymlinks(dir); err != nil { // /var → /private/var, as the sandbox sees it
 		return res, err
 	}
 	if o.Keep {
@@ -176,14 +188,45 @@ func runScenario(ctx context.Context, s *Suite, sc Scenario, base *runbook.Runbo
 	}
 	op := newOperator(mergeOperator(s.Operator, sc.Operator), steps)
 
+	// A scratch HOME and TMPDIR, no credentials in the environment; for a
+	// strict suite, a PATH of only the shims and the allowed tools, and the
+	// sandbox around every command.
+	for _, d := range []string{"home", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			return res, err
+		}
+	}
+	path := p.Shims + string(filepath.ListSeparator) + os.Getenv("PATH")
+	var wrap func(string, []string) (string, []string)
+	if s.Strict {
+		allowed := filepath.Join(dir, "allowed")
+		execs, _, err := allowDir(allowed, append(slices.Clone(DefaultAllow), s.Allow...))
+		if err != nil {
+			return res, err
+		}
+		for _, sh := range []string{"/bin/sh", "/bin/zsh", "/bin/bash", o.Exe} {
+			execs = append(execs, sh)
+			if r, err := filepath.EvalSymlinks(sh); err == nil {
+				execs = append(execs, r)
+			}
+		}
+		sb, err := newSandbox(dir, execs)
+		if err != nil {
+			return res, err
+		}
+		path = p.Shims + string(filepath.ListSeparator) + allowed
+		if err := sb.probe(o.Exe, dir, cleanEnv(dir, path, nil)); err != nil {
+			return res, err
+		}
+		wrap, res.Strict = sb.wrap, true
+	}
 	rctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 	run := engine.Execute(rctx, &rb, op, "", engine.Options{
 		Vars: inputs, Interactive: true, Libraries: libs, Sanctioned: true, Hurry: true,
-		Env: []string{
-			"PATH=" + p.Shims + string(filepath.ListSeparator) + os.Getenv("PATH"),
-			envDir + "=" + dir, envExe + "=" + o.Exe,
-		},
+		BaseEnv: cleanEnv(dir, path, map[string]string{envDir: dir, envExe: o.Exe}),
+		TempDir: filepath.Join(dir, "tmp"),
+		Wrap:    wrap,
 	})
 	res.Run, res.Took = run, time.Since(start)
 	res.Asked = op.asked

@@ -52,6 +52,40 @@ reach the fakes without any change.
   sequence, so `dangerous` steps only ask when out of sequence). It isn't
   recorded in the history.
 
+## Keeping tests away from the real world
+
+Every scenario runs with a scrubbed environment: only the locale,
+terminal, time zone, user and shell variables are kept; `HOME` and
+`TMPDIR` are scratch directories inside the scenario's directory; and the
+AWS CLI, kubectl and git are pointed at `/dev/null` for their config and
+credentials. A call that slipped past the fakes would find nothing to act
+with.
+
+`runnr test` also warns about code that can get past the shims: an
+isolated command run by path (`/usr/local/bin/aws …`), setting `PATH`,
+`env -i` and `command -p`.
+
+**Strict suites.** With `strict: true`, every command a scenario runs is in
+a macOS `sandbox-exec` sandbox:
+
+- no network;
+- no writing outside the scenario's directory (and `/dev/null`, terminals);
+- no programs but the shell, the fakes and an allow-list of text tools
+  (`awk`, `grep`, `jq`, `sed`, `date`, `sleep`, `xargs`, …). `PATH` holds
+  only those, and `allow: [base64, openssl]` adds more.
+
+Before each scenario, runnr checks from inside the sandbox that it can't
+reach the network, write outside the directory or run `curl`; if any of
+that works, the scenario isn't run. Strict suites need macOS: elsewhere
+they refuse to run rather than run unprotected.
+
+```yaml
+runbook: ghr-aurora-migration
+strict: true
+allow: [base64]
+isolate: [aws, kubectl, terraform, psql, git]
+```
+
 ## Fake libraries
 
 ```yaml
@@ -102,6 +136,7 @@ libraries' in `uses:` order. That's how a scenario overrides one answer.
 runbook: replica-demo
 uses: [aws-rds]                       # fake libraries
 isolate: [aws, kubectl, terraform, psql]
+strict: true                          # run in the sandbox (macOS)
 files: {"tools/report.sh": report.sh} # a fake command at a path in the test directory
 dirs: [checkout/infra]                # directories to make there (for steps that cd into them)
 inputs: {db: orders, tools: "{{.test_dir}}/tools"}

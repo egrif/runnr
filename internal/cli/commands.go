@@ -44,6 +44,9 @@ func Execute() int {
 	if len(os.Args) > 2 && os.Args[1] == "__fake" {
 		return runtest.Dispatch(os.Args[2], os.Args[3:])
 	}
+	if len(os.Args) == 3 && os.Args[1] == "__probe" {
+		return runtest.Probe(os.Args[2])
+	}
 	err := newRoot().Execute()
 	var ee ExitError
 	if errors.As(err, &ee) {

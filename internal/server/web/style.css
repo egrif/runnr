@@ -548,6 +548,7 @@ a.button { display: inline-block; padding: 5px 12px; border: 1px solid var(--bor
 .scenario.fail .icon { color: var(--fail); }
 .problems { margin: 8px 0 4px 1.6em; padding: 0; color: var(--fail); }
 .problems li { margin: 2px 0; }
+.problems.warnings { color: var(--warn); margin-left: 0; list-style: none; }
 .test-steps { display: flex; flex-wrap: wrap; gap: 2px; margin: 8px 0 0 1.6em; font-size: 13px; }
 .test-steps .ts { width: 1.3em; text-align: center; }
 .test-detail { margin: 8px 0 0 1.6em; }
@@ -560,3 +561,10 @@ table.calls code { white-space: pre-wrap; word-break: break-all; }
 .draft-tests { margin: 10px 0; }
 .draft-tests > .row { gap: 10px; align-items: center; margin-bottom: 8px; }
 .tests-empty { padding: 14px 18px; max-width: 760px; }
+.scenario-head { cursor: pointer; }
+.scenario-head .caret { color: var(--muted); width: 1em; }
+pre.test-def, .test-def pre { background: var(--code-bg); color: var(--code-text); border-radius: 6px; margin: 8px 0; padding: 10px 12px; max-height: 32em; overflow: auto; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.suite-setup { margin: 8px 0 12px; }
+.suite-setup summary { cursor: pointer; }
+.scenarios, .scenario { min-width: 0; max-width: 100%; box-sizing: border-box; }
+pre.test-def, .test-def pre { max-width: 100%; box-sizing: border-box; }

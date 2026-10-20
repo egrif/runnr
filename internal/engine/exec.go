@@ -80,7 +80,7 @@ func (x *executor) execStream(ctx context.Context, i int, step runbook.Step, com
 		return cmdResult{err: fmt.Errorf("dir: %w", err)}
 	}
 
-	tmp, err := os.MkdirTemp("", "runnr-step-")
+	tmp, err := x.tempDir("runnr-step-")
 	if err != nil {
 		return cmdResult{err: err}
 	}
@@ -112,7 +112,7 @@ func (x *executor) execStream(ctx context.Context, i int, step runbook.Step, com
 		return res
 	}
 
-	cmd := exec.CommandContext(ctx, shell, "-c", command)
+	cmd := x.command(ctx, shell, "-c", command)
 	cmd.Env = env
 	cmd.Dir = dir
 	cmd.WaitDelay = 5 * time.Second

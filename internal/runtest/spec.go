@@ -61,6 +61,11 @@ type Suite struct {
 	// Isolate are commands that must never run for real: a call to one
 	// that no fake answers fails the test.
 	Isolate []string `yaml:"isolate,omitempty" json:"isolate,omitempty"`
+	// Strict runs every scenario in a sandbox: no network, no writing
+	// outside the test's directory, and no programs but the fakes, the
+	// shell and the allow-list (DefaultAllow, plus Allow).
+	Strict bool     `yaml:"strict,omitempty" json:"strict,omitempty"`
+	Allow  []string `yaml:"allow,omitempty" json:"allow,omitempty"`
 	// Files are fake commands at paths in the test's directory, for
 	// scripts a runbook calls by path ("outhouse/bin/tool.rb": tool.rb):
 	// point an input at {{.test_dir}}/outhouse.

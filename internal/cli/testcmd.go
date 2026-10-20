@@ -131,7 +131,16 @@ func loadSuite(st *store.Store, arg string) (*runtest.Suite, error) {
 func printResults(suite *runtest.Suite, results []runtest.Result, verbose, showLog bool) int {
 	t := NewTerminal(0)
 	failed := 0
-	fmt.Printf("%s  %s\n", t.c("1", suite.Name), t.c("2", fmt.Sprintf("(runbook %s, %d scenario(s))", suite.Runbook, len(results))))
+	mode := ""
+	if suite.Strict {
+		mode = ", sandboxed"
+	}
+	fmt.Printf("%s  %s\n", t.c("1", suite.Name), t.c("2", fmt.Sprintf("(runbook %s, %d scenario(s)%s)", suite.Runbook, len(results), mode)))
+	if len(results) > 0 {
+		for _, w := range results[0].Warnings { // the same for every scenario
+			fmt.Printf("  %s %s\n", t.c("33", "warning:"), w)
+		}
+	}
 	for _, r := range results {
 		mark := t.c("32", "✔")
 		if !r.Passed {

@@ -14,6 +14,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 2 && os.Args[1] == "__fake" {
 		os.Exit(Dispatch(os.Args[2], os.Args[3:]))
 	}
+	if len(os.Args) == 3 && os.Args[1] == "__probe" {
+		os.Exit(Probe(os.Args[2]))
+	}
 	os.Exit(m.Run())
 }
 
@@ -164,5 +167,32 @@ func TestLenientLiterals(t *testing.T) {
 		if got := lenientLiterals(in); got != want {
 			t.Errorf("%s: %s, want %s", in, got, want)
 		}
+	}
+}
+
+func TestSections(t *testing.T) {
+	setup, scs, err := Sections([]byte(`runbook: r
+isolate: [aws]
+scenarios:
+  # the plain case
+  - name: happy
+    expect:
+      status: succeeded   # all of it
+  # declines
+  - name: no
+    operator: {confirm: "no"}
+operator: {confirm: yes}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if setup != "runbook: r\nisolate: [aws]\noperator: {confirm: yes}" {
+		t.Errorf("setup: %q", setup)
+	}
+	if scs["happy"] != "# the plain case\nname: happy\nexpect:\n  status: succeeded   # all of it" {
+		t.Errorf("happy: %q", scs["happy"])
+	}
+	if scs["no"] != "# declines\nname: no\noperator: {confirm: \"no\"}" {
+		t.Errorf("no: %q", scs["no"])
 	}
 }

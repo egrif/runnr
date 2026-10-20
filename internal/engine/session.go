@@ -151,7 +151,7 @@ func (x *executor) openShell(ctx context.Context, idx int) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.MkdirTemp("", "runnr-shell-")
+	tmp, err := x.tempDir("runnr-shell-")
 	if err != nil {
 		return err
 	}

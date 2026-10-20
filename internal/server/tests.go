@@ -31,6 +31,7 @@ type testResult struct {
 	Calls    []runtest.Call `json:"calls"`
 	Asked    []string       `json:"asked,omitempty"`
 	Unused   []string       `json:"unused,omitempty"`
+	Warnings []string       `json:"warnings,omitempty"`
 	Log      string         `json:"log"`
 }
 
@@ -43,41 +44,51 @@ type testStep struct {
 // suiteFor finds a runbook's test suite: one named after it, else the
 // first that names it as its runbook.
 func (s *Server) suiteFor(name string) (*runtest.Suite, int, error) {
+	su, ver, _, err := s.suiteDoc(name)
+	return su, ver, err
+}
+
+// suiteDoc is suiteFor with the suite's YAML.
+func (s *Server) suiteDoc(name string) (*runtest.Suite, int, []byte, error) {
 	if d, err := s.st.LoadSuite(name); err == nil {
 		su, err := runtest.ParseSuite(d.Raw)
-		return su, d.Version, err
+		return su, d.Version, d.Raw, err
 	}
 	docs, err := s.st.ListSuites()
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	for _, d := range docs {
 		if su, err := runtest.ParseSuite(d.Raw); err == nil && su.Runbook == name {
-			return su, d.Version, nil
+			return su, d.Version, d.Raw, nil
 		}
 	}
-	return nil, 0, nil
+	return nil, 0, nil, nil
 }
 
 // getTests is a runbook's suite (its scenarios) and its latest results.
 func (s *Server) getTests(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	su, ver, err := s.suiteFor(name)
+	su, ver, raw, err := s.suiteDoc(name)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	resp := map[string]any{"suite": nil}
 	if su != nil {
+		// Each scenario's definition and the shared setup, as written.
+		setup, defs, _ := runtest.Sections(raw)
 		type sc struct {
 			Name        string `json:"name"`
 			Description string `json:"description,omitempty"`
+			Source      string `json:"source,omitempty"`
 		}
 		var scs []sc
 		for _, x := range su.Scenarios {
-			scs = append(scs, sc{x.Name, x.Description})
+			scs = append(scs, sc{x.Name, x.Description, defs[x.Name]})
 		}
-		resp["suite"] = map[string]any{"name": su.Name, "version": ver, "uses": su.Uses, "isolate": su.Isolate, "scenarios": scs}
+		resp["suite"] = map[string]any{"name": su.Name, "version": ver, "uses": su.Uses, "isolate": su.Isolate,
+			"strict": su.Strict, "setup": setup, "scenarios": scs}
 	}
 	s.mu.Lock()
 	if t := s.tests[name]; t != nil {
@@ -149,7 +160,7 @@ func (s *Server) runTests(w http.ResponseWriter, r *http.Request) {
 	tr := &testRun{At: time.Now(), Draft: draft != nil, Version: ver}
 	for _, x := range results {
 		res := testResult{Scenario: x.Scenario, Passed: x.Passed, Problems: x.Problems, Status: string(x.Run.Status),
-			TookMS: x.Took.Milliseconds(), Calls: x.Calls, Asked: x.Asked, Unused: x.Unused, Log: engine.RawLog(x.Run)}
+			TookMS: x.Took.Milliseconds(), Calls: x.Calls, Asked: x.Asked, Unused: x.Unused, Warnings: x.Warnings, Log: engine.RawLog(x.Run)}
 		for _, st := range x.Run.Steps {
 			res.Steps = append(res.Steps, testStep{st.Name, string(st.Status), st.Note})
 		}
