@@ -228,7 +228,7 @@ func (r Response) render(argv []string, vars map[string]string) (string, string,
 		case "aws":
 			// The AWS CLI's --query (JMESPath) and --output.
 			if q, ok := flagValue(argv[1:], "--query"); ok {
-				if v, err = jmespath.Search(q, v); err != nil {
+				if v, err = jmespath.Search(lenientLiterals(q), v); err != nil {
 					return "", "", fmt.Errorf("--query %q: %w", q, err)
 				}
 			}
@@ -253,6 +253,35 @@ func (r Response) render(argv []string, vars map[string]string) (string, string,
 		stdout += s
 	}
 	return stdout, stderr, nil
+}
+
+// lenientLiterals turns `literals` that aren't JSON (`arn:`) into JSON
+// strings, as the AWS CLI's JMESPath does (a deprecated form it still
+// accepts), so queries that work with the real CLI work with fakes.
+func lenientLiterals(q string) string {
+	var b strings.Builder
+	for {
+		i := strings.IndexByte(q, '`')
+		if i < 0 {
+			b.WriteString(q)
+			return b.String()
+		}
+		j := strings.IndexByte(q[i+1:], '`')
+		if j < 0 {
+			b.WriteString(q)
+			return b.String()
+		}
+		lit := q[i+1 : i+1+j]
+		b.WriteString(q[:i+1])
+		if json.Valid([]byte(lit)) {
+			b.WriteString(lit)
+		} else {
+			enc, _ := json.Marshal(strings.TrimSpace(lit))
+			b.Write(enc)
+		}
+		b.WriteByte('`')
+		q = q[i+j+2:]
+	}
 }
 
 func renderText(text string, vars map[string]string) (string, error) {

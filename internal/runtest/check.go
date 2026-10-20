@@ -12,12 +12,11 @@ import (
 // which needs no credentials), and reports fields the real response
 // doesn't have. Other fakes, and ones without JSON, aren't checked. aws is
 // the real AWS CLI ("aws" on PATH when empty).
-func CheckAWS(fakes []Fake, aws string) []string {
+func CheckAWS(fakes []Fake, aws string) (probs, notes []string) {
 	if aws == "" {
 		aws = "aws"
 	}
 	skeletons := map[string]any{}
-	var probs []string
 	for i, f := range fakes {
 		w := strings.Fields(f.Command)
 		if len(w) < 3 || w[0] != "aws" {
@@ -31,9 +30,10 @@ func CheckAWS(fakes []Fake, aws string) []string {
 			}
 			sk, ok := skeletons[op]
 			if !ok {
-				out, err := exec.Command(aws, w[1], w[2], "--generate-cli-skeleton", "output").Output()
+				out, err := skeleton(aws, w[1], w[2])
 				if err != nil {
-					probs = append(probs, fmt.Sprintf("fakes[%d] (%s): can't get the CLI's response shape: %v", i, f.Command, err))
+					// Not the fake's fault: some operations' shapes can't be had.
+					notes = append(notes, fmt.Sprintf("fakes[%d] (%s): not checked, the CLI can't describe its response (%s)", i, f.Command, firstLine(err.Error())))
 					skeletons[op] = nil
 					continue
 				}
@@ -55,7 +55,38 @@ func CheckAWS(fakes []Fake, aws string) []string {
 			}
 		}
 	}
-	return probs
+	return probs, notes
+}
+
+func firstLine(s string) string {
+	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
+	return s
+}
+
+// skeleton is the CLI's description of an operation's response. The CLI
+// insists on the operation's required arguments even for that, so it's
+// asked again with placeholders for the ones it names.
+func skeleton(aws, service, op string) ([]byte, error) {
+	args := []string{service, op, "--generate-cli-skeleton", "output"}
+	for range 5 {
+		var stderr strings.Builder
+		cmd := exec.Command(aws, args...)
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err == nil {
+			return out, nil
+		}
+		_, req, ok := strings.Cut(stderr.String(), "the following arguments are required:")
+		if !ok {
+			return nil, fmt.Errorf("%v: %s", err, strings.TrimSpace(stderr.String()))
+		}
+		for _, a := range strings.Split(strings.TrimSpace(req), ",") {
+			if a = strings.TrimSpace(a); strings.HasPrefix(a, "--") {
+				args = append(args, a, "x")
+			}
+		}
+	}
+	return nil, fmt.Errorf("the CLI kept asking for arguments")
 }
 
 // shapeDiff lists fields of v that aren't in the shape (a skeleton:

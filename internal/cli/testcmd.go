@@ -18,6 +18,7 @@ import (
 
 func testCmd(s func() *store.Store) *cobra.Command {
 	var only, fakeFiles []string
+	var rbFile string
 	var verbose, keep, asJSON, showLog bool
 	var timeout time.Duration
 	cmd := &cobra.Command{
@@ -56,8 +57,21 @@ from files (they win over stored ones of the same name).`,
 			if err != nil {
 				return err
 			}
+			var draft *runbook.Runbook
+			if rbFile != "" {
+				raw, err := os.ReadFile(rbFile)
+				if err != nil {
+					return err
+				}
+				if draft, err = runbook.Parse(raw); err != nil {
+					return fmt.Errorf("%s: %w", rbFile, err)
+				}
+			}
 			src := runtest.Sources{
 				Runbook: func(name string) (*runbook.Runbook, error) {
+					if draft != nil {
+						return draft, nil
+					}
 					rb, _, err := s().Get(name)
 					return rb, err
 				},
@@ -85,6 +99,7 @@ from files (they win over stored ones of the same name).`,
 	}
 	cmd.Flags().StringArrayVarP(&only, "scenario", "s", nil, "run only this scenario (repeatable)")
 	cmd.Flags().StringArrayVar(&fakeFiles, "fakes", nil, "a fake library file to use (repeatable)")
+	cmd.Flags().StringVar(&rbFile, "runbook", "", "test this runbook file instead of the saved runbook (e.g. a change before saving it)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "show every call, the operator's answers and unused fakes")
 	cmd.Flags().BoolVar(&showLog, "log", false, "show each scenario's run as a plain log")
 	cmd.Flags().BoolVar(&keep, "keep", false, "keep each scenario's directory (fakes, call log)")
@@ -211,7 +226,10 @@ and test suites (their own fakes).`,
 				if err != nil {
 					return err
 				}
-				probs := runtest.CheckAWS(fakes, "")
+				probs, notes := runtest.CheckAWS(fakes, "")
+				for _, n := range notes {
+					defer fmt.Printf("    note: %s\n", n)
+				}
 				if len(probs) == 0 {
 					fmt.Printf("✔ %s\n", a)
 					continue
@@ -303,7 +321,7 @@ func docCmd(use, noun, short string,
 				return printJSON(docs)
 			}
 			if len(docs) == 0 {
-				fmt.Printf("no %ss yet: runnr %s import <file>\n", noun, use)
+				fmt.Printf("none yet: runnr %s import <file>\n", use)
 			}
 			for _, d := range docs {
 				fmt.Printf("%-28s v%-3d %s\n", d.Name, d.Version, summary(d))

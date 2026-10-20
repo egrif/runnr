@@ -135,15 +135,20 @@ func jpEval(cur any, path string) ([]any, error) {
 		switch {
 		case strings.HasPrefix(path, "."):
 			path = path[1:]
-			n := strings.IndexAny(path, ".[")
-			if n < 0 {
-				n = len(path)
+			// The key runs to the next unescaped . or [ ("\." is a dot in a key).
+			var key strings.Builder
+			for path != "" && path[0] != '.' && path[0] != '[' {
+				if strings.HasPrefix(path, `\.`) {
+					key.WriteByte('.')
+					path = path[2:]
+					continue
+				}
+				key.WriteByte(path[0])
+				path = path[1:]
 			}
-			key := path[:n]
-			path = path[n:]
 			for _, v := range vals {
 				if m, ok := v.(map[string]any); ok {
-					if x, ok := m[key]; ok {
+					if x, ok := m[key.String()]; ok {
 						next = append(next, x)
 					}
 				}

@@ -10,6 +10,7 @@ runnr fakes import aws-rds.yaml          # fake libraries: canned responses, reu
 runnr tests import replica-demo.test.yaml # a runbook's test suite
 runnr test replica-demo                  # every scenario
 runnr test replica-demo -s two-replicas -v --log
+runnr test replica-demo --runbook draft.yaml   # test a version before saving it
 runnr fakes check aws-rds                # fakes vs the AWS CLI's real response shapes
 ```
 
@@ -102,6 +103,7 @@ runbook: replica-demo
 uses: [aws-rds]                       # fake libraries
 isolate: [aws, kubectl, terraform, psql]
 files: {"tools/report.sh": report.sh} # a fake command at a path in the test directory
+dirs: [checkout/infra]                # directories to make there (for steps that cd into them)
 inputs: {db: orders, tools: "{{.test_dir}}/tools"}
 functions: {require_vpn: "return 0"}  # replace library or runbook functions
 fakes:                                # for every scenario, before the libraries
@@ -163,7 +165,8 @@ again each time, so `failure: [retry, retry, abort]` retries twice.
 
 - **Run the real queries.** Because `aws` fakes hold the whole response and
   the call's `--query` is applied, a test exercises the runbook's actual
-  JMESPath, not a copy of its answer.
+  JMESPath, not a copy of its answer. (As with the AWS CLI, a backtick
+  literal that isn't JSON, like `` `arn:` ``, is taken as a string.)
 - **`runnr fakes check`** compares every `aws` fake's JSON with the response
   shape the AWS CLI itself describes (`aws SERVICE OPERATION
   --generate-cli-skeleton output`, which needs no credentials). It lists

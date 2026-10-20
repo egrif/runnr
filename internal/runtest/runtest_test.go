@@ -136,7 +136,7 @@ func TestAWSText(t *testing.T) {
 }
 
 func TestKubectlJSONPath(t *testing.T) {
-	app := map[string]any{"status": map[string]any{"health": map[string]any{"status": "Healthy"}, "sync": map[string]any{"status": "Synced"}},
+	app := map[string]any{"data": map[string]any{"maintenance.txt": "# Current phase: closed"}, "status": map[string]any{"health": map[string]any{"status": "Healthy"}, "sync": map[string]any{"status": "Synced"}},
 		"items": []any{map[string]any{"metadata": map[string]any{"name": "a"}}, map[string]any{"metadata": map[string]any{"name": "b"}}}}
 	for tmpl, want := range map[string]string{
 		"{.status.health.status}/{.status.sync.status}": "Healthy/Synced",
@@ -145,10 +145,24 @@ func TestKubectlJSONPath(t *testing.T) {
 		"{.items[-1].metadata.name}":                    "b",
 		"{.status['health'].status}":                    "Healthy",
 		"{range .missing[*]}{.x}{end}done":              "done",
+		`{.data.maintenance\.txt}`:                      "# Current phase: closed",
 	} {
 		got, err := kubectlOutput(app, "jsonpath="+tmpl)
 		if err != nil || got != want {
 			t.Errorf("%s: %q %v, want %q", tmpl, got, err, want)
+		}
+	}
+}
+
+func TestLenientLiterals(t *testing.T) {
+	for in, want := range map[string]string{
+		"a[?starts_with(@, `arn:`)]": "a[?starts_with(@, `\"arn:\"`)]",
+		"a[?x == `true`]":            "a[?x == `true`]",
+		"a[?x == `\"q\"`].b":         "a[?x == `\"q\"`].b",
+		"[Status,R||`promoted`]":     "[Status,R||`\"promoted\"`]",
+	} {
+		if got := lenientLiterals(in); got != want {
+			t.Errorf("%s: %s, want %s", in, got, want)
 		}
 	}
 }

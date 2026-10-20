@@ -125,6 +125,11 @@ func runScenario(ctx context.Context, s *Suite, sc Scenario, base *runbook.Runbo
 			names[w[0]] = true
 		}
 	}
+	for _, d := range s.Dirs {
+		if err := os.MkdirAll(filepath.Join(dir, d), 0o755); err != nil {
+			return res, err
+		}
+	}
 	for rel, cmd := range s.Files {
 		if err := writeShim(filepath.Join(dir, rel), cmd, o.Exe); err != nil {
 			return res, err

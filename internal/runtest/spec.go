@@ -65,6 +65,9 @@ type Suite struct {
 	// scripts a runbook calls by path ("outhouse/bin/tool.rb": tool.rb):
 	// point an input at {{.test_dir}}/outhouse.
 	Files map[string]string `yaml:"files,omitempty" json:"files,omitempty"`
+	// Dirs are directories to make in the test's directory (for steps
+	// that cd into a checkout: point an input at {{.test_dir}}/…).
+	Dirs []string `yaml:"dirs,omitempty" json:"dirs,omitempty"`
 	// Functions replace library or runbook functions for the test.
 	Functions map[string]string `yaml:"functions,omitempty" json:"functions,omitempty"`
 	Inputs    map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty"`
@@ -191,6 +194,11 @@ func ParseSuite(raw []byte) (*Suite, error) {
 			errs = append(errs, f.check(fmt.Sprintf("%s (%s).fakes[%d]", where, sc.Name, j))...)
 		}
 		errs = append(errs, sc.Operator.check(where+".operator")...)
+	}
+	for _, d := range s.Dirs {
+		if strings.HasPrefix(d, "/") || strings.Contains(d, "..") {
+			add("dirs: %q must be a relative path inside the test directory", d)
+		}
 	}
 	for p, cmd := range s.Files {
 		if strings.HasPrefix(p, "/") || strings.Contains(p, "..") || cmd == "" {
