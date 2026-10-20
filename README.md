@@ -391,7 +391,7 @@ without the required ones; `runnr doctor RUNBOOK` lists them.
 `is_aws_sso`/`require_aws_sso PROFILE [ROLE]`, `has_aws_profile`,
 `has_kube_context`/`require_kube_access CONTEXT [NS]`, `git_fresh_branch DIR
 BRANCH` (refuses uncommitted or unpushed work, fetches, fast-forwards), and
-`tf_plan DIR PLANFILE`/`tf_apply DIR PLANFILE` (apply exactly that plan),
+`tf_init DIR [ARGS]`, `tf_plan DIR PLANFILE`/`tf_apply DIR PLANFILE` (apply exactly that plan),
 `tf_summary` and `tf_nochange DIR` (for `verify`). `runnr lib show std`
 prints them; a library saved as `std` replaces it.
 

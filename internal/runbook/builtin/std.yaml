@@ -49,12 +49,20 @@ functions:
         git merge --quiet --ff-only "origin/$2" || exit 1
         printf '%s at %s\n' "$2" "$(git log -1 --format='%h %s')"
       )
-  tf_plan:
-    description: 'terraform init and plan in DIR, saving the plan to PLANFILE (in DIR) for tf_apply; prints the plan and its summary. Usage: tf_plan DIR PLANFILE'
+  tf_init:
+    description: 'terraform init in DIR, quietly unless it fails; extra arguments go to init (e.g. -backend-config=./state.conf -upgrade). Usage: tf_init DIR [ARGS...]'
     body: |
       (
         cd "$1" || exit 1
-        terraform init -input=false -no-color >/dev/null || { terraform init -input=false; exit 1; }
+        shift
+        out=$(terraform init -input=false -no-color "$@" 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
+        printf 'terraform init: ok\n'
+      )
+  tf_plan:
+    description: 'terraform plan in DIR (initialised: tf_init), saving the plan to PLANFILE (in DIR) for tf_apply; prints the plan and its summary. Usage: tf_plan DIR PLANFILE'
+    body: |
+      (
+        cd "$1" || exit 1
         terraform plan -input=false -out="$2" || exit 1
         tf_summary "$1" "$2"
       )

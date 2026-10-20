@@ -114,6 +114,14 @@ func (s *Store) saveDoc(k docKind, raw []byte, o SaveOpts) (string, int, error) 
 			return "", 0, fmt.Errorf("%s %q already exists", k.noun, name)
 		}
 	}
+	// Saving it unchanged keeps the version it has.
+	if o.OldName == "" || o.OldName == name {
+		var v int
+		var cur string
+		if err := tx.QueryRow(s.q(`SELECT version, raw FROM `+k.table+` WHERE name = ?`), name).Scan(&v, &cur); err == nil && cur == string(raw) {
+			return name, v, nil
+		}
+	}
 	var next int
 	if err := tx.QueryRow(s.q(`SELECT COALESCE(MAX(version), 0) + 1 FROM `+k.versions+` WHERE name = ?`), name).Scan(&next); err != nil {
 		return "", 0, err

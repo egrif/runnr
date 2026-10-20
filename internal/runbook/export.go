@@ -194,7 +194,9 @@ func ExportMarkdown(rb *Runbook, o ExportOptions) (string, error) {
 		if st.Background {
 			flags = append(flags, "in its own terminal")
 		}
-		if st.Confirm || st.Dangerous {
+		if st.ConfirmTyping != "" {
+			flags = append(flags, "⚠ confirm by typing")
+		} else if st.Confirm || st.Dangerous {
 			flags = append(flags, "⚠ check before running")
 		}
 		title := template.HTMLEscapeString(fmt.Sprintf("%d. %s", i+1, st.Name))
@@ -211,6 +213,23 @@ func ExportMarkdown(rb *Runbook, o ExportOptions) (string, error) {
 		}
 		if st.When != "" {
 			w("- Only when: `%s`\n", st.When)
+		}
+		for _, wf := range st.WaitFor {
+			if j, err := rb.StepIndex(wf); err == nil {
+				w("- First wait for step %d (%s), in its own terminal, to finish; stop if it failed.\n", j+1, mdProse(rb.Steps[j].Name))
+			}
+		}
+		if st.SkipIf != "" {
+			w("- Already done? Skip it if this succeeds: `%s`\n", exportText(st.SkipIf))
+		}
+		if st.ConfirmTyping != "" {
+			w("- Run it only when you're sure: runnr has you type `%s` first.\n", exportText(st.ConfirmTyping))
+		}
+		if st.OkIf != "" {
+			w("- It worked only if the output matches `%s`.\n", st.OkIf)
+		}
+		if st.FailIf != "" {
+			w("- It failed if the output matches `%s`, even if it exits 0.\n", st.FailIf)
 		}
 		if st.Background {
 			w("- Start it in another terminal (paste Setup there first); it keeps running until %s.\n", stopAfterName(rb, st))

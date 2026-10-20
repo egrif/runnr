@@ -321,6 +321,14 @@ func (s *Store) Save(raw []byte, o SaveOpts) (*runbook.Runbook, int, error) {
 		}
 	}
 
+	// Saving it unchanged keeps the version it has.
+	if o.OldName == "" || o.OldName == rb.Name {
+		var v int
+		var cur string
+		if err := tx.QueryRow(s.q(`SELECT version, raw FROM runbooks WHERE name = ?`), rb.Name).Scan(&v, &cur); err == nil && cur == string(raw) {
+			return rb, v, nil
+		}
+	}
 	// Versions continue across deletes so history stays unambiguous.
 	var next int
 	if err := tx.QueryRow(s.q(`SELECT COALESCE(MAX(version), 0) + 1 FROM runbook_versions WHERE name = ?`), rb.Name).Scan(&next); err != nil {

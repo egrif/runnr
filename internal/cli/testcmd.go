@@ -17,7 +17,7 @@ import (
 )
 
 func testCmd(s func() *store.Store) *cobra.Command {
-	var only, fakeFiles []string
+	var only, fakeFiles, libFiles []string
 	var rbFile string
 	var verbose, keep, asJSON, showLog bool
 	var timeout time.Duration
@@ -34,7 +34,8 @@ fake answers fails the scenario. Retries and repeats don't really wait.
 
 The argument is a stored suite (runnr tests import), a runbook whose
 suite is named after it, or a suite file. --fakes adds fake libraries
-from files (they win over stored ones of the same name).`,
+from files, and --lib function libraries (both win over stored ones of
+the same name), so a runbook in a repo can be tested without importing it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			suite, err := loadSuite(s(), args[0])
@@ -52,6 +53,18 @@ from files (they win over stored ones of the same name).`,
 					return fmt.Errorf("%s: %w", f, err)
 				}
 				files[l.Name] = l
+			}
+			libs := map[string]*runbook.Library{}
+			for _, f := range libFiles {
+				raw, err := os.ReadFile(f)
+				if err != nil {
+					return err
+				}
+				l, err := runbook.ParseLibrary(raw)
+				if err != nil {
+					return fmt.Errorf("%s: %w", f, err)
+				}
+				libs[l.Name] = l
 			}
 			exe, err := os.Executable()
 			if err != nil {
@@ -81,7 +94,21 @@ from files (they win over stored ones of the same name).`,
 					}
 					return s().Fakes(name)
 				},
-				Libraries: s().Libraries,
+				Libraries: func(names []string) ([]*runbook.Library, error) {
+					var out []*runbook.Library
+					for _, n := range names {
+						if l, ok := libs[n]; ok {
+							out = append(out, l)
+							continue
+						}
+						l, err := s().Libraries([]string{n})
+						if err != nil {
+							return nil, err
+						}
+						out = append(out, l...)
+					}
+					return out, nil
+				},
 			}
 			results, err := runtest.Run(cmd.Context(), suite, src, runtest.Options{Only: only, Keep: keep, Exe: exe, Timeout: timeout})
 			if err != nil {
@@ -99,6 +126,7 @@ from files (they win over stored ones of the same name).`,
 	}
 	cmd.Flags().StringArrayVarP(&only, "scenario", "s", nil, "run only this scenario (repeatable)")
 	cmd.Flags().StringArrayVar(&fakeFiles, "fakes", nil, "a fake library file to use (repeatable)")
+	cmd.Flags().StringArrayVar(&libFiles, "lib", nil, "a function library file to use (repeatable)")
 	cmd.Flags().StringVar(&rbFile, "runbook", "", "test this runbook file instead of the saved runbook (e.g. a change before saving it)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "show every call, the operator's answers and unused fakes")
 	cmd.Flags().BoolVar(&showLog, "log", false, "show each scenario's run as a plain log")
