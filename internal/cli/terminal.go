@@ -808,6 +808,32 @@ func (t *Terminal) ConfirmDanger(ctx context.Context, idx int, step runbook.Step
 	return a == "y", nil
 }
 
+// ConfirmTyped: a point of no return; the operator types the value.
+func (t *Terminal) ConfirmTyped(ctx context.Context, idx int, step runbook.Step, command, want string) (bool, error) {
+	fmt.Fprintln(t.out, t.c("1;31", "  ⚠ "+step.Name))
+	fmt.Fprintln(t.out, t.c("2", "  will run:"))
+	for _, l := range strings.Split(strings.TrimRight(command, "\n"), "\n") {
+		fmt.Fprintln(t.out, t.c("2", "    "+l))
+	}
+	if step.Expect != "" {
+		fmt.Fprintln(t.out, "  "+t.c("36", "expect: ")+step.Expect)
+	}
+	for {
+		a, err := t.stepPrompt(ctx, idx, "Type "+want+" to run it / [s]kip / [a]bort",
+			map[string]string{want: "y", "s": "s", "skip": "s", "a": "a", "abort": "a"}, "")
+		if err != nil {
+			return false, err
+		}
+		switch a {
+		case "a":
+			return false, engine.ErrAborted
+		case "s":
+			return false, nil
+		}
+		return true, nil
+	}
+}
+
 func (t *Terminal) Manual(ctx context.Context, idx int, _ runbook.Step, text string) (engine.ManualOutcome, string, error) {
 	for _, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		fmt.Fprintln(t.out, "  "+t.c("35", "☞ ")+l)

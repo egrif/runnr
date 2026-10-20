@@ -1,7 +1,9 @@
 package store
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
@@ -24,6 +26,9 @@ type LibraryEntry struct {
 	Version     int       `json:"version"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	Err         string    `json:"error,omitempty"`
+	// Builtin: it ships with runnr (version 0); saving one by that name
+	// replaces it.
+	Builtin bool `json:"builtin,omitempty"`
 }
 
 func (s *Store) ListLibraries() ([]LibraryEntry, error) {
@@ -44,6 +49,19 @@ func (s *Store) ListLibraries() ([]LibraryEntry, error) {
 		}
 		out = append(out, e)
 	}
+	for _, n := range runbook.BuiltinLibraries() {
+		if slices.ContainsFunc(out, func(e LibraryEntry) bool { return e.Name == n }) {
+			continue
+		}
+		e := LibraryEntry{Name: n, Builtin: true, Functions: []string{}}
+		if lib, err := runbook.ParseLibrary(runbook.BuiltinLibrary(n)); err == nil {
+			e.Description = lib.Description
+			for f := range lib.Functions {
+				e.Functions = append(e.Functions, f)
+			}
+		}
+		out = append(out, e)
+	}
 	return out, nil
 }
 
@@ -55,10 +73,18 @@ type LibraryDoc struct {
 	UpdatedAt time.Time
 	Library   *runbook.Library
 	ParseErr  error
+	Builtin   bool
 }
 
 func (s *Store) LoadLibrary(name string) (*LibraryDoc, error) {
 	r, err := s.loadDoc(libraryKind, name)
+	if errors.Is(err, ErrNotFound) {
+		if raw := runbook.BuiltinLibrary(name); raw != nil {
+			d := &LibraryDoc{Name: name, Raw: raw, Builtin: true}
+			d.Library, d.ParseErr = runbook.ParseLibrary(raw)
+			return d, nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -55,6 +55,12 @@ const FIELD_HELP = {
     tty: "The command needs a keyboard (prompts, live displays): it runs on a terminal you type into. Output is still recorded.",
     background: "Start the command and move on; it keeps running on its own terminal (a tab in the GUI, w in the CLI) until the “stop after” step finishes, or the run ends.",
     stop_after: "The step after which this background command is stopped (hung up).",
+    wait_for: "Background steps (by id or name) to wait for before this step runs: it waits for them to finish by themselves, and fails if one failed. (stop_after hangs up; wait_for lets it finish.)",
+    confirm_typing: "For a point of no return: the operator must type this (a template, e.g. {{.silo_env}}) to run the step, whatever else was confirmed. Unattended runs can't run it.",
+    skip_if: "A command run first: if it succeeds the step is skipped as already done (e.g. the resource exists). Template.",
+    ok_if: "A regular expression the command's output must match, or the step fails even if it exits 0 (e.g. No changes).",
+    fail_if: "A regular expression that fails the step if the command's output matches it, even if it exits 0.",
+    verify: "A command that proves this step's work still stands (e.g. tf_nochange DIR). When a run is resumed, the last step done before it is verified first; if that fails, the step is done again.",
     continue_on_error: "If the step fails, record it and carry on instead of stopping.",
     optional: "The step isn't required. It's labelled optional everywhere; an interactive run asks before it (run or skip), and an unattended run carries on if it fails. It can't also be always.",
     when: "Only run the step if this template is true, e.g. {{eq .env \"production\"}}. Otherwise it's skipped.",
@@ -189,7 +195,8 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
     <h2 id="help-steps">Steps</h2>
     <p>Every step has a <code>name</code> and exactly one of <code>run</code>, <code>manual</code>, <code>checks</code> or <code>ways</code>. The rest is optional.</p>
     ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["confirm"], ["dangerous"], ["choose"], ["window"], ["window_offset"], ["always"], ["optional"], ["when"], ["continue_on_error"],
-      ["tty"], ["background"], ["stop_after"], ["timeout"], ["retries"], ["retry_delay"], ["dir"], ["step_shell", "shell"], ["step_env", "env"],
+      ["confirm_typing"], ["skip_if"], ["ok_if"], ["fail_if"], ["verify"],
+      ["tty"], ["background"], ["stop_after"], ["wait_for"], ["timeout"], ["retries"], ["retry_delay"], ["dir"], ["step_shell", "shell"], ["step_env", "env"],
       ["outputs"], ["secret_outputs", "secret_outputs"], ["capture"], ["unattended"]])}
 
     <h2 id="help-kinds">Kinds of step</h2>

@@ -399,6 +399,27 @@ func (l *liveRun) ConfirmDanger(ctx context.Context, idx int, step runbook.Step,
 	}
 }
 
+// ConfirmTyped: a point of no return; the operator types the value.
+func (l *liveRun) ConfirmTyped(ctx context.Context, idx int, step runbook.Step, command, want string) (bool, error) {
+	for {
+		a, err := l.askStep(ctx, Question{Type: "typed", Step: idx, Title: "⚠ " + step.Name,
+			Text: "Will run:\n" + command, Expect: step.Expect, Options: []string{"run", "skip", "abort"}, Confirm: want})
+		if err != nil {
+			return false, err
+		}
+		switch a.Value {
+		case "run":
+			if strings.TrimSpace(a.Note) != want {
+				continue
+			}
+			return true, nil
+		case "abort":
+			return false, engine.ErrAborted
+		}
+		return false, nil
+	}
+}
+
 func (l *liveRun) Manual(ctx context.Context, idx int, step runbook.Step, text string) (engine.ManualOutcome, string, error) {
 	a, err := l.askStep(ctx, Question{Type: "manual", Step: idx, Title: step.Name, Text: text, Options: []string{"done", "skip", "fail", "abort"}})
 	if err != nil {

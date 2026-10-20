@@ -63,6 +63,31 @@ step stops after the step it was tied to, and the run ends with a summary.
 
 ![The window closing and the end of the run](screenshots/cli-run-end.png)
 
+## In tmux
+
+`runnr run <runbook> --tmux` (and `resume --tmux`) starts the run in a tmux
+session and attaches to it:
+
+```
+┌──────────────────────────┬──────────────────┐
+│ the run: prompts, output │ runnr watch: the │
+│                          │ steps, live      │
+│                          ├──────────────────┤
+│                          │ a shell with the │
+│                          │ run's variables  │
+└──────────────────────────┴──────────────────┘
+```
+
+The run outlives your terminal. Close it, lose the connection, or detach
+(prefix, then `d`), and `runnr attach` gets it back; with several such
+runs, `runnr attach <run-id|runbook>`. Someone else logged in as the same
+user can attach and watch too.
+
+Each background step runs in a window of its own (`bg N`), outside runnr. If
+the run fails or is aborted while one is still going, it's left running:
+a Terraform apply isn't killed halfway. `runnr resume <run> --tmux` follows
+it again, and a later step with `wait_for` waits for it to finish.
+
 ## Out of sequence
 
 `--from` starts later. A `dangerous` step that runs when earlier steps
@@ -116,3 +141,6 @@ time.
   instead: steps that expand, ways as tabs, and code as written or exactly
   as runnr runs it ([screenshot](TOUR.md#html-view)).
 - `runnr serve --open` starts the GUI.
+- `runnr doctor <runbook>` checks the programs its `requires` lists (and
+  its libraries'), with versions and how to install what's missing.
+- `runnr watch <run-id>` follows a run's steps as it goes.

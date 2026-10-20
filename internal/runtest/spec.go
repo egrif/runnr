@@ -111,6 +111,7 @@ type Operator struct {
 type Answers struct {
 	Confirm Words `yaml:"confirm,omitempty" json:"confirm,omitempty"`
 	Danger  Words `yaml:"danger,omitempty" json:"danger,omitempty"`
+	Typed   Words `yaml:"typed,omitempty" json:"typed,omitempty"`
 	Manual  Words `yaml:"manual,omitempty" json:"manual,omitempty"`
 	Failure Words `yaml:"failure,omitempty" json:"failure,omitempty"`
 	Before  Words `yaml:"before,omitempty" json:"before,omitempty"`

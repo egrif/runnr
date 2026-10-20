@@ -47,6 +47,12 @@ func Execute() int {
 	if len(os.Args) == 3 && os.Args[1] == "__probe" {
 		return runtest.Probe(os.Args[2])
 	}
+	if len(os.Args) > 1 && os.Args[1] == "__detached" {
+		return detachedMain(os.Args[2:])
+	}
+	if len(os.Args) > 1 && os.Args[1] == "__tmuxenv" {
+		return tmuxEnvMain(os.Args[2:])
+	}
 	err := newRoot().Execute()
 	var ee ExitError
 	if errors.As(err, &ee) {
@@ -70,6 +76,10 @@ func newRoot() *cobra.Command {
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			var err error
+			storeFlags = []string{"--home", home}
+			if dsn != "" {
+				storeFlags = append(storeFlags, "--db", dsn)
+			}
 			st, err = store.Open(home, dsn)
 			return err
 		},
@@ -87,6 +97,7 @@ func newRoot() *cobra.Command {
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
 		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		attachCmd(), watchCmd(s), waitRunCmd(s), doctorCmd(s),
 	)
 	return root
 }
@@ -389,6 +400,8 @@ type runFlags struct {
 	quiet, noHistory                       bool
 	stepMode, noReview                     bool
 	skip, before, after                    string
+	tmux                                   bool
+	runID                                  string
 }
 
 func (f *runFlags) register(cmd *cobra.Command) {
@@ -406,6 +419,9 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.StringVar(&f.skip, "skip", "", "steps to leave out, e.g. 3,5-7")
 	fl.StringVar(&f.before, "pause-before", "", "steps to stop before (run / skip / view / shell), e.g. 4,9")
 	fl.StringVar(&f.after, "pause-after", "", "steps to stop after, to check the result before going on")
+	fl.BoolVar(&f.tmux, "tmux", false, "run in a tmux session: it outlives this terminal (runnr attach), with the steps and a shell beside it, and background steps in windows of their own that outlive runnr")
+	fl.StringVar(&f.runID, "run-id", "", "the new run's ID")
+	_ = fl.MarkHidden("run-id")
 }
 
 // offerSaveEdits reminds the operator that steps were changed during the
@@ -443,6 +459,12 @@ type launch struct {
 }
 
 func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l launch) error {
+	if f.tmux && os.Getenv(envTmuxSession) == "" {
+		if f.js || f.noHistory {
+			return errors.New("--tmux can't be used with --json or --no-history")
+		}
+		return startTmuxRun(os.Args[1:], rb.Name, engine.NewRunID())
+	}
 	cv := engine.ControlsView{StepAll: f.stepMode}
 	for flag, dst := range map[string]*[]int{f.skip: &cv.Skip, f.before: &cv.PauseBefore, f.after: &cv.PauseAfter} {
 		if flag == "" {
@@ -512,6 +534,9 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 	ctx, abort := context.WithCancelCause(ictx)
 	defer abort(nil)
 	id := engine.NewRunID()
+	if f.runID != "" {
+		id = f.runID
+	}
 	if !f.noHistory && !f.dry {
 		go st.WatchAbort(ctx, id, abort)
 	}
@@ -532,6 +557,15 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		// Only a recorded run of a saved runbook can run dangerous steps
 		// without a double check.
 		Sanctioned: ver > 0 && !f.noHistory && !f.dry, Resumed: l.resumed,
+	}
+	if f.tmux {
+		d, err := newTmuxDetacher()
+		if err != nil {
+			return err
+		}
+		if d != nil {
+			opts.Detached = d
+		}
 	}
 	if !f.noHistory {
 		opts.Save = func(r *engine.Run) {

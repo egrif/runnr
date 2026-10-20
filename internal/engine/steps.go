@@ -52,7 +52,18 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 		}
 	}
 	res.Status, res.Started = StatusRunning, time.Now()
+	delete(x.typed, i)
 	x.notify(Event{Kind: EventStepStarted, Step: i, Result: x.result(i)})
+	if skip, note, err := x.skipIf(ctx, i, step); err != nil {
+		return x.fail(i, err)
+	} else if skip {
+		res.Status, res.Note = StatusSkipped, note
+		x.stepDone(i)
+		return nil
+	}
+	if err := x.waitFor(ctx, i, step); err != nil {
+		return x.fail(i, err)
+	}
 	x.openWindow(i)
 
 	confirmed := false
@@ -244,6 +255,11 @@ func (x *executor) attemptManual(ctx context.Context, i int, step runbook.Step, 
 }
 
 func (x *executor) confirm(ctx context.Context, i int, step runbook.Step, what string, confirmed bool) (bool, error) {
+	if step.ConfirmTyping != "" {
+		// Not covered by choosing to run, or a danger check: a point of no
+		// return is confirmed by typing.
+		return x.confirmTyped(ctx, i, step, what)
+	}
 	if !step.Confirm || confirmed || x.opts.DryRun {
 		return true, nil
 	}
@@ -287,6 +303,10 @@ func (x *executor) attemptRun(ctx context.Context, i int, step runbook.Step, res
 	res.ExitCode = out.exitCode
 	if out.err != nil {
 		return attemptResult{kind: outFailed, out: out, err: out.err.Error()}
+	}
+	if p := outputProblem(step, out.combined); p != "" {
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "✘ " + p})
+		return attemptResult{kind: outFailed, out: out, err: p}
 	}
 	return attemptResult{kind: outDone, out: out}
 }
@@ -438,7 +458,7 @@ func trimOutput(s string) string {
 
 // bgStep is a background step that's still running.
 type bgStep struct {
-	session   *termSession
+	session   bgJob
 	stopAfter int // step index; -1 = when the run ends
 	started   time.Time
 	tmp       string
@@ -477,18 +497,35 @@ func (x *executor) startBackground(ctx context.Context, i int, step runbook.Step
 	}
 
 	title := fmt.Sprintf("background · step %d: %s", i+1, step.Name)
-	var conn TermConn
-	if h, ok := x.ui.(BackgroundHost); ok {
-		conn = h.StartBackground(i, title)
+	var job bgJob
+	if d := x.opts.Detached; d != nil {
+		env, err := x.env(step)
+		if err != nil {
+			os.RemoveAll(tmp)
+			return x.fail(i, err)
+		}
+		env = append(env, "RUNNR_OUTPUT="+filepath.Join(tmp, "output"), "RUNNR_SECRET="+filepath.Join(tmp, "secret"))
+		dj, err := d.Start(i, fmt.Sprintf("step %d: %s", i+1, step.Name), DetachedSpec{Shell: shell, Command: cmd, Env: env, Dir: dir, Tmp: tmp})
+		if err != nil {
+			os.RemoveAll(tmp)
+			return x.fail(i, err)
+		}
+		job, res.Detached = dj, dj.Ref()
 	} else {
-		conn = NewBackgroundConn(40, 140)
-	}
-	// The session belongs to the run, not this step.
-	s, err := x.startTerm(ctx, shell, cmd, extra, dir, conn)
-	if err != nil {
-		conn.Close()
-		os.RemoveAll(tmp)
-		return x.fail(i, err)
+		var conn TermConn
+		if h, ok := x.ui.(BackgroundHost); ok {
+			conn = h.StartBackground(i, title)
+		} else {
+			conn = NewBackgroundConn(40, 140)
+		}
+		// The session belongs to the run, not this step.
+		s, err := x.startTerm(ctx, shell, cmd, extra, dir, conn)
+		if err != nil {
+			conn.Close()
+			os.RemoveAll(tmp)
+			return x.fail(i, err)
+		}
+		job = s
 	}
 	stopAfter := -1
 	note := "running in the background until the run ends"
@@ -499,7 +536,7 @@ func (x *executor) startBackground(ctx context.Context, i int, step runbook.Step
 	if x.background == nil {
 		x.background = map[int]*bgStep{}
 	}
-	x.background[i] = &bgStep{session: s, stopAfter: stopAfter, started: time.Now(), tmp: tmp}
+	x.background[i] = &bgStep{session: job, stopAfter: stopAfter, started: time.Now(), tmp: tmp}
 	res.Status, res.Note = StatusBackground, note
 	x.stepDone(i)
 	return nil
@@ -512,7 +549,7 @@ func (x *executor) tendBackground(finished int, final bool) {
 	for i, b := range x.background {
 		ended := false
 		select {
-		case <-b.session.done:
+		case <-b.session.Done():
 			ended = true
 		default:
 		}
@@ -528,10 +565,12 @@ func (x *executor) tendBackground(finished int, final bool) {
 			continue
 		}
 		if !ended {
-			b.session.stop()
+			b.session.Stop()
 		}
-		code, transcript, _ := b.session.wait()
-		os.RemoveAll(b.tmp)
+		code, transcript, _ := b.session.Wait()
+		if b.tmp != "" {
+			os.RemoveAll(b.tmp)
+		}
 		delete(x.background, i)
 
 		res := &x.run.Steps[i]

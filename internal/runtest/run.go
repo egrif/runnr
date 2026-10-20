@@ -223,7 +223,7 @@ func runScenario(ctx context.Context, s *Suite, sc Scenario, base *runbook.Runbo
 	rctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 	run := engine.Execute(rctx, &rb, op, "", engine.Options{
-		Vars: inputs, Interactive: true, Libraries: libs, Sanctioned: true, Hurry: true,
+		Vars: inputs, Interactive: true, Libraries: libs, Sanctioned: true, Hurry: true, SkipRequires: true,
 		BaseEnv: cleanEnv(dir, path, map[string]string{envDir: dir, envExe: o.Exe}),
 		TempDir: filepath.Join(dir, "tmp"),
 		Wrap:    wrap,
@@ -299,7 +299,7 @@ func overlay(a, b Answers) Answers {
 		}
 		return x
 	}
-	return Answers{Confirm: pick(a.Confirm, b.Confirm), Danger: pick(a.Danger, b.Danger), Manual: pick(a.Manual, b.Manual),
+	return Answers{Confirm: pick(a.Confirm, b.Confirm), Danger: pick(a.Danger, b.Danger), Typed: pick(a.Typed, b.Typed), Manual: pick(a.Manual, b.Manual),
 		Failure: pick(a.Failure, b.Failure), Before: pick(a.Before, b.Before), After: pick(a.After, b.After), Way: pick(a.Way, b.Way)}
 }
 

@@ -31,7 +31,7 @@ func newOperator(o Operator, steps map[int]Answers) *operator {
 // answer is the next word for this step and kind of prompt, or def.
 func (o *operator) answer(idx int, kind, def string) string {
 	pick := func(a Answers) Words {
-		return map[string]Words{"confirm": a.Confirm, "danger": a.Danger, "manual": a.Manual, "failure": a.Failure,
+		return map[string]Words{"confirm": a.Confirm, "danger": a.Danger, "typed": a.Typed, "manual": a.Manual, "failure": a.Failure,
 			"before": a.Before, "after": a.After, "way": a.Way}[kind]
 	}
 	o.mu.Lock()
@@ -71,6 +71,10 @@ func (o *operator) Confirm(_ context.Context, idx int, _ runbook.Step, _ string)
 
 func (o *operator) ConfirmDanger(_ context.Context, idx int, _ runbook.Step, _, _ string) (bool, error) {
 	return o.answer(idx, "danger", "type") == "type", nil
+}
+
+func (o *operator) ConfirmTyped(_ context.Context, idx int, _ runbook.Step, _, _ string) (bool, error) {
+	return o.answer(idx, "typed", "type") == "type", nil
 }
 
 func (o *operator) Manual(_ context.Context, idx int, _ runbook.Step, _ string) (engine.ManualOutcome, string, error) {

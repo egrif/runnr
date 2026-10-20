@@ -22,6 +22,8 @@ type Library struct {
 	Name        string              `yaml:"name" json:"name"`
 	Description string              `yaml:"description,omitempty" json:"description,omitempty"`
 	Functions   map[string]Function `yaml:"functions" json:"functions"`
+	// Requires are the programs the functions need.
+	Requires []Requirement `yaml:"requires,omitempty" json:"requires,omitempty"`
 }
 
 var funcNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -47,6 +49,11 @@ func (l *Library) Validate() error {
 	}
 	if len(l.Functions) == 0 {
 		errs = append(errs, errors.New("library has no functions"))
+	}
+	for _, r := range l.Requires {
+		if err := r.validate(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	errs = append(errs, validateFunctions("", l.Functions)...)
 	return errors.Join(errs...)

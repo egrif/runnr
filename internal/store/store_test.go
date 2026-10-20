@@ -195,8 +195,11 @@ func TestLibraries(t *testing.T) {
 			if _, err := s.Libraries([]string{"missing"}); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("missing: %v", err)
 			}
-			if l, _ := s.ListLibraries(); len(l) != 1 || l[0].Functions[0] != "greet" {
+			if l, _ := s.ListLibraries(); len(l) != 2 || l[0].Functions[0] != "greet" || l[1].Name != "std" || !l[1].Builtin || len(l[1].Functions) == 0 {
 				t.Fatalf("list %+v", l)
+			}
+			if libs, err := s.Libraries([]string{"std"}); err != nil || libs[0].Functions["tf_plan"].Body == "" {
+				t.Fatalf("std: %v", err)
 			}
 		})
 	}

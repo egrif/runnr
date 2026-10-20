@@ -49,6 +49,8 @@ type Runbook struct {
 	Sensitive map[string]string `yaml:"sensitive,omitempty" json:"sensitive,omitempty"`
 	// Libraries names shared function libraries every step can call.
 	Libraries []string `yaml:"libraries,omitempty" json:"libraries,omitempty"`
+	// Requires are the programs the runbook needs, checked before a run.
+	Requires []Requirement `yaml:"requires,omitempty" json:"requires,omitempty"`
 	// Functions are this runbook's own shell functions (they win over a
 	// library's of the same name).
 	Functions map[string]Function `yaml:"functions,omitempty" json:"functions,omitempty"`
@@ -109,6 +111,22 @@ type Step struct {
 	Env     map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
 	When    string            `yaml:"when,omitempty" json:"when,omitempty"`
 	Confirm bool              `yaml:"confirm,omitempty" json:"confirm,omitempty"`
+	// ConfirmTyping is what the operator must type to run the step (e.g.
+	// "{{.silo_env}}"), for points of no return. Template. It replaces a
+	// plain confirm; unattended runs can't run such a step.
+	ConfirmTyping string `yaml:"confirm_typing,omitempty" json:"confirm_typing,omitempty"`
+	// SkipIf is a command run before the step: if it succeeds, the step is
+	// skipped (the work is already done). Template.
+	SkipIf string `yaml:"skip_if,omitempty" json:"skip_if,omitempty"`
+	// OkIf and FailIf are regular expressions on a command's output: a
+	// step that exits 0 still fails unless its output matches OkIf, or if
+	// it matches FailIf.
+	OkIf   string `yaml:"ok_if,omitempty" json:"ok_if,omitempty"`
+	FailIf string `yaml:"fail_if,omitempty" json:"fail_if,omitempty"`
+	// Verify is a command that proves the step's work still stands. When a
+	// run is resumed, the last step done before it is verified first; if
+	// that fails, the step is done again. Template.
+	Verify string `yaml:"verify,omitempty" json:"verify,omitempty"`
 	// Dangerous steps need a typed double check unless they run in
 	// sequence in a recorded run of the saved runbook.
 	Dangerous       bool   `yaml:"dangerous,omitempty" json:"dangerous,omitempty"`
@@ -137,6 +155,9 @@ type Step struct {
 	// terminal until the step named by StopAfter finishes (or the run ends).
 	Background bool   `yaml:"background,omitempty" json:"background,omitempty"`
 	StopAfter  string `yaml:"stop_after,omitempty" json:"stop_after,omitempty"`
+	// WaitFor are background steps (by id or name) this step waits for to
+	// finish by themselves before it runs; it fails if one of them failed.
+	WaitFor []string `yaml:"wait_for,omitempty" json:"wait_for,omitempty"`
 
 	// Checks run as a group; the step passes when all of them pass.
 	// Repeat retries the group until it does.
@@ -622,6 +643,11 @@ func (rb *Runbook) Validate() error {
 	if !slugRe.MatchString(rb.Name) {
 		add("name %q must be lowercase letters, digits, '.', '_' or '-'", rb.Name)
 	}
+	for _, r := range rb.Requires {
+		if err := r.validate(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	seen := map[string]bool{}
 	for i, in := range rb.Inputs {
 		if !identRe.MatchString(in.Name) {
@@ -685,6 +711,13 @@ func (rb *Runbook) Validate() error {
 				add("steps[%d] (%s): stop_after: %v", i, st.Name, err)
 			} else if j <= i {
 				add("steps[%d] (%s): stop_after must name a later step", i, st.Name)
+			}
+		}
+		for _, w := range st.WaitFor {
+			if j, err := rb.StepIndex(w); err != nil {
+				add("steps[%d] (%s): wait_for: %v", i, st.Name, err)
+			} else if j >= i || !rb.Steps[j].Background {
+				add("steps[%d] (%s): wait_for must name an earlier background step (%s isn't)", i, st.Name, w)
 			}
 		}
 	}
@@ -772,6 +805,10 @@ func validTemplate(text string) error {
 }
 
 // validateStep checks one step.
+func hasRun(s Step) bool {
+	return slices.ContainsFunc(s.WayList(), func(w Way) bool { return w.Kind() == "run" })
+}
+
 func validateStep(where string, s Step) []error {
 	var errs []error
 	add := func(format string, a ...any) { errs = append(errs, fmt.Errorf(where+": "+format, a...)) }
@@ -812,6 +849,22 @@ func validateStep(where string, s Step) []error {
 	}
 	if s.Retries < 0 {
 		add("retries must be >= 0")
+	}
+	for field, v := range map[string]string{"ok_if": s.OkIf, "fail_if": s.FailIf} {
+		if _, err := regexp.Compile(v); v != "" && err != nil {
+			add("%s isn't a regular expression: %v", field, err)
+		}
+	}
+	if (s.OkIf != "" || s.FailIf != "") && !hasRun(s) {
+		add("ok_if and fail_if apply to commands")
+	}
+	if s.ConfirmTyping != "" && s.Confirm {
+		add("confirm_typing replaces confirm: use one")
+	}
+	for field, text := range map[string]string{"confirm_typing": s.ConfirmTyping, "skip_if": s.SkipIf, "verify": s.Verify} {
+		if err := validTemplate(text); err != nil {
+			add("%s template: %v", field, err)
+		}
 	}
 	switch s.Unattended {
 	case "", UnattendedFail, UnattendedSkip, UnattendedPass:

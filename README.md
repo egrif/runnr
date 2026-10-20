@@ -313,6 +313,15 @@ steps:
     run: ./status.sh --watch
     background: true            # starts and moves on; runs on its own terminal
     stop_after: verify          # stopped (hung up) after that step finishes
+  - name: Promote
+    run: ./promote.sh {{.cluster}}
+    confirm_typing: '{{.cluster}}'   # a point of no return: type the cluster's name to run it
+    skip_if: ./promoted.sh {{.cluster}}   # already done? skip it
+    ok_if: 'status: promoted'      # exit 0 isn't enough: the output must match (fail_if: the opposite)
+    verify: ./promoted.sh {{.cluster}}    # on resume, proves this still stands (else it's done again)
+  - name: After the apply
+    wait_for: [watcher]          # wait for a background step to finish by itself (fails if it failed)
+    run: ./after.sh
   - id: verify
     name: Ready?
     checks:                     # all must pass; each runs every attempt
@@ -360,6 +369,31 @@ their `unattended` policy.
 They run on their own terminal until the `stop_after` step finishes (or the
 run ends), are visible as a tab in the GUI or with `w` in the CLI, and their
 output is recorded with the step. They can't publish outputs.
+
+**Running in tmux.** `runnr run --tmux` (or `resume --tmux`) runs in a
+tmux session, so the run outlives the terminal: close it, lose the ssh
+connection, then `runnr attach` (or detach on purpose with the prefix key and
+`d`). Beside the run are `runnr watch` (the steps, live) and a shell with the
+run's variables. Each background step gets a window of its own and runs
+outside runnr: if the run fails or is aborted while one is running (a
+Terraform apply, say), it's left running, and `runnr resume --tmux` follows it
+again. Without `--tmux`, background steps end with the run, and resuming
+starts them again. Outside tmux, runnr uses its own tmux server (`tmux -L
+runnr`); inside tmux, the current one.
+
+**Requirements.** `requires:` lists the programs a runbook (or a library)
+needs: `- terraform`, or `{cmd: terraform, version: "1.5", install: "brew
+install terraform", optional: true}` (`check:` is the command that prints its
+version, default `CMD --version`). Runs check them first and refuse to start
+without the required ones; `runnr doctor RUNBOOK` lists them.
+
+**The std library** ships with runnr: `libraries: [std]` gives
+`is_aws_sso`/`require_aws_sso PROFILE [ROLE]`, `has_aws_profile`,
+`has_kube_context`/`require_kube_access CONTEXT [NS]`, `git_fresh_branch DIR
+BRANCH` (refuses uncommitted or unpushed work, fetches, fast-forwards), and
+`tf_plan DIR PLANFILE`/`tf_apply DIR PLANFILE` (apply exactly that plan),
+`tf_summary` and `tf_nochange DIR` (for `verify`). `runnr lib show std`
+prints them; a library saved as `std` replaces it.
 
 **Checks** run several commands as one step: each passes if it exits 0,
 every one runs on each attempt, and the step passes when all pass. Results

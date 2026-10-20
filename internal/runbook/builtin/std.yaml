@@ -1,0 +1,77 @@
+name: std
+description: "runnr's standard functions, for any runbook (libraries: [std]). Each works in bash and zsh, checks rather than changes unless its name says otherwise, and says what's wrong on stderr when it fails."
+functions:
+  is_aws_sso:
+    description: 'True when the profile (default: $AWS_PROFILE, else default) has working credentials, and, if a role is given, when they are for that SSO role. Asks STS, so an expired token or a revoked role both fail. Usage: is_aws_sso [PROFILE] [ROLE]'
+    body: |
+      local arn
+      arn=$(aws sts get-caller-identity ${1:+--profile} ${1:+"$1"} --query Arn --output text 2>/dev/null) || return 1
+      [[ -z ${2:-} || $arn == *":assumed-role/AWSReservedSSO_${2}_"* ]]
+  require_aws_sso:
+    description: 'is_aws_sso, or say how to log in and fail. Usage: require_aws_sso PROFILE [ROLE]'
+    body: |
+      is_aws_sso "$@" && return 0
+      printf 'No working AWS SSO session for profile %s%s. Log in with: aws sso login --profile %s\n' "${1:-default}" "${2:+ as role $2}" "${1:-default}" >&2
+      return 1
+  has_aws_profile:
+    description: 'True when the AWS CLI has this profile configured. Usage: has_aws_profile PROFILE'
+    body: |
+      local all
+      all=$(aws configure list-profiles 2>/dev/null) || return 1
+      printf '%s\n' "$all" | grep -qxF -- "$1" || { printf 'No AWS profile %s (aws configure list-profiles)\n' "$1" >&2; return 1; }
+  has_kube_context:
+    description: 'True when kubectl has this context. Usage: has_kube_context CONTEXT'
+    body: |
+      local all
+      all=$(kubectl config get-contexts -o name 2>/dev/null) || return 1
+      printf '%s\n' "$all" | grep -qxF -- "$1" || { printf 'kubectl has no context %s (kubectl config get-contexts)\n' "$1" >&2; return 1; }
+  require_kube_access:
+    description: 'True when the cluster answers and lets you get pods (in NAMESPACE, default all you can see), within 10 seconds. Usage: require_kube_access CONTEXT [NAMESPACE]'
+    body: |
+      has_kube_context "$1" || return 1
+      local ok
+      ok=$(kubectl --context "$1" ${2:+-n} ${2:+"$2"} auth can-i get pods --request-timeout=10s 2>&1)
+      [[ $ok == yes ]] || { printf "Can't get pods with context %s%s: %s\n" "$1" "${2:+ in $2}" "$ok" >&2; return 1; }
+  git_fresh_branch:
+    description: 'Check out BRANCH in the repo at DIR as it is on origin: refuses a repo with uncommitted changes or local commits not on origin, fetches, and fast-forwards. Prints the commit it is on. Usage: git_fresh_branch DIR BRANCH'
+    body: |
+      (
+        cd "$1" || exit 1
+        if [[ -n $(git status --porcelain --untracked-files=no) ]]; then
+          printf '%s has uncommitted changes; commit or stash them first:\n' "$1" >&2; git status --short --untracked-files=no >&2; exit 1
+        fi
+        git fetch --quiet origin "$2" || { printf "Couldn't fetch %s from origin\n" "$2" >&2; exit 1; }
+        git checkout --quiet "$2" 2>/dev/null || git checkout --quiet -b "$2" "origin/$2" || exit 1
+        ahead=$(git rev-list --count "origin/$2..HEAD")
+        if [[ $ahead != 0 ]]; then
+          printf '%s has %s commit(s) not on origin; push them (or reset) first\n' "$2" "$ahead" >&2; exit 1
+        fi
+        git merge --quiet --ff-only "origin/$2" || exit 1
+        printf '%s at %s\n' "$2" "$(git log -1 --format='%h %s')"
+      )
+  tf_plan:
+    description: 'terraform init and plan in DIR, saving the plan to PLANFILE (in DIR) for tf_apply; prints the plan and its summary. Usage: tf_plan DIR PLANFILE'
+    body: |
+      (
+        cd "$1" || exit 1
+        terraform init -input=false -no-color >/dev/null || { terraform init -input=false; exit 1; }
+        terraform plan -input=false -out="$2" || exit 1
+        tf_summary "$1" "$2"
+      )
+  tf_summary:
+    description: 'The summary line of a saved plan ("Plan: 1 to add, 0 to change, 0 to destroy." or "No changes."). Usage: tf_summary DIR PLANFILE'
+    body: |
+      (cd "$1" && terraform show -no-color "$2" | grep -E '^(Plan:|No changes)' | tail -1)
+  tf_apply:
+    description: 'Apply exactly the plan tf_plan saved (nothing new is planned). Usage: tf_apply DIR PLANFILE'
+    body: |
+      (cd "$1" && terraform apply -input=false -no-color "$2")
+  tf_nochange:
+    description: 'True when DIR has nothing to apply (terraform plan -detailed-exitcode, no lock): use as a step''s verify or skip_if after an apply. Usage: tf_nochange DIR'
+    body: |
+      (
+        cd "$1" || exit 1
+        out=$(terraform plan -input=false -no-color -lock=false -detailed-exitcode 2>&1); rc=$?
+        printf '%s\n' "$out" | grep -E '^(Plan:|No changes)' | tail -1
+        [[ $rc == 0 ]] || { [[ $rc == 2 ]] && printf '%s has changes to apply\n' "$1" >&2; exit 1; }
+      )

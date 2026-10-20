@@ -66,6 +66,8 @@ type StepResult struct {
 	// Alternative and Sub are from runs before ways replaced alternatives.
 	Alternative string       `json:"alternative,omitempty"`
 	Sub         []StepResult `json:"sub,omitempty"`
+	// Detached finds a background step that runs outside runnr (Detacher).
+	Detached string `json:"detached,omitempty"`
 	// Edited: the step was changed during the run.
 	Edited bool `json:"edited,omitempty"`
 	// Optional: the step isn't required.
@@ -255,6 +257,10 @@ type Options struct {
 	// Env is added last to every step's environment (e.g. a PATH that puts
 	// a test's fake commands first).
 	Env []string
+	// Detached runs background steps outside runnr's process (tmux).
+	Detached Detacher
+	// SkipRequires doesn't check the runbook's requires (tests fake them).
+	SkipRequires bool
 	// Hurry makes retries and repeats wait only a moment, keeping their
 	// timing as simulated time (repeats still give up after their timeout).
 	Hurry bool
@@ -430,6 +436,8 @@ type executor struct {
 	// windowOpenedBy is the step that opened the maintenance window in
 	// this run (-1: none, or it was open already when resuming).
 	windowOpenedBy int
+	// typed: steps whose confirm_typing was answered (this time through).
+	typed map[int]bool
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -481,8 +489,12 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		}
 	}
 	x.carryResumed()
+	x.adoptBackground()
 	x.save()
-	err := x.setupFunctions()
+	err := x.requirements()
+	if err == nil {
+		err = x.setupFunctions()
+	}
 	if err == nil {
 		err = x.resolveInputs(ctx)
 	}
@@ -496,6 +508,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	if err == nil {
 		x.restoreState()
 		x.refreshState()
+		x.verifyResumed(ctx)
 		if r, ok := ui.(Reviewer); ok && opts.Review && !opts.ShellOnly {
 			err = r.Review(ctx, x.Plan(), x.ctl)
 		}
@@ -520,6 +533,9 @@ func (x *executor) finish(ctx context.Context, err error) {
 	x.em.Lock()
 	x.cur = len(x.rb.Steps) // no more edits
 	x.em.Unlock()
+	if err != nil {
+		x.leaveDetached()
+	}
 	x.tendBackground(-1, true)
 	if x.funcFile != "" {
 		os.Remove(x.funcFile)
@@ -617,6 +633,9 @@ func (x *executor) steps(ctx context.Context) error {
 		step := x.def(i)
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if _, adopted := x.background[i]; adopted && x.run.Steps[i].Status == StatusBackground {
+			continue // followed again from the resumed run
 		}
 		if skip, _, _ := x.ctl.Get(i); skip {
 			if x.run.Steps[i].Note == NoteCarried {
@@ -815,7 +834,10 @@ func (x *executor) addSecret(v string, force bool) {
 	if v == "" || (len(v) < 4 && !force) || slices.ContainsFunc(x.secrets, func(s secretValue) bool { return s.value == v }) {
 		return
 	}
-	x.secrets = append(x.secrets, secretValue{v, x.maskedValue(v)})
+	shown := x.maskedValue(v)
+	for _, f := range secretForms(v) {
+		x.secrets = append(x.secrets, secretValue{f, shown})
+	}
 	// Longest first, so a URL is replaced before the password inside it.
 	slices.SortFunc(x.secrets, func(a, b secretValue) int { return len(b.value) - len(a.value) })
 }
