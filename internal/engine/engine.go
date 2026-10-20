@@ -96,9 +96,13 @@ type Run struct {
 	Error    string            `json:"error,omitempty"`
 	Inputs   map[string]string `json:"inputs"`
 	Started  time.Time         `json:"started"`
-	Ended    time.Time         `json:"ended,omitzero"`
-	Steps    []StepResult      `json:"steps"`
-	Notes    []Note            `json:"notes,omitempty"`
+	// Begun is when the steps started: the inputs are settled and the plan
+	// reviewed. Zero before then, even if steps already show a status (a
+	// resume records the steps it carries over before asking for anything).
+	Begun time.Time    `json:"begun,omitzero"`
+	Ended time.Time    `json:"ended,omitzero"`
+	Steps []StepResult `json:"steps"`
+	Notes []Note       `json:"notes,omitempty"`
 	// State is every variable the run has (inputs and published values)
 	// as of the last finished step, with credentials masked.
 	State map[string]string `json:"state,omitempty"`
@@ -514,6 +518,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		}
 	}
 	if err == nil {
+		x.run.Begun = time.Now()
 		x.notify(Event{Kind: EventRunStarted, Run: x.snapshot()})
 		x.save()
 		err = x.steps(ctx)
@@ -887,6 +892,13 @@ func (x *executor) runnrEnv(step runbook.Step) ([]string, error) {
 
 // ErrAborted lets interactors signal that the user aborted the run.
 var ErrAborted = errAborted
+
+// HasBegun reports whether the run's steps have started (so its inputs are
+// recorded), or the run has ended. Step statuses alone don't say: a resume
+// records the steps it carries over before its inputs are settled.
+func (r *Run) HasBegun() bool {
+	return r.Status != StatusRunning || !r.Begun.IsZero()
+}
 
 // ResumePoint returns the first step of a previous run that neither
 // succeeded nor was skipped, or -1 if there's nothing left to do.

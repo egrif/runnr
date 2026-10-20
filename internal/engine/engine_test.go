@@ -263,6 +263,46 @@ func TestResumePoint(t *testing.T) {
 	}
 }
 
+// The tmux shell pane opens once a run has begun, and then loads its inputs.
+// A resume saves the steps it carries over before its inputs are settled, so
+// "a step isn't pending" can't mean "begun": HasBegun must wait for the inputs.
+func TestResumeHasBegunOnlyOnceInputsAreRecorded(t *testing.T) {
+	rb := mustParse(t, "name: t\ninputs:\n  - {name: env, required: true}\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: 'exit 1'}\n  - {name: c, run: 'true'}\n")
+	prev := Execute(context.Background(), rb, Unattended{}, "", Options{Vars: map[string]string{"env": "staging"}})
+	if got := ResumePoint(prev); got != 1 {
+		t.Fatalf("resume point %d (%s)", got, statuses(prev))
+	}
+
+	type saved struct {
+		begun, carried bool
+		env            string
+	}
+	var saves []saved
+	opts := Options{Vars: map[string]string{"env": "staging"}, Resumed: prev, Resumes: prev.ID, StartAt: ResumePoint(prev),
+		Save: func(r *Run) {
+			s := saved{begun: r.HasBegun(), env: r.Inputs["env"]}
+			for _, st := range r.Steps {
+				s.carried = s.carried || st.Status != StatusPending
+			}
+			saves = append(saves, s)
+		}}
+	run := Execute(context.Background(), rb, Unattended{}, "", opts)
+	if run.Status != StatusFailed || run.Begun.IsZero() {
+		t.Fatalf("status %s, begun %v", run.Status, run.Begun)
+	}
+	if len(saves) == 0 || !saves[0].carried || saves[0].env != "" || saves[0].begun {
+		t.Fatalf("first save should carry step a, before the inputs, and not count as begun: %+v", saves)
+	}
+	for i, s := range saves {
+		if s.begun && s.env != "staging" {
+			t.Fatalf("save %d counts as begun without its inputs: %+v", i, saves)
+		}
+	}
+	if last := saves[len(saves)-1]; !last.begun || last.env != "staging" {
+		t.Fatalf("last save: %+v", last)
+	}
+}
+
 func TestRetryDelay(t *testing.T) {
 	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'exit 1', retries: 2, retry_delay: 150ms}\n")
 	start := time.Now()
