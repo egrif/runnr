@@ -18,7 +18,7 @@ type docKind struct {
 }
 
 func init() {
-	for _, k := range []docKind{libraryKind, collectionKind} {
+	for _, k := range []docKind{libraryKind, collectionKind, fakesKind, suiteKind} {
 		schema = append(schema,
 			`CREATE TABLE IF NOT EXISTS `+k.table+` (
 				name       TEXT PRIMARY KEY,

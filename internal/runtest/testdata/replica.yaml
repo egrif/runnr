@@ -1,0 +1,32 @@
+name: replica-demo
+description: Delete a DR replica and wait for a cluster (a test fixture).
+shell: sh
+inputs:
+  - {name: db, default: orders}
+  - {name: tools, default: ./tools}
+functions:
+  ready: {body: 'echo checking; return 0'}
+steps:
+  - id: setup
+    name: Look up the instance
+    always: true
+    run: |
+      host=$(aws rds describe-db-instances --db-instance-identifier "$db" --query 'DBInstances[0].Endpoint.Address' --output text)
+      echo "host=$host"
+    outputs: [host]
+  - name: Delete the DR replica
+    confirm: true
+    dangerous: true
+    run: |
+      set -e
+      replicas=$(aws rds describe-db-instances --db-instance-identifier "$db" --query 'DBInstances[0].ReadReplicaDBInstanceIdentifiers' --output text)
+      n=$(echo $replicas | wc -w | tr -d ' ')
+      [ "$n" = 1 ] || { echo "expected one replica, found $n: $replicas" >&2; exit 1; }
+      aws rds delete-db-instance --db-instance-identifier "$replicas" --skip-final-snapshot
+  - name: Cluster is available
+    checks:
+      - name: available
+        run: '[ "$(aws rds describe-db-clusters --db-cluster-identifier "$db-cluster" --query "DBClusters[0].Status" --output text)" = available ]'
+    repeat: {every: 1m, timeout: 30m}
+  - name: Ready
+    run: ready && "$tools/report.sh" "$host"

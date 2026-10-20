@@ -3,7 +3,9 @@ module github.com/egrif/runnr
 go 1.24.2
 
 require (
+	github.com/creack/pty v1.1.21
 	github.com/jackc/pgx/v5 v5.7.1
+	github.com/jmespath/go-jmespath v0.4.0
 	github.com/spf13/cobra v1.8.1
 	golang.org/x/term v0.25.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -11,7 +13,6 @@ require (
 )
 
 require (
-	github.com/creack/pty v1.1.21 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect

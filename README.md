@@ -14,6 +14,7 @@ unattended for cron/CI.
 - **Terminal steps** hand the terminal to tools like `terraform apply` or `argocd login --sso`.
 - **Resume** long-running or multi-day procedures from where they stopped.
 - **Run history** for every run, and **version history** for every runbook save.
+- **Tests** that run a runbook with its commands faked and a simulated operator, without touching anything ([docs/TESTING.md](docs/TESTING.md)).
 - **SQLite or Postgres** storage: zero-setup locally, shared for a team.
 - **HTTP API** for CI, cron and chatops ([docs/API.md](docs/API.md)).
 
@@ -57,6 +58,8 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
 | `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin, `-c <collection>` to add them to a collection) |
 | `runnr delete <name>` | Delete (`-f` to skip the prompt) |
+| `runnr test <suite\|runbook\|file>` | Test a runbook: run it with its commands faked and a simulated operator, against each scenario's expectations (`-s`, `-v`, `--log`); see [Testing runbooks](docs/TESTING.md) |
+| `runnr tests import/list/show/delete` · `runnr fakes import/list/show/delete/check` | Manage test suites and fake libraries; `fakes check` compares AWS CLI fakes with the CLI's real response shapes |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
 | `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |
 | `runnr rerun <run-id>` | Run again with an earlier run's inputs, comparing each step with what it did then |

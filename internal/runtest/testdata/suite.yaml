@@ -1,0 +1,29 @@
+runbook: replica-demo
+uses: [aws-rds]
+isolate: [aws]
+files: {"tools/report.sh": report.sh}
+inputs: {tools: "{{.test_dir}}/tools"}
+fakes:
+  - command: report.sh
+    stdout: "reported"
+scenarios:
+  - name: happy
+    expect:
+      status: succeeded
+      steps: {setup: succeeded, 3: succeeded}
+      output: {setup: "host=orders.abc.us-east-1.rds.amazonaws.com", 4: reported}
+      order: [aws rds delete-db-instance, aws rds describe-db-clusters, report.sh]
+  - name: two-replicas
+    fakes:
+      - command: aws rds describe-db-instances
+        args: {--query: "*ReadReplica*"}
+        json: {DBInstances: [{ReadReplicaDBInstanceIdentifiers: [a, b]}]}
+    expect:
+      status: failed
+      steps: {2: failed}
+      not_called: [aws rds delete-db-instance]
+  - name: declined
+    operator: {steps: {2: {confirm: "no"}}}
+    expect:
+      steps: {2: skipped}
+      not_called: [aws rds delete-db-instance]

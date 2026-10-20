@@ -1,0 +1,14 @@
+name: aws-rds
+fakes:
+  - command: aws rds describe-db-instances
+    json:
+      DBInstances:
+        - DBInstanceIdentifier: "{{.db}}"
+          Endpoint: {Address: "{{.db}}.abc.us-east-1.rds.amazonaws.com", Port: 5432}
+          ReadReplicaDBInstanceIdentifiers: ["{{.db}}-dr"]
+  - command: aws rds describe-db-clusters
+    sequence:
+      - json: {DBClusters: [{Status: creating}]}
+      - json: {DBClusters: [{Status: available}]}
+  - command: aws rds delete-db-instance
+    stdout: deleting

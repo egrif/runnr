@@ -280,7 +280,7 @@ func (x *executor) attemptRun(ctx context.Context, i int, step runbook.Step, res
 		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: fmt.Sprintf("attempt %d/%d failed (%s); retrying in %s", a, attempts, x.mask(out.err.Error()), delay)})
 		select {
 		case <-ctx.Done():
-		case <-time.After(delay):
+		case <-time.After(x.wait(delay)):
 		}
 	}
 	res.Output = x.mask(out.combined)
@@ -304,6 +304,7 @@ func (x *executor) attemptChecks(ctx context.Context, i int, step runbook.Step, 
 		return attemptResult{kind: outSkipped, note: "dry run"}
 	}
 	var deadline time.Time
+	var simulated time.Duration // time passed waiting, in a hurried run
 	if step.Repeat != nil {
 		deadline = time.Now().Add(step.Repeat.TimeoutDuration())
 	}
@@ -395,16 +396,27 @@ func (x *executor) attemptChecks(ctx context.Context, i int, step runbook.Step, 
 			return attemptResult{kind: outFailed, err: failed}
 		}
 		every := step.Repeat.EveryDuration()
-		if time.Now().Add(every).After(deadline) {
+		if time.Now().Add(simulated + every).After(deadline) {
 			return attemptResult{kind: outFailed, err: failed + " (gave up after " + step.Repeat.Timeout + ")"}
 		}
 		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: fmt.Sprintf("  trying again in %s (until %s)", every, deadline.Format("15:04:05"))})
 		select {
 		case <-ctx.Done():
 			return attemptResult{kind: outFailed, err: ctx.Err().Error()}
-		case <-time.After(every):
+		case <-time.After(x.wait(every)):
+			if x.opts.Hurry {
+				simulated += every
+			}
 		}
 	}
+}
+
+// wait is how long to really wait for d: a moment, in a hurried run.
+func (x *executor) wait(d time.Duration) time.Duration {
+	if x.opts.Hurry {
+		return min(d, 10*time.Millisecond)
+	}
+	return d
 }
 
 func lastLines(s string, n int) string {

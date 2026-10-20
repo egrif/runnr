@@ -251,6 +251,12 @@ type Options struct {
 	// ShellOnly runs only the steps marked always (the setup), then opens an
 	// interactive shell with the resulting environment.
 	ShellOnly bool
+	// Env is added last to every step's environment (e.g. a PATH that puts
+	// a test's fake commands first).
+	Env []string
+	// Hurry makes retries and repeats wait only a moment, keeping their
+	// timing as simulated time (repeats still give up after their timeout).
+	Hurry bool
 }
 
 // StepView is a step as it would run now: templates rendered against the
@@ -827,6 +833,11 @@ func (x *executor) runnrEnv(step runbook.Step) ([]string, error) {
 		env = append(env, k+"="+v)
 	}
 	env = append(env, "RUNNR_RUN_ID="+x.run.ID, "RUNNR_RUNBOOK="+x.rb.Name)
+	x.em.Lock()
+	if x.cur >= 0 && x.cur < len(x.rb.Steps) {
+		env = append(env, fmt.Sprintf("RUNNR_STEP=%d", x.cur+1))
+	}
+	x.em.Unlock()
 	if x.funcFile != "" {
 		env = append(env, "RUNNR_FUNCTIONS="+x.funcFile)
 	}
@@ -839,7 +850,7 @@ func (x *executor) runnrEnv(step runbook.Step) ([]string, error) {
 			env = append(env, k+"="+r)
 		}
 	}
-	return env, nil
+	return append(env, x.opts.Env...), nil
 }
 
 // ErrAborted lets interactors signal that the user aborted the run.

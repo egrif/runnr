@@ -25,6 +25,7 @@ import (
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/htmlview"
 	"github.com/egrif/runnr/internal/runbook"
+	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/server"
 	"github.com/egrif/runnr/internal/store"
 )
@@ -38,6 +39,11 @@ type ExitError struct{ Code int }
 func (e ExitError) Error() string { return fmt.Sprintf("exit %d", e.Code) }
 
 func Execute() int {
+	// A faked command in a test calls back here: answer it, quickly, without
+	// opening the store.
+	if len(os.Args) > 2 && os.Args[1] == "__fake" {
+		return runtest.Dispatch(os.Args[2], os.Args[3:])
+	}
 	err := newRoot().Execute()
 	var ee ExitError
 	if errors.As(err, &ee) {
@@ -77,7 +83,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 	)
 	return root
 }
