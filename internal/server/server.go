@@ -129,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runbooks/{name}/steps/{n}", s.getRunbookStep)
 	mux.HandleFunc("PUT /api/runbooks/{name}/steps/{n}", s.putRunbookStep)
 	mux.HandleFunc("POST /api/runs/{id}/adopt-version", s.adoptVersion)
+	mux.HandleFunc("POST /api/runs/{id}/shell", s.openAsideShell)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
 	mux.HandleFunc("POST /api/runs/{id}/notes", s.addNote)

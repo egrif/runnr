@@ -388,6 +388,20 @@ status, ■ stopped) until you close it, or closes at once with
 `close_on_exit: true`. They're visible as a tab in the GUI or with `w` in the CLI, and their
 output is recorded with the step. They can't publish outputs.
 
+**The run console** (▣ Console on a run, or a runbook's Console tab) puts the
+run on one screen, in panes you arrange: drag a pane by its bar onto
+another pane's left, right, top or bottom edge to split it there, or onto
+its middle to swap them; its bar can also split it (a new empty pane beside
+or below) or close it. An empty pane is for whatever isn't on screen:
+Step list, Step definition, Step activity, Step edit (else the editor is a
+tab in Step activity), Terminal target (where a terminal step or a step's
+shell opens; else a tab in Step activity), Background target (several take
+background jobs in turn, each to the one with the fewest running) or Shell
+(a shell at the step the run is on, alongside the run: values it publishes
+reach the run when the next step starts; there can be several) or Run log
+(every step's output, in order). The layout
+is kept in your browser; Reset layout puts it back.
+
 **Running in tmux.** `runnr run --tmux` (or `resume --tmux`) runs in a
 tmux session, so the run outlives the terminal: close it, lose the ssh
 connection, then `runnr attach` (or detach on purpose with the prefix key and

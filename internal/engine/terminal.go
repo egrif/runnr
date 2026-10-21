@@ -120,7 +120,13 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 	}
 	// Cancelling the run (or a timeout) stops what's on the terminal the way
 	// an operator would: Ctrl-C, then SIGTERM, then SIGKILL.
-	stop := context.AfterFunc(ctx, func() { interruptTerm(cmd.Process.Pid) })
+	stop := context.AfterFunc(ctx, func() {
+		if command == "" {
+			hangup(cmd.Process) // an interactive shell: hang up, as closing its window would
+		} else {
+			interruptTerm(cmd.Process.Pid)
+		}
+	})
 
 	go func() {
 		defer close(s.done)

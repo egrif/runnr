@@ -26,24 +26,7 @@ async function viewConsole(id) {
     question: null, open: new Set(), selected: null, follow: true, editing: null, sizes: cxSizes(),
     plan: null, versionDismissed: 0, fg: null, bgActive: null,
   };
-  document.body.classList.add("console-mode");
-  main.innerHTML = `
-    <div class="cx">
-      <header class="cx-top"></header>
-      <div class="cx-body" style="--cx-left:${state.sizes.left}px">
-        <nav class="cx-list"></nav>
-        <div class="cx-gutter-v" data-gutter="left" title="Drag to resize"></div>
-        <div class="cx-right">
-          <section class="cx-pane cx-details"><div class="cx-pane-head"></div><div class="cx-pane-body"></div></section>
-          <div class="cx-gutter-h" data-gutter="details-action"></div>
-          <section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-tabs"></div><div class="cx-term"></div></div></div></section>
-          <div class="cx-gutter-h" data-gutter="action-bg" hidden></div>
-          <section class="cx-pane cx-bg" hidden><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div><span class="cx-bg-status small"></span></div><div class="cx-pane-body cx-term"></div></section>
-        </div>
-      </div>
-    </div>`;
-  cxLayout(state);
-  cxBindGutters(state);
+  cxMountConsole(state);
   cxHostTerms(state);
 
   const loadPlan = async () => {
@@ -80,6 +63,15 @@ async function viewConsole(id) {
   stream.onerror = () => { if (CX_ENDED.includes(state.run.status)) stream.close(); };
 }
 
+// cxWhere says what the run is doing when it isn't on a step: starting,
+// stopping its background jobs once the steps are done, or finished.
+function cxWhere(state) {
+  if (CX_ENDED.includes(state.run.status)) return "Finished";
+  if (state.steps.every((s) => s.status === "pending")) return "Starting…";
+  const bg = state.steps.filter((s) => s.status === "background").length;
+  return bg ? `All steps done · stopping ${bg} background job${bg === 1 ? "" : "s"}…` : "All steps done · finishing…";
+}
+
 // cxCurrent is the step the run is on: the one a question is about, else
 // the one running, else the first not done (-1 when it's all done).
 function cxCurrent(state) {
@@ -105,6 +97,7 @@ function cxRender(state, { details = true } = {}) {
   cxRenderList(state);
   if (details) cxRenderDetails(state);
   cxRenderAction(state);
+  cxRenderLog(state);
   cxLayout(state);
 }
 
@@ -140,11 +133,12 @@ function cxRenderTop(state) {
       <h1><a href="#/runbooks/${enc(r.runbook)}">${esc(r.runbook)}</a></h1>
       <span class="muted">${r.runbook_version ? `v${r.runbook_version} · ` : ""}${esc(r.id)} · ${esc(r.mode)}${r.dry_run ? " · dry run" : ""}</span>
       <span class="spacer"></span>
+      <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>
       <span class="badge ${esc(ph.cls)}">${ICONS[r.status] || ""} ${esc(ph.label)}</span>
       <span class="muted" title="Since the run started"><span class="cx-clock" data-since="${esc(r.started)}" ${!live ? `data-until="${esc(r.ended || "")}"` : ""}></span></span>
     </div>
     <div class="cx-status">
-      ${cur >= 0 ? `<span class="cx-at"><b>Step ${cur + 1}</b> of ${state.steps.length}: ${esc(st.name)}</span>` : `<span class="cx-at muted">${CX_ENDED.includes(r.status) ? "Finished" : "Starting…"}</span>`}
+      ${cur >= 0 ? `<span class="cx-at"><b>Step ${cur + 1}</b> of ${state.steps.length}: ${esc(st.name)}</span>` : `<span class="cx-at muted">${cxWhere(state)}</span>`}
       ${section ? `<span class="cx-chip" title="The section the run is in, and how long since its first step started">§ ${esc(section)} ${inSection}</span>` : ""}
       ${cxWindowChip(r)}
       ${(state.messages || []).slice(-1).map((m) => `<span class="muted small">ℹ ${esc(m)}</span>`).join("")}
@@ -267,6 +261,7 @@ function cxBindTop(state, el, live) {
     } catch (e) { toast(e.message); }
   }));
   el.querySelector("[data-classic]").onclick = () => runView("classic");
+  el.querySelector("[data-reset-layout]").onclick = () => cxResetLayout(state);
   el.querySelectorAll("[data-pick]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); cxSelect(state, +a.dataset.pick); }));
 }
 
@@ -403,12 +398,17 @@ function cxRenderDetails(state) {
   if (i === -1) return cxRenderInputsDetails(state, head, body);
   const s = state.steps[i];
   if (!s) return;
-  if (state.editing) return cxRenderEditor(state, head, body);
   const v = state.plan?.steps?.[i] || {};
   const target = cxEditTarget(state, i);
+  const editingThis = state.editing?.i === i;
   head.innerHTML = `<b>Step ${i + 1}</b><span class="cx-head-name" title="${esc(s.name)}">${esc(s.name)}</span><span class="spacer"></span>
-    ${target ? `<button data-edit title="${target === "run" ? "Change this step for this run" : "Change this step in the runbook (saved as a new version)"}">✎ Edit this step</button>`
+    ${editingThis ? `<button data-edit-show title="Go to the editor">✎ Editing in ${cxPlaced(state, "edit") ? "Step edit" : "Step activity"}</button>`
+      : target ? `<button data-edit title="${target === "run" ? "Change this step for this run" : "Change this step in the runbook (saved as a new version)"}">✎ Edit this step</button>`
       : `<span class="muted small">already run</span>`}`;
+  head.querySelector("[data-edit-show]")?.addEventListener("click", () => {
+    if (!cxPlaced(state, "edit")) { state.actionTab = "edit"; (state.launch ? cxLaunchRenderAction : cxRenderAction)(state); }
+    cxEditHostEl(state)?.scrollIntoView({ block: "nearest" });
+  });
   const row = (k, val) => (val ? `<tr><td>${k}</td><td>${val}</td></tr>` : "");
   const code = (t) => `<code>${esc(t)}</code>`;
   const flags = [v.always && "setup (always)", v.optional && "optional", v.dangerous && "dangerous", v.confirm && "confirm first", v.background && "background", v.choose && "asks which way"].filter(Boolean);
@@ -469,10 +469,12 @@ async function cxStartEdit(state, i) {
       doc.steps[i] = st.step;
     }
     if (i >= doc.steps.length) throw new Error(`the runbook has no step ${i + 1} now`);
+    if (state.editing && state.editing.i !== i && state.editing.handle?.dirty() && !confirm(`Discard your change to step ${state.editing.i + 1}?`)) return;
     state.editing = { i, target, doc, comments: target === "run" ? {} : parsed.comments, version: data.version, error: "" };
     state.follow = false;
-    cxRenderDetails(state);
-    cxLayout(state);
+    // Without a Step edit pane, the editor is a tab of the step's activity.
+    if (!cxPlaced(state, "edit")) state.actionTab = "edit";
+    (state.render || cxRender)(state);
   } catch (e) { toast(e.message); }
 }
 
@@ -480,10 +482,12 @@ function cxRenderEditor(state, head, body) {
   const ed = state.editing, i = ed.i;
   const waiting = state.question?.step === i;
   const run = ed.target === "run";
-  head.innerHTML = `<b>Step ${i + 1}</b><span class="muted small">${run ? "editing it for this run" : `editing it in the runbook (version ${ed.version})`}</span><span class="spacer"></span>
+  head.innerHTML = `<b>Edit step ${i + 1}</b><span class="cx-head-name" title="${esc(state.steps[i]?.name || "")}">${esc(state.steps[i]?.name || "")}</span><span class="muted small">${run ? "for this run" : `in the runbook (version ${ed.version})`}</span><span class="spacer"></span>
     <button class="primary" data-apply>${run ? (waiting ? "Apply and run it again" : "Apply") : "Save to runbook"}</button>
-    <button data-view title="Back to the step's definition">👁 View</button>`;
-  // The form is built once; re-rendering the head leaves what's typed alone.
+    <button data-view title="Close the editor">✕ Close editor</button>`;
+  // The form is built once, and moves with its host; re-rendering the head
+  // leaves what's typed alone.
+  if (ed.wrap && ed.wrap.parentElement !== body) body.replaceChildren(ed.wrap);
   if (!(ed.mounted && body.contains(ed.mounted))) {
     const note = run
       ? `${waiting ? "The run is waiting on this step: applying starts it again with the new version."
@@ -491,7 +495,8 @@ function cxRenderEditor(state, head, body) {
          Save it to the runbook afterwards (the banner above), or the change is only in this run.`
       : state.launch ? "Saving makes a new version of the runbook with just this step changed. The run uses it when you start."
       : `Saving makes a new version of the runbook with just this step changed; this run isn't changed.${state.run.runbook_version && ed.version !== state.run.runbook_version ? ` This run was on version ${state.run.runbook_version}; the runbook is at ${ed.version}: check it's the same step.` : ""}`;
-    body.innerHTML = `<p class="muted small cx-edit-note">${note}</p><div class="cx-step-editor"></div><div class="error-text"></div>`;
+    body.innerHTML = `<div class="cx-edit-wrap"><p class="muted small cx-edit-note">${note}</p><div class="cx-step-editor"></div><div class="error-text"></div></div>`;
+    ed.wrap = body.querySelector(".cx-edit-wrap");
     ed.mounted = body.querySelector(".cx-step-editor");
     ed.handle = renderStepEditor(ed.mounted, { doc: ed.doc, comments: ed.comments, i });
   }
@@ -499,8 +504,8 @@ function cxRenderEditor(state, head, body) {
   head.querySelector("[data-view]").onclick = () => {
     if (ed.handle.dirty() && !confirm("Discard your change?")) return;
     state.editing = null;
-    cxRenderDetails(state);
-    cxLayout(state);
+    if (state.actionTab === "edit") state.actionTab = "now";
+    (state.render || cxRender)(state);
   };
   head.querySelector("[data-apply]").onclick = async () => {
     try {
@@ -523,6 +528,7 @@ function cxRenderEditor(state, head, body) {
         }
       }
       state.editing = null;
+      if (state.actionTab === "edit") state.actionTab = "now";
       if (state.launch) { state.refresh(); return cxLaunchRender(state); }
       state.onState?.();
       cxRender(state);
@@ -558,11 +564,12 @@ function cxRenderAction(state) {
   const atEnd = !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 8;
   const cur = cxCurrent(state);
   // A step's terminal (a tty step, or a shell opened at it) is a tab beside Now.
-  const showFg = state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
-  const onTerm = showFg && state.actionTab === "term";
+  const showFg = !cxPlaced(state, "terminal") && state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
+  const tabs = cxActionTabs(state, showFg);
+  const onTerm = tabs.on === "term";
   head.innerHTML = `<b>${s?.status === "pending" ? "Will do" : s?.status === "running" || q?.step === i ? "Now" : "What happened"}</b>
     ${q?.step === i ? `<span class="badge waiting">⏸ waiting for you</span>` : s ? `<span class="badge s-${esc(s.status)}">${ICONS[s.status] || ""} ${esc(s.status)}</span>` : ""}
-    ${showFg ? `<div class="seg cx-act-tabs"><button data-atab="now" class="${onTerm ? "" : "on"}" title="The step: its question and output">Now${q?.step === i ? " ●" : ""}</button><button data-atab="term" class="${onTerm ? "on" : ""}" title="${esc(state.fg.title)}">⌨ ${state.fg.shell ? "Shell" : "Terminal"}</button></div>` : ""}
+    ${tabs.html}
     <span class="spacer"></span>
     ${i !== cur && cur >= 0 ? `<button class="link" data-goto="${cur}">→ step ${cur + 1}, where the run is</button>` : ""}
     ${state.live ? `<button class="link" data-note="${i + 1}">✎ note</button>` : ""}`;
@@ -591,13 +598,9 @@ function cxRenderAction(state) {
     try { pushNote(state, i, await api("POST", `/api/runs/${enc(state.run.id)}/notes`, { step: i + 1, text, author: author() })); cxRender(state); } catch (e) { toast(e.message); }
   });
   // A step's terminal shows in this pane when that step is selected (or it's the run's step).
-  head.querySelectorAll("[data-atab]").forEach((b) => (b.onclick = () => {
-    state.actionTab = b.dataset.atab;
-    cxRenderAction(state);
-    if (state.actionTab === "term") state.fg?.xt.focus();
-  }));
+  cxBindActionTabs(state, head, () => cxRenderAction(state));
   const fg = main.querySelector(".cx-fg");
-  body.hidden = onTerm;
+  body.hidden = tabs.on !== "now";
   fg.hidden = !onTerm;
   if (onTerm) {
     const s = state.fg;
@@ -610,6 +613,61 @@ function cxRenderAction(state) {
     }
     cxShowSession(s, fg.querySelector(".cx-term"));
   }
+  cxRenderTermPane(state);
+}
+
+// cxActionTabs are the step activity pane's tabs: Now, and the step's
+// terminal when there's no Terminal target pane, and the step editor when
+// there's no Step edit pane. on is the one showing.
+function cxActionTabs(state, showFg) {
+  const editTab = !!state.editing && !cxPlaced(state, "edit");
+  const want = state.actionTab || "now";
+  const on = want === "term" && showFg ? "term" : want === "edit" && editTab ? "edit" : "now";
+  if (!showFg && !editTab) return { on, html: "" };
+  const q = state.question, i = cxSelected(state);
+  const b = (k, label, title) => `<button data-atab="${k}" class="${on === k ? "on" : ""}" title="${esc(title)}">${label}</button>`;
+  return { on, html: `<div class="seg cx-act-tabs">${b("now", `Now${q && q.step === i ? " ●" : ""}`, "The step: its question and output")}${showFg ? b("term", `⌨ ${state.fg.shell ? "Shell" : "Terminal"}`, state.fg.title) : ""}${editTab ? b("edit", `✎ Edit step ${state.editing.i + 1}`, "The step's editor") : ""}</div>` };
+}
+
+function cxBindActionTabs(state, head, redraw) {
+  head.querySelectorAll("[data-atab]").forEach((b) => (b.onclick = () => {
+    state.actionTab = b.dataset.atab;
+    redraw();
+    cxRenderEditHost(state);
+    if (state.actionTab === "term") state.fg?.xt.focus();
+  }));
+}
+
+// cxEditHostEl is where the step editor goes: the Step edit pane, else the
+// step activity pane (as a tab).
+function cxEditHostEl(state) {
+  const frame = cxPlaced(state, "edit") ? state.frames.edit : state.frames.action;
+  return frame?.querySelector(".cx-edit-host");
+}
+
+function cxRenderEditHost(state) {
+  const host = cxEditHostEl(state);
+  for (const h of main.querySelectorAll(".cx-edit-host")) if (h !== host) h.hidden = true;
+  const empty = state.frames.edit?.querySelector(".cx-edit-empty");
+  if (empty) empty.hidden = !!state.editing;
+  if (!host) return;
+  const inAction = !cxPlaced(state, "edit");
+  host.hidden = !state.editing || (inAction && state.actionTab !== "edit");
+  if (state.editing) cxRenderEditor(state, host.querySelector(".cx-edit-head"), host.querySelector(".cx-edit-body"));
+}
+
+// cxRenderTermPane shows the terminal a step has open (a tty step, or a
+// shell) in the Terminal pane, when one is on screen.
+function cxRenderTermPane(state) {
+  if (!cxPlaced(state, "terminal")) return;
+  const pane = main.querySelector(".cx-termpane");
+  const s = state.fg && !state.fg.ended ? state.fg : null;
+  pane.querySelector(".cx-termpane-empty").hidden = !!s;
+  pane.querySelector(".cx-termpane-title").textContent = s ? `⌨ ${s.title}` : "";
+  const end = pane.querySelector("[data-tp-end]");
+  end.hidden = !s;
+  end.onclick = () => { if (s && confirm(`End “${s.title}”? Whatever's running in it is hung up.`)) sendTerm(s, { end: true }); };
+  if (s) cxShowSession(s, pane.querySelector(".cx-term"));
 }
 
 // In a run, the inputs' action: the question asking for one, or the values
@@ -632,10 +690,22 @@ function cxRenderInputsAction(state, pane) {
 // ---------- terminals in the panes ----------
 
 function cxHostTerms(state) {
+  const aside = (s) => s.shell && /^shell alongside the run/.test(s.title);
   term.host = {
     started(s) {
-      if (s.background) { state.bgActive = s.id; cxRenderBg(state); }
-      else { state.fg = s; state.actionTab = "term"; cxRenderAction(state); cxLayout(state); s.xt.focus(); }
+      if (s.background) {
+        cxBgAssign(state, s);
+        (state.bgActiveBy ||= {})[s.bgPane] = s.id;
+        return cxRenderBg(state);
+      }
+      if (aside(s)) {
+        // The Shell pane that asked for it (or another; with none on screen, it's the step's terminal).
+        const panes = cxLeafIds(state, "shell");
+        let id = (state.shellQueue || []).shift();
+        if (!panes.includes(id)) id = panes.find((p) => ![...term.sessions.values()].some((x) => x.shellPane === p && !x.ended && !x.gone));
+        if (id) { s.shellPane = id; cxRenderShells(state); s.xt.focus(); return; }
+      }
+      state.fg = s; state.actionTab = "term"; cxRenderAction(state); cxLayout(state); s.xt.focus();
     },
     ended(s) {
       if (s.background) {
@@ -643,13 +713,17 @@ function cxHostTerms(state) {
         // says to close it when done.
         if (s.closeOnExit) cxRemoveBg(state, s);
         else cxRenderBg(state);
+      } else if (s.shellPane) {
+        cxRenderShells(state);
+        setTimeout(() => { s.gone = true; s.el.remove(); s.xt.dispose(); term.sessions.delete(s.id); cxRenderShells(state); }, 1500);
       } else if (state.fg === s) {
         // Recorded with the step: the log shows it. Leave it a moment, then back to Now.
         setTimeout(() => { if (state.fg === s) { state.fg = null; state.actionTab = "now"; cxRenderAction(state); cxLayout(state); } }, 1500);
       }
     },
     show(s) {
-      if (s.background) { state.bgActive = s.id; cxRenderBg(state); }
+      if (s.background) { cxBgAssign(state, s); (state.bgActiveBy ||= {})[s.bgPane] = s.id; cxRenderBg(state); }
+      else if (s.shellPane) { cxRenderShells(state); s.xt.focus(); }
       else { state.fg = s; state.actionTab = "term"; cxRenderAction(state); s.xt.focus(); }
     },
   };
@@ -669,37 +743,92 @@ function cxShowSession(s, container) {
   }
 }
 
-function cxRenderBg(state) {
-  const pane = main.querySelector(".cx-bg");
-  const bgs = [...term.sessions.values()].filter((s) => s.background);
-  pane.querySelector(".cx-tabs").innerHTML = bgs.map((s) => {
-    const [result, kind] = termResult(s);
-    return `<span class="term-tab ${s.id === state.bgActive ? "on" : ""} ${s.ended ? "ended" : ""}" data-result="${kind}" data-bg="${esc(s.id)}" title="${esc(s.title)}${s.ended ? ` · ${esc(result)}` : " · running"}"><span class="term-dot"></span>${s.ended ? `<b class="term-res">${esc(result.split(" ")[0])}</b>` : ""}${esc(s.title.replace(/^background · /, ""))}
-      <button class="term-x" data-close-bg="${esc(s.id)}" title="${s.ended ? "Close" : "End it (hang up) and close"}">✕</button></span>`;
-  }).join("");
+// The background targets on screen (else the first, off screen).
+function cxBgPanes(state) {
+  const ids = cxLeafIds(state, "background");
+  return ids.length ? ids : ["background"];
+}
 
-  pane.querySelectorAll("[data-bg]").forEach((b) => (b.onclick = (e) => {
-    if (e.target.closest("[data-close-bg]")) return;
-    state.bgActive = b.dataset.bg;
-    cxRenderBg(state);
-  }));
-  pane.querySelectorAll("[data-close-bg]").forEach((b) => (b.onclick = (e) => {
-    e.stopPropagation();
-    const s = term.sessions.get(b.dataset.closeBg);
-    if (!s) return;
-    if (s.ended) return cxRemoveBg(state, s);
-    if (confirm(`End “${s.title}”? It's hung up, like closing its terminal, and the run goes on without it.`)) sendTerm(s, { end: true });
-  }));
-  const s = term.sessions.get(state.bgActive) || bgs[bgs.length - 1];
-  if (s) { state.bgActive = s.id; cxShowSession(s, pane.querySelector(".cx-term")); }
-  // How the shown one stands: running, or how it ended.
-  const status = pane.querySelector(".cx-bg-status");
-  if (status) {
+// cxBgAssign gives a background session a target: the one with the fewest
+// running jobs, taking turns among equals.
+function cxBgAssign(state, s) {
+  const panes = cxBgPanes(state);
+  if (s.bgPane && panes.includes(s.bgPane)) return;
+  const load = (id) => [...term.sessions.values()].filter((x) => x.background && !x.ended && x.bgPane === id && x !== s).length;
+  const min = Math.min(...panes.map(load));
+  const ties = panes.filter((id) => load(id) === min);
+  const turn = state.bgTurn || 0;
+  state.bgTurn = turn + 1;
+  s.bgPane = ties[turn % ties.length];
+}
+
+function cxRenderBg(state) {
+  const bgs = [...term.sessions.values()].filter((s) => s.background);
+  bgs.forEach((s) => cxBgAssign(state, s));
+  state.bgActiveBy ||= {};
+  for (const id of new Set([...cxBgPanes(state), "background"])) {
+    const pane = state.frames[id]?.querySelector(".cx-bg");
+    if (!pane) continue;
+    const mine = bgs.filter((s) => s.bgPane === id);
+    pane.querySelector(".cx-bg-empty").hidden = mine.length > 0;
+    pane.querySelector(".cx-tabs").innerHTML = mine.map((s) => {
+      const [result, kind] = termResult(s);
+      return `<span class="term-tab ${s.id === state.bgActiveBy[id] ? "on" : ""} ${s.ended ? "ended" : ""}" data-result="${kind}" data-bg="${esc(s.id)}" title="${esc(s.title)}${s.ended ? ` · ${esc(result)}` : " · running"}"><span class="term-dot"></span>${s.ended ? `<b class="term-res">${esc(result.split(" ")[0])}</b>` : ""}${esc(s.title.replace(/^background · /, ""))}
+        <button class="term-x" data-close-bg="${esc(s.id)}" title="${s.ended ? "Close" : "End it (hang up) and close"}">✕</button></span>`;
+    }).join("");
+    pane.querySelectorAll("[data-bg]").forEach((b) => (b.onclick = (e) => {
+      if (e.target.closest("[data-close-bg]")) return;
+      state.bgActiveBy[id] = b.dataset.bg;
+      cxRenderBg(state);
+    }));
+    pane.querySelectorAll("[data-close-bg]").forEach((b) => (b.onclick = (e) => {
+      e.stopPropagation();
+      const s = term.sessions.get(b.dataset.closeBg);
+      if (!s) return;
+      if (s.ended) return cxRemoveBg(state, s);
+      if (confirm(`End “${s.title}”? It's hung up, like closing its terminal, and the run goes on without it.`)) sendTerm(s, { end: true });
+    }));
+    const s = mine.find((x) => x.id === state.bgActiveBy[id]) || mine[mine.length - 1];
+    if (s) { state.bgActiveBy[id] = s.id; cxShowSession(s, pane.querySelector(".cx-term")); }
+    const status = pane.querySelector(".cx-bg-status");
     const [result, kind] = s ? termResult(s) : ["", ""];
     status.textContent = s?.ended ? result : s ? "running" : "";
     status.dataset.result = s?.ended ? kind : "running";
   }
-  cxLayout(state);
+}
+
+// ---------- shells on demand ----------
+
+// cxRenderShells draws each Shell pane: its shell (opened alongside the
+// run, at the step it's on), or the button to open one.
+function cxRenderShells(state) {
+  // Once the steps are done, the run is only finishing: no more shells.
+  const live = state.live && !state.launch && !CX_ENDED.includes(state.run.status) && (cxCurrent(state) >= 0 || state.steps.every((s) => s.status === "pending"));
+  for (const id of cxLeafIds(state, "shell")) {
+    const pane = state.frames[id]?.querySelector(".cx-shellpane");
+    if (!pane) continue;
+    const s = [...term.sessions.values()].find((x) => x.shellPane === id && !x.gone);
+    const open = pane.querySelector("[data-sh-open]"), end = pane.querySelector("[data-sh-end]");
+    const cur = cxCurrent(state);
+    open.hidden = !!s && !s.ended;
+    open.disabled = !live;
+    open.textContent = cur >= 0 ? `⌨ Open shell at step ${cur + 1}` : "⌨ Open shell";
+    open.title = live ? "A shell in the step's shell, with the run's variables and functions, alongside the run" : "Shells open once the run has started";
+    end.hidden = !s || s.ended;
+    pane.querySelector(".cx-shell-title").textContent = s ? `${s.title.replace(/^shell alongside the run · /, "")}${s.ended ? " · ended" : ""}` : "";
+    pane.querySelector(".cx-shell-empty").hidden = !!s;
+    pane.querySelector(".cx-shell-empty").textContent = live
+      ? "Open a shell at the step the run is on: its shell, with the run's variables and functions. It runs alongside the run; values it publishes reach the run when the next step starts."
+      : state.launch ? "Shells open here once the run has started." : CX_ENDED.includes(state.run.status) ? "The run has ended." : "The run's steps are done.";
+    open.onclick = async () => {
+      open.disabled = true;
+      (state.shellQueue ||= []).push(id);
+      try { await api("POST", `/api/runs/${enc(state.run.id)}/shell`, {}); }
+      catch (e) { state.shellQueue = state.shellQueue.filter((x) => x !== id); toast(e.message); open.disabled = false; }
+    };
+    end.onclick = () => { if (s && confirm(`End “${s.title}”?`)) sendTerm(s, { end: true }); };
+    if (s) cxShowSession(s, pane.querySelector(".cx-term"));
+  }
 }
 
 // cxRemoveBg takes an ended background session out of the pane (its output
@@ -709,55 +838,16 @@ function cxRemoveBg(state, s) {
   term.sessions.delete(s.id);
   s.el.remove();
   s.xt.dispose();
-  if (state.bgActive === s.id) state.bgActive = null;
   cxRenderBg(state);
 }
 
 // ---------- layout: resizable panes ----------
 
 function cxLayout(state) {
-  const z = state.sizes;
-  const body = main.querySelector(".cx-body");
-  if (!body) return;
-  body.style.setProperty("--cx-left", `${z.left}px`);
-  const hasBg = [...term.sessions.values()].some((s) => s.background);
-  main.querySelector(".cx-bg").hidden = !hasBg;
-  main.querySelector('[data-gutter="action-bg"]').hidden = !hasBg;
-  // Editing a step needs room: the details pane takes most of the height meanwhile.
-  main.querySelector(".cx-details").style.flexGrow = state.editing ? Math.max(z.details, (z.action + z.bg) * 2.5) : z.details;
-  main.querySelector(".cx-action").style.flexGrow = z.action;
-  main.querySelector(".cx-bg").style.flexGrow = z.bg;
-}
-
-function cxBindGutters(state) {
-  main.querySelectorAll("[data-gutter]").forEach((g) => (g.onpointerdown = (e) => {
-    e.preventDefault();
-    g.setPointerCapture(e.pointerId);
-    const z = state.sizes, which = g.dataset.gutter;
-    const startX = e.clientX, startY = e.clientY, start = { ...z };
-    const right = main.querySelector(".cx-right");
-    const total = right.clientHeight;
-    const panes = ["details", "action", "bg"].filter((k) => !main.querySelector(`.cx-${k}`).hidden);
-    const sum = panes.reduce((a, k) => a + start[k], 0);
-    document.body.classList.add("cx-dragging");
-    g.onpointermove = (ev) => {
-      if (which === "left") {
-        z.left = Math.max(180, Math.min(window.innerWidth - 360, start.left + ev.clientX - startX));
-      } else {
-        const [a, b] = which === "details-action" ? ["details", "action"] : ["action", "bg"];
-        const d = ((ev.clientY - startY) / total) * sum;
-        const min = sum * 0.08;
-        z[a] = Math.max(min, Math.min(start[a] + start[b] - min, start[a] + d));
-        z[b] = start[a] + start[b] - z[a];
-      }
-      cxLayout(state);
-    };
-    g.onpointerup = () => {
-      g.onpointermove = g.onpointerup = null;
-      document.body.classList.remove("cx-dragging");
-      cxSaveSizes(z);
-    };
-  }));
+  cxApplySizes(state);
+  cxRenderBg(state);
+  cxRenderShells(state);
+  cxRenderEditHost(state);
 }
 
 // The section and run clocks tick with the window's (app.js has one for .mw-clock).
@@ -796,23 +886,7 @@ async function viewConsoleLaunch(name, query) {
     state.vars[i.name] = v && v !== "****" ? v : "";
   }
   state.render = cxLaunchRender;
-  document.body.classList.add("console-mode");
-  main.innerHTML = `
-    <div class="cx">
-      <header class="cx-top"></header>
-      <div class="cx-body" style="--cx-left:${state.sizes.left}px">
-        <nav class="cx-list"></nav>
-        <div class="cx-gutter-v" data-gutter="left" title="Drag to resize"></div>
-        <div class="cx-right">
-          <section class="cx-pane cx-details"><div class="cx-pane-head"></div><div class="cx-pane-body"></div></section>
-          <div class="cx-gutter-h" data-gutter="details-action"></div>
-          <section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-term"></div></div></div></section>
-          <div class="cx-gutter-h" data-gutter="action-bg" hidden></div>
-          <section class="cx-pane cx-bg" hidden><div class="cx-pane-head"><div class="cx-tabs"></div></div><div class="cx-pane-body cx-term"></div></section>
-        </div>
-      </div>
-    </div>`;
-  cxBindGutters(state);
+  cxMountConsole(state);
   let t;
   state.refresh = () => {
     clearTimeout(t);
@@ -843,6 +917,7 @@ function cxLaunchRender(state) {
   cxRenderList(state);
   cxRenderDetails(state);
   cxLaunchRenderAction(state);
+  cxRenderLog(state);
   cxLayout(state);
 }
 
@@ -858,6 +933,7 @@ function cxLaunchRenderTop(state) {
       <h1><a href="#/runbooks/${enc(rb.name)}">${esc(rb.name)}</a></h1>
       <span class="muted">v${state.version} · ${esc((rb.description || "").split("\n")[0])}</span>
       <span class="spacer"></span>
+      <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>
       <span class="badge">○ not started</span>
     </div>
     <div class="cx-status">
@@ -874,6 +950,7 @@ function cxLaunchRenderTop(state) {
       ${tog("dry", "Dry run", "Show what each step would run, without running it")}
     </div>`;
   el.querySelectorAll("[data-opt]").forEach((b) => (b.onclick = () => { opts[b.dataset.opt] = !opts[b.dataset.opt]; cxLaunchRenderTop(state); }));
+  el.querySelector("[data-reset-layout]").onclick = () => cxResetLayout(state);
   el.querySelector("[data-start]").onclick = () => cxLaunchStart(state);
 }
 
@@ -884,7 +961,10 @@ function cxLaunchRenderAction(state) {
   const head = pane.querySelector(".cx-pane-head"), body = pane.querySelector(".cx-action-body");
   const i = state.selected, s = state.steps[i];
   const what = { run: "Start run", rerun: "Run again", resume: "Resume" }[state.mode];
-  head.innerHTML = `<b>${i === -1 ? "Fill in the inputs" : `Step ${i + 1} in this run`}</b><span class="spacer"></span><span class="muted small">nothing runs until ${esc(what)}</span>`;
+  const tabs = cxActionTabs(state, false);
+  head.innerHTML = `<b>${i === -1 ? "Fill in the inputs" : `Step ${i + 1} in this run`}</b>${tabs.html}<span class="spacer"></span><span class="muted small">nothing runs until ${esc(what)}</span>`;
+  cxBindActionTabs(state, head, () => cxLaunchRenderAction(state));
+  body.hidden = tabs.on !== "now";
   if (i === -1) {
     // Kept while it's showing, so re-rendering doesn't take the focus away.
     if (body.querySelector(".cx-inputs")) return;
