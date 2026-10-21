@@ -569,6 +569,9 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 			// Only a recorded run of a saved runbook can run dangerous
 			// steps without a double check.
 			Sanctioned: !req.test && !req.DryRun && ver > 0,
+			// Unless the operator chose the steps, a resume leaves out
+			// every step that finished, not only those before start.
+			CarryDone: resumed != nil && req.Skip == nil,
 			Save: func(run *engine.Run) {
 				if req.test {
 					return

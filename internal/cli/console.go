@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/term"
 
@@ -153,7 +154,8 @@ func (t *Terminal) StartTerm(idx int, title string) (engine.TermConn, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &cliConn{t: t, fd: fd, old: old, ctx: ctx, cancel: cancel, resize: make(chan struct{}, 1), winch: make(chan os.Signal, 1)}
+	c := &cliConn{t: t, fd: fd, old: old, ctx: ctx, cancel: cancel, resize: make(chan struct{}, 1), winch: make(chan os.Signal, 1),
+		release: t.interrupts.hold("(Ctrl-C went to the step's command, which has ended)")}
 	notifyResize(c.winch)
 	go func() {
 		for {
@@ -180,7 +182,15 @@ type cliConn struct {
 	resize chan struct{}
 	winch  chan os.Signal
 	once   sync.Once
+	// release gives Ctrl-C back to runnr: a moment after the session
+	// ends, so one meant for the command that lands just after it ended
+	// doesn't abort the run.
+	release func()
 }
+
+// ttyGrace is how long after a terminal session ends Ctrl-C still doesn't
+// abort the run.
+const ttyGrace = 2 * time.Second
 
 func (c *cliConn) Read(b []byte) (int, error) {
 	chunk, err := kbd.next(c.ctx)
@@ -200,6 +210,7 @@ func (c *cliConn) Close() error {
 		signal.Stop(c.winch)
 		_ = term.Restore(c.fd, c.old)
 		fmt.Fprintln(c.t.out, c.t.c("2", "\r  └─ session ended"))
+		time.AfterFunc(ttyGrace, c.release)
 	})
 	return nil
 }

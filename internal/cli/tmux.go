@@ -520,22 +520,17 @@ func writeExit(tmp, code string) {
 	_ = os.Rename(p+".tmp", p)
 }
 
-// waitRunCmd is runnr __waitrun ID: wait until the run has started its
-// first step (its inputs are settled), or ended.
+// waitRunCmd is runnr __waitrun ID: wait until the run's steps have started
+// (its inputs are settled), or it has ended. Not "until a step isn't pending":
+// a resume records the steps it carries over before it asks for its inputs,
+// and the shell pane would then open without them, asking for every one.
 func waitRunCmd(s func() *store.Store) *cobra.Command {
 	return &cobra.Command{
 		Use: "__waitrun <run-id>", Hidden: true, Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			for {
-				if r, err := s().LoadRun(args[0]); err == nil {
-					if r.Status != engine.StatusRunning {
-						return nil
-					}
-					for _, st := range r.Steps {
-						if st.Status != engine.StatusPending {
-							return nil
-						}
-					}
+				if r, err := s().LoadRun(args[0]); err == nil && r.HasBegun() {
+					return nil
 				}
 				time.Sleep(time.Second)
 			}

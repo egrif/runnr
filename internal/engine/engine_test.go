@@ -263,6 +263,76 @@ func TestResumePoint(t *testing.T) {
 	}
 }
 
+// An optional step that didn't finish (a watcher that exited) doesn't decide
+// where a resume starts; at or after that point, it simply runs again.
+func TestResumePointIgnoresOptionalSteps(t *testing.T) {
+	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n  - {name: watcher, run: 'exit 1', optional: true}\n  - {name: c, run: 'true'}\n  - {name: d, run: 'exit 1'}\n")
+	prev := Execute(context.Background(), rb, Unattended{}, "", Options{})
+	if got := ResumePoint(prev); got != 3 {
+		t.Fatalf("resume point %d (%s)", got, statuses(prev))
+	}
+	prev.Steps[3].Status = StatusSucceeded
+	if got := ResumePoint(prev); got != -1 {
+		t.Fatalf("only an optional step left: resume point %d (%s)", got, statuses(prev))
+	}
+
+	// Not done at or after the resume point: it runs again.
+	rb = mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: 'true'}\n  - {name: watcher, run: 'echo watching', optional: true}\n  - {name: d, run: 'echo d-ran'}\n")
+	prev = &Run{ID: "prev", Status: StatusAborted}
+	for i, st := range []Status{StatusSucceeded, StatusAborted, StatusFailed, StatusSucceeded} {
+		prev.Steps = append(prev.Steps, StepResult{Index: i, Name: rb.Steps[i].Name, Status: st, Optional: rb.Steps[i].Optional})
+	}
+	start := ResumePoint(prev)
+	if start != 1 {
+		t.Fatalf("resume point %d (%s)", start, statuses(prev))
+	}
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{StartAt: start, Resumed: prev, CarryDone: true})
+	if run.Status != StatusSucceeded || statuses(run) != "skipped,succeeded,succeeded,skipped" || !slices.Contains(ui.output, "watching") || slices.Contains(ui.output, "d-ran") {
+		t.Fatalf("%s %s %q", run.Status, statuses(run), ui.output)
+	}
+}
+
+// The tmux shell pane opens once a run has begun, and then loads its inputs.
+// A resume saves the steps it carries over before its inputs are settled, so
+// "a step isn't pending" can't mean "begun": HasBegun must wait for the inputs.
+func TestResumeHasBegunOnlyOnceInputsAreRecorded(t *testing.T) {
+	rb := mustParse(t, "name: t\ninputs:\n  - {name: env, required: true}\nsteps:\n  - {name: a, run: 'true'}\n  - {name: b, run: 'exit 1'}\n  - {name: c, run: 'true'}\n")
+	prev := Execute(context.Background(), rb, Unattended{}, "", Options{Vars: map[string]string{"env": "staging"}})
+	if got := ResumePoint(prev); got != 1 {
+		t.Fatalf("resume point %d (%s)", got, statuses(prev))
+	}
+
+	type saved struct {
+		begun, carried bool
+		env            string
+	}
+	var saves []saved
+	opts := Options{Vars: map[string]string{"env": "staging"}, Resumed: prev, Resumes: prev.ID, StartAt: ResumePoint(prev),
+		Save: func(r *Run) {
+			s := saved{begun: r.HasBegun(), env: r.Inputs["env"]}
+			for _, st := range r.Steps {
+				s.carried = s.carried || st.Status != StatusPending
+			}
+			saves = append(saves, s)
+		}}
+	run := Execute(context.Background(), rb, Unattended{}, "", opts)
+	if run.Status != StatusFailed || run.Begun.IsZero() {
+		t.Fatalf("status %s, begun %v", run.Status, run.Begun)
+	}
+	if len(saves) == 0 || !saves[0].carried || saves[0].env != "" || saves[0].begun {
+		t.Fatalf("first save should carry step a, before the inputs, and not count as begun: %+v", saves)
+	}
+	for i, s := range saves {
+		if s.begun && s.env != "staging" {
+			t.Fatalf("save %d counts as begun without its inputs: %+v", i, saves)
+		}
+	}
+	if last := saves[len(saves)-1]; !last.begun || last.env != "staging" {
+		t.Fatalf("last save: %+v", last)
+	}
+}
+
 func TestRetryDelay(t *testing.T) {
 	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'exit 1', retries: 2, retry_delay: 150ms}\n")
 	start := time.Now()

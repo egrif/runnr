@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -557,6 +556,9 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		// Only a recorded run of a saved runbook can run dangerous steps
 		// without a double check.
 		Sanctioned: ver > 0 && !f.noHistory && !f.dry, Resumed: l.resumed,
+		// A resume leaves out every step that finished, not only those
+		// before where it starts.
+		CarryDone: l.resumed != nil,
 	}
 	if f.tmux {
 		d, err := newTmuxDetacher()
@@ -592,22 +594,24 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 	return ExitError{1}
 }
 
-// interruptible returns a context cancelled by SIGINT/SIGTERM. While paused
-// is set (an interactive shell is open), Ctrl-C belongs to the shell.
-func interruptible() (context.Context, func(), *atomic.Bool) {
+// interruptible returns a context cancelled by SIGINT/SIGTERM. While
+// something holds Ctrl-C (an interactive shell is open, a tty step runs or
+// has just failed), Ctrl-C belongs to it.
+func interruptible() (context.Context, func(), *interruptHolds) {
 	ctx, cancel := context.WithCancel(context.Background())
-	paused := &atomic.Bool{}
+	holds := &interruptHolds{out: os.Stdout}
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		for sig := range ch {
-			if sig == os.Interrupt && paused.Load() {
+			if held, _ := holds.held(); sig == os.Interrupt && held {
+				holds.ignored()
 				continue
 			}
 			cancel()
 		}
 	}()
-	return ctx, func() { signal.Stop(ch); cancel() }, paused
+	return ctx, func() { signal.Stop(ch); cancel() }, holds
 }
 
 func author() string {
@@ -685,8 +689,10 @@ func resumeCmd(s func() *store.Store) *cobra.Command {
 		Use:   "resume <run-id>",
 		Short: "Continue a failed or aborted run from where it stopped",
 		Long: `Start a new run of the same runbook with the same inputs, beginning at the
-first step that didn't succeed. Secret inputs aren't stored, so they're asked
-for again (or pass them with -v). Steps marked 'always' run again.`,
+first step that didn't succeed. Steps that finished in that run, before or
+after it, are left out (the review can put one back). Secret inputs aren't
+stored, so they're asked for again (or pass them with -v). Steps marked
+'always' run again.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			prev, err := s().LoadRun(args[0])

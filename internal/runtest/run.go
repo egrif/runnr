@@ -92,7 +92,7 @@ func Run(ctx context.Context, s *Suite, src Sources, o Options) ([]Result, error
 		if err != nil {
 			return out, fmt.Errorf("scenario %s: %w", sc.Name, err)
 		}
-		r.Warnings = warnings
+		r.Warnings = append(slices.Clone(warnings), r.Warnings...)
 		out = append(out, r)
 	}
 	if len(o.Only) > 0 && len(out) == 0 {
@@ -200,9 +200,17 @@ func runScenario(ctx context.Context, s *Suite, sc Scenario, base *runbook.Runbo
 	var wrap func(string, []string) (string, []string)
 	if s.Strict {
 		allowed := filepath.Join(dir, "allowed")
-		execs, _, err := allowDir(allowed, append(slices.Clone(DefaultAllow), s.Allow...))
+		execs, missing, err := allowDir(allowed, append(slices.Clone(DefaultAllow), s.Allow...))
 		if err != nil {
 			return res, err
+		}
+		// A tool the suite allows must be there; a default one that isn't
+		// is only a warning (a step that uses it fails as not found).
+		for _, n := range slices.Sorted(maps.Keys(missing)) {
+			if slices.Contains(s.Allow, n) {
+				return res, fmt.Errorf("allow: %w", missing[n])
+			}
+			res.Warnings = append(res.Warnings, "the sandbox can't allow "+n+": "+missing[n].Error())
 		}
 		for _, sh := range []string{"/bin/sh", "/bin/zsh", "/bin/bash", o.Exe} {
 			execs = append(execs, sh)
