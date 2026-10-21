@@ -12,13 +12,17 @@
 // not on screen wait in a hidden holder, where the console still draws
 // into them.
 
+// Kinds of pane. multi: there can be several (background jobs are spread
+// across the background targets; each shell pane holds its own shell).
+const CX_EDIT_HOST = `<div class="cx-edit-host" hidden><div class="cx-edit-head cx-pane-head"></div><div class="cx-edit-body"></div></div>`;
 const CX_KINDS = {
-  steps: { label: "Steps", html: `<nav class="cx-list"></nav>` },
+  steps: { label: "Step list", html: `<nav class="cx-list"></nav>` },
   details: { label: "Step definition", html: `<section class="cx-pane cx-details"><div class="cx-pane-head"></div><div class="cx-pane-body"></div></section>` },
-  action: { label: "Now", html: `<section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-tabs"></div><div class="cx-term"></div></div></div></section>` },
-  background: { label: "Background jobs", html: `<section class="cx-pane cx-bg"><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div><span class="cx-bg-status small"></span></div><div class="cx-pane-body cx-term"><p class="muted cx-bg-empty">Background steps' terminals show here while they run.</p></div></section>` },
-  terminal: { label: "Terminal", html: `<section class="cx-pane cx-termpane"><div class="cx-pane-head"><b>Terminal</b><span class="muted small cx-termpane-title"></span><span class="spacer"></span><button class="link" data-tp-end hidden>End session</button></div><div class="cx-pane-body cx-term"><p class="muted cx-termpane-empty">A terminal step's terminal, or a shell you open, shows here.</p></div></section>` },
-  log: { label: "Run log", html: `<section class="cx-pane cx-logpane"><div class="cx-pane-head"><b>Run log</b><span class="muted small">every step's output, in order</span></div><div class="cx-pane-body"><pre class="log cx-runlog"></pre></div></section>` },
+  edit: { label: "Step edit", html: `<section class="cx-pane cx-editpane"><div class="cx-pane-body"><p class="muted cx-edit-empty">Choose ✎ Edit this step in the step definition: it opens here.</p>${CX_EDIT_HOST}</div></section>` },
+  action: { label: "Step activity", html: `<section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-tabs"></div><div class="cx-term"></div></div>${CX_EDIT_HOST}</div></section>` },
+  terminal: { label: "Terminal target", html: `<section class="cx-pane cx-termpane"><div class="cx-pane-head"><b>Terminal</b><span class="muted small cx-termpane-title"></span><span class="spacer"></span><button class="link" data-tp-end hidden>End session</button></div><div class="cx-pane-body cx-term"><p class="muted cx-termpane-empty">A terminal step's terminal, or a shell opened from a step's question, shows here.</p></div></section>` },
+  background: { label: "Background target", multi: true, html: `<section class="cx-pane cx-bg"><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div><span class="cx-bg-status small"></span></div><div class="cx-pane-body cx-term"><p class="muted cx-bg-empty">Background steps' terminals show here while they run.</p></div></section>` },
+  shell: { label: "Shell", multi: true, html: `<section class="cx-pane cx-shellpane"><div class="cx-pane-head"><b>Shell</b><span class="muted small cx-shell-title"></span><span class="spacer"></span><button class="primary" data-sh-open>⌨ Open shell</button><button class="link" data-sh-end hidden>End session</button></div><div class="cx-pane-body cx-term"><p class="muted cx-shell-empty"></p></div></section>` },
 };
 
 const CX_DEFAULT_LAYOUT = { dir: "row", kids: [{ k: "steps" }, { dir: "col", kids: [{ k: "details" }, { k: "action" }, { k: "background" }], sizes: [1, 1.4, 0.8] }], sizes: [1, 3.2] };
@@ -28,7 +32,11 @@ const CX_DEFAULT_LAYOUT = { dir: "row", kids: [{ k: "steps" }, { dir: "col", kid
 const cxIsLeaf = (n) => n && !n.kids;
 let cxEmptySeq = 0;
 const cxNewEmpty = () => ({ k: "empty", id: `e${Date.now().toString(36)}${++cxEmptySeq}` });
-const cxLeafId = (n) => (n.k === "empty" ? n.id : n.k);
+const cxLeafId = (n) => n.id || n.k;
+// cxNewLeaf is a pane of kind k: a kind there's one of is named after it;
+// another background target or shell gets an id of its own.
+const cxNewLeaf = (state, k) => (CX_KINDS[k]?.multi && (k !== "background" || cxFind(state.layout, "background"))
+  ? { k, id: `${k}~${Date.now().toString(36)}${++cxEmptySeq}` } : { k });
 
 function cxLoadLayout() {
   try {
@@ -42,9 +50,10 @@ function cxValidLayout(t) {
   const seen = new Set();
   const ok = (n) => {
     if (cxIsLeaf(n)) {
-      if (n.k === "empty") return typeof n.id === "string";
-      if (!CX_KINDS[n.k] || seen.has(n.k)) return false;
-      seen.add(n.k);
+      if (n.k !== "empty" && !CX_KINDS[n.k]) return false;
+      const id = cxLeafId(n);
+      if (seen.has(id)) return false;
+      seen.add(id);
       return true;
     }
     return (n.dir === "row" || n.dir === "col") && Array.isArray(n.kids) && n.kids.length >= 2 && n.kids.every(ok);
@@ -64,7 +73,14 @@ function cxFind(node, id, parent = null, i = 0) {
   return null;
 }
 
-const cxPlaced = (state, kind) => !!cxFind(state.layout, kind);
+// cxLeafIds are the ids of the panes of kind on screen, in layout order.
+function cxLeafIds(state, kind) {
+  const out = [];
+  const walk = (n) => (cxIsLeaf(n) ? n.k === kind && out.push(cxLeafId(n)) : n.kids.forEach(walk));
+  walk(state.layout);
+  return out;
+}
+const cxPlaced = (state, kind) => cxLeafIds(state, kind).length > 0;
 
 function cxSizesOf(n) {
   if (!n.sizes || n.sizes.length !== n.kids.length) n.sizes = n.kids.map(() => 1);
@@ -137,7 +153,7 @@ function cxMountConsole(state) {
   main.innerHTML = `<div class="cx"><header class="cx-top"></header><div class="cx-body"></div><div class="cx-holder" hidden></div><div class="cx-drop" hidden><span></span></div></div>`;
   state.frames = {};
   const holder = main.querySelector(".cx-holder");
-  for (const k of Object.keys(CX_KINDS)) holder.append(cxFrame(state, { k }));
+  for (const [k, d] of Object.entries(CX_KINDS)) if (!d.multi || k === "background") holder.append(cxFrame(state, { k }));
   state.layout = cxLoadLayout();
   cxDrawLayout(state);
 }
@@ -147,6 +163,7 @@ function cxFrame(state, leaf) {
   if (state.frames[id]) return state.frames[id];
   const el = document.createElement("div");
   el.className = `cx-frame cx-frame-${leaf.k}`;
+  el.dataset.kind = leaf.k;
   el.dataset.leaf = id;
   const label = leaf.k === "empty" ? "Empty pane" : CX_KINDS[leaf.k].label;
   el.innerHTML = `<div class="cx-frame-bar" title="Drag to move: onto another pane's edge to split it, its middle to swap">
@@ -159,7 +176,9 @@ function cxFrame(state, leaf) {
   state.frames[id] = el;
   el.querySelector("[data-fclose]").onclick = () => {
     cxRemove(state, id);
-    if (leaf.k === "empty") { el.remove(); delete state.frames[id]; }
+    // An empty pane, or another background target or shell, goes; the
+    // others wait in the holder to be put back.
+    if (leaf.k === "empty" || leaf.id) { el.remove(); delete state.frames[id]; }
     cxLayoutChanged(state);
   };
   el.querySelectorAll("[data-fsplit]").forEach((b) => (b.onclick = () => {
@@ -184,14 +203,14 @@ function cxDrawLayout(state) {
   // Empty panes offer what isn't on screen.
   for (const el of body.querySelectorAll(".cx-frame-empty")) {
     const sel = el.querySelector("[data-fuse]");
-    const free = Object.entries(CX_KINDS).filter(([k]) => !cxPlaced(state, k));
+    const free = Object.entries(CX_KINDS).filter(([k, d]) => d.multi || !cxPlaced(state, k));
     sel.innerHTML = `<option value="">choose…</option>` + free.map(([k, d]) => `<option value="${k}">${esc(d.label)}</option>`).join("")
       + (free.length ? "" : `<option disabled>(everything is on screen)</option>`);
     sel.onchange = () => {
       if (!sel.value) return;
       const f = cxFind(state.layout, el.dataset.leaf);
       if (!f) return;
-      cxReplace(state, f[0], f[1], { k: sel.value });
+      cxReplace(state, f[0], f[1], cxNewLeaf(state, sel.value));
       el.remove();
       delete state.frames[el.dataset.leaf];
       cxLayoutChanged(state);
@@ -232,9 +251,7 @@ function cxApplySizes(state) {
     const n = el._node;
     const sizes = cxSizesOf(n);
     [...el.children].filter((c) => c.dataset.slot !== undefined).forEach((c) => {
-      let grow = sizes[+c.dataset.slot];
-      if (state.editing && c.dataset.leaf === "details") grow *= 2.5;
-      c.style.flex = `${grow} 1 0`;
+      c.style.flex = `${sizes[+c.dataset.slot]} 1 0`;
     });
   }
 }
@@ -327,21 +344,7 @@ function cxDragStart(state, id, e) {
 
 // cxResetLayout goes back to the standard arrangement.
 function cxResetLayout(state) {
-  for (const [id, el] of Object.entries(state.frames)) if (id.startsWith("e")) { el.remove(); delete state.frames[id]; }
+  for (const [id, el] of Object.entries(state.frames)) if (/^e|~/.test(id)) { el.remove(); delete state.frames[id]; }
   state.layout = structuredClone(CX_DEFAULT_LAYOUT);
   cxLayoutChanged(state);
-}
-
-// cxRenderLog fills the Run log pane: each step's output, in order.
-function cxRenderLog(state) {
-  if (!cxPlaced(state, "log")) return;
-  const pre = main.querySelector(".cx-runlog");
-  if (!pre) return;
-  const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 8;
-  pre.innerHTML = state.steps.map((s, i) => {
-    if (s.status === "pending" && !s.log?.length) return "";
-    const head = `<span class="info">── ${i + 1}. ${esc(s.name)}: ${ICONS[s.status] || ""} ${esc(s.status)}${s.note ? ` (${esc(s.note)})` : ""} ──</span>`;
-    return [head, ...(s.log || []).map((l) => `<span class="${esc(l.stream)}">${esc(l.text)}</span>`)].join("\n");
-  }).filter(Boolean).join("\n") || `<span class="info">Nothing has run yet.</span>`;
-  if (atEnd) pre.scrollTop = pre.scrollHeight;
 }

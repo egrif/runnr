@@ -454,6 +454,13 @@ type executor struct {
 	windowOpenedBy int
 	// typed: steps whose confirm_typing was answered (this time through).
 	typed map[int]bool
+	// ctx is the run's; vmu guards vars against shells opened alongside
+	// the run (they read them; only the run writes them); aside holds what
+	// those shells left.
+	ctx         context.Context
+	endAsideCtx context.CancelFunc
+	vmu         sync.RWMutex
+	aside asideState
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -470,7 +477,8 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	own := *rb
 	own.Steps = slices.Clone(rb.Steps)
 	rb = &own
-	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
+	actx, endAsideCtx := context.WithCancel(ctx)
+	x := &executor{ctx: actx, endAsideCtx: endAsideCtx, rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
@@ -555,6 +563,9 @@ func (x *executor) finish(ctx context.Context, err error) {
 	if err != nil {
 		x.leaveDetached()
 	}
+	// Shells alongside the run end with it (hung up); what they left is taken.
+	x.endAsideCtx()
+	x.endAside()
 	x.tendBackground(-1, true)
 	if x.funcFile != "" {
 		os.Remove(x.funcFile)
@@ -649,6 +660,7 @@ func (x *executor) steps(ctx context.Context) error {
 		x.em.Lock()
 		x.cur = i
 		x.em.Unlock()
+		x.takeAside()
 		step := x.def(i)
 		if err := ctx.Err(); err != nil {
 			return err
@@ -752,6 +764,8 @@ func (x *executor) onFailure(ctx context.Context, i int, step runbook.Step, out 
 
 // apply records what a successful (or forced) step produced.
 func (x *executor) apply(step runbook.Step, out cmdResult) {
+	x.vmu.Lock()
+	defer x.vmu.Unlock()
 	if step.Capture != "" {
 		x.vars[step.Capture] = strings.TrimSpace(out.stdout)
 	}

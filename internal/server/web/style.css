@@ -750,5 +750,15 @@ body.cx-dragging-pane .xterm { pointer-events: none; }
 .cx-termpane .cx-term, .cx-bg .cx-term { position: relative; }
 .cx-termpane-empty, .cx-bg-empty { padding: 12px; color: #9a9ba3 !important; }
 .cx-termpane .cx-pane-body { background: #15171c; padding: 4px; }
-.cx-logpane pre.cx-runlog { margin: 0; max-height: none; height: 100%; }
+.cx-shellpane .cx-pane-head { background: #15171c; color: #e4e6eb; border-bottom-color: #2c2e35; }
+.cx-shellpane .cx-pane-head .link { color: #8fb4ff; }
+.cx-shellpane .cx-pane-body.cx-term { padding: 4px; }
+.cx-shell-title { overflow: hidden; text-overflow: ellipsis; min-width: 0; color: #9a9ba3 !important; }
+.cx-shell-empty { padding: 12px; color: #9a9ba3 !important; white-space: normal; }
+.cx-edit-host { flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.cx-edit-host[hidden] { display: none; }
+.cx-edit-body { flex: 1; overflow: auto; padding: 10px 12px; min-height: 0; }
+.cx-editpane .cx-pane-body { display: flex; flex-direction: column; padding: 0; }
+.cx-editpane .cx-edit-host { border: 0; border-radius: 0; }
+.cx-editpane .cx-edit-empty { padding: 12px; }
 .cx-drop[hidden], .cx-holder[hidden] { display: none; }
