@@ -307,6 +307,12 @@ type StepView struct {
 	SecretOutputs []string `json:"secret_outputs,omitempty"`
 	Background    bool     `json:"background,omitempty"`
 	StopAfter     string   `json:"stop_after,omitempty"`
+	WaitFor       []string `json:"wait_for,omitempty"`
+	ConfirmTyping string   `json:"confirm_typing,omitempty"`
+	SkipIf        string   `json:"skip_if,omitempty"`
+	OkIf          string   `json:"ok_if,omitempty"`
+	FailIf        string   `json:"fail_if,omitempty"`
+	Verify        string   `json:"verify,omitempty"`
 	// Checks are filled in for checks steps; Ways for steps with several.
 	Checks []CheckView `json:"checks,omitempty"`
 	Repeat string      `json:"repeat,omitempty"`

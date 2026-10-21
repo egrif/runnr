@@ -125,6 +125,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/runs/{id}/steps/{n}", s.editRunStep)
 	mux.HandleFunc("POST /api/runs/{id}/steps/{n}/reopen", s.reopenRunStep)
 	mux.HandleFunc("POST /api/runs/{id}/save-edits", s.saveRunEdits)
+	mux.HandleFunc("GET /api/runs/{id}/plan", s.getRunPlan)
+	mux.HandleFunc("POST /api/runs/{id}/adopt-version", s.adoptVersion)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
 	mux.HandleFunc("POST /api/runs/{id}/notes", s.addNote)
@@ -815,6 +817,13 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"run": run, "live": false}
 	if l := s.getLive(run.ID); l != nil {
 		resp["live"] = true
+		if ed, ok := l.session.(engine.Editor); ok && ed != nil {
+			// The record may not have the latest edits yet.
+			if e := ed.Edits(); len(e) > len(run.Edits) {
+				run.Edits = e
+				engine.MarkEdited(run)
+			}
+		}
 		if l.ctl != nil {
 			resp["controls"] = toJSON(l.ctl.View())
 		}

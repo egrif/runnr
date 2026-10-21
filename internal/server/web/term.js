@@ -6,7 +6,10 @@
 // as run events; keystrokes and size changes go back with
 // POST /api/runs/{id}/term.
 
-const term = { runId: null, sessions: new Map(), active: null, queue: "", timer: null };
+// A page can host the sessions itself (the run console puts them in its
+// panes): term.host = { started(s), ended(s), show(s) }. Without one, they
+// go in the drawer.
+const term = { runId: null, sessions: new Map(), active: null, queue: "", timer: null, host: null };
 
 function termDrawer() {
   let d = $("#term-drawer");
@@ -98,6 +101,7 @@ function renderTabs() {
 function showTerm(id) {
   const s = term.sessions.get(id ?? term.active);
   if (!s) return;
+  if (term.host) { term.active = s.id; return term.host.show(s); }
   const d = termDrawer();
   term.active = s.id;
   d.hidden = false;
@@ -124,6 +128,7 @@ function resetTerm() {
   for (const s of term.sessions.values()) s.xt.dispose();
   term.sessions.clear();
   term.runId = term.active = null;
+  term.host = null;
   $("#term-drawer .term-body")?.replaceChildren();
 }
 
@@ -137,6 +142,7 @@ function termEvent(runId, e) {
   } else if (e.kind === "term_end") {
     s.ended = true;
     s.xt.write("\r\n\x1b[2m── session ended ──\x1b[0m\r\n");
+    if (term.host) return term.host.ended(s);
     renderTabs();
     // It's recorded with the step, so get out of the way, unless another
     // session is still going.
@@ -178,6 +184,7 @@ function startTerm(runId, t, step) {
   });
   xt.onResize(({ rows, cols }) => sendTerm(s, { rows, cols }));
   term.sessions.set(s.id, s);
+  if (term.host) return term.host.started(s);
   if (s.background) {
     // Runs alongside the rest; it gets a tab but doesn't take over.
     renderTabs();

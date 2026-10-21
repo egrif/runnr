@@ -1,0 +1,590 @@
+"use strict";
+
+// The run console (#/runs/{id}/console): one screen for following and
+// driving a run. Across the top: the run, where it is (step, section, time
+// in the section, the maintenance window) and a toolbar. On the left: the
+// sections and steps. On the right, in resizable panes: the selected
+// step's definition (editable while the run is live), what it's doing (or
+// did, or will do), and the background steps' terminals. Terminals live in
+// the panes, not the drawer.
+
+const CX_DONE = ["succeeded", "skipped", "forced"];
+const CX_ENDED = ["succeeded", "failed", "aborted"];
+
+function cxSizes() {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem("runnr.console") || "{}"); } catch {}
+  return { left: s.left || 340, details: s.details || 1, action: s.action || 1.4, bg: s.bg || 0.8 };
+}
+function cxSaveSizes(z) { try { localStorage.setItem("runnr.console", JSON.stringify(z)); } catch {} }
+
+async function viewConsole(id) {
+  const { run, live, controls } = await api("GET", `/api/runs/${enc(id)}`);
+  const state = {
+    run, live, controls, console: true,
+    steps: run.steps.map((s) => ({ ...s, log: s.output ? s.output.replace(/\n$/, "").split("\n").map((t) => ({ stream: "stdout", text: t })) : [] })),
+    question: null, open: new Set(), selected: null, follow: true, editing: null, sizes: cxSizes(),
+    plan: null, versionDismissed: 0, fg: null, bgActive: null,
+  };
+  document.body.classList.add("console-mode");
+  main.innerHTML = `
+    <div class="cx">
+      <header class="cx-top"></header>
+      <div class="cx-body" style="--cx-left:${state.sizes.left}px">
+        <nav class="cx-list"></nav>
+        <div class="cx-gutter-v" data-gutter="left" title="Drag to resize"></div>
+        <div class="cx-right">
+          <section class="cx-pane cx-details"><div class="cx-pane-head"></div><div class="cx-pane-body"></div></section>
+          <div class="cx-gutter-h" data-gutter="details-action"></div>
+          <section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-tabs"></div><div class="cx-term"></div></div></div></section>
+          <div class="cx-gutter-h" data-gutter="action-bg" hidden></div>
+          <section class="cx-pane cx-bg" hidden><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div></div><div class="cx-pane-body cx-term"></div></section>
+        </div>
+      </div>
+    </div>`;
+  cxLayout(state);
+  cxBindGutters(state);
+  cxHostTerms(state);
+
+  const loadPlan = async () => {
+    try { state.plan = await api("GET", `/api/runs/${enc(id)}/plan`); cxRender(state, { details: !state.editing }); } catch {}
+  };
+  api("GET", `/api/runbooks/${enc(run.runbook)}`).then((d) => { state.rbSections = d.runbook?.sections; cxRender(state); }).catch(() => {});
+  await loadPlan();
+  let pt;
+  state.onState = () => { clearTimeout(pt); pt = setTimeout(loadPlan, 400); };
+  // Someone may save a newer version of the runbook while the run goes on.
+  const poll = setInterval(() => { if (!document.body.classList.contains("console-mode") || CX_ENDED.includes(state.run.status)) return clearInterval(poll); loadPlan(); }, 20000);
+  cxRender(state);
+  if (!live) return;
+
+  stream = new EventSource(`/api/runs/${enc(id)}/events`);
+  let first = true;
+  stream.onmessage = (msg) => {
+    const e = JSON.parse(msg.data);
+    if (e.seq === 0 && !first) state.steps.forEach((s) => (s.log = []));
+    first = false;
+    if (e.kind.startsWith("term")) {
+      termEvent(id, e);
+      if (e.kind === "term") return;
+    }
+    const before = state.steps.findIndex((s) => s.status === "running");
+    applyEvent(state, e);
+    if (e.kind === "step_finished" || e.kind === "step_started") state.onState();
+    // Follow the run: the step it's on (or asking about) is the selected one.
+    const at = cxCurrent(state);
+    const moved = at !== before || e.kind === "question";
+    if (state.follow && moved && at >= 0 && at !== state.selected && !state.editing) state.selected = at;
+    cxRender(state, { details: moved && !state.editing });
+  };
+  stream.onerror = () => { if (CX_ENDED.includes(state.run.status)) stream.close(); };
+}
+
+// cxCurrent is the step the run is on: the one a question is about, else
+// the one running, else the first not done (-1 when it's all done).
+function cxCurrent(state) {
+  if (state.question?.step >= 0) return state.question.step;
+  const r = state.steps.findIndex((s) => s.status === "running");
+  if (r >= 0) return r;
+  if (CX_ENDED.includes(state.run.status)) {
+    const f = state.steps.findIndex((s) => ["failed", "aborted"].includes(s.status));
+    return f >= 0 ? f : -1;
+  }
+  return state.steps.findIndex((s) => s.status === "pending");
+}
+
+function cxSelected(state) {
+  if (state.selected == null || state.selected < 0) state.selected = Math.max(0, cxCurrent(state));
+  return state.selected;
+}
+
+function cxRender(state, { details = true } = {}) {
+  cxRenderTop(state);
+  cxRenderList(state);
+  if (details) cxRenderDetails(state);
+  cxRenderAction(state);
+  cxLayout(state);
+}
+
+// ---------- top: the run, where it is, the toolbar ----------
+
+// cxPhase: what the run is doing, in a word (and how it looks).
+function cxPhase(state) {
+  const r = state.run, q = state.question;
+  if (CX_ENDED.includes(r.status)) return { label: r.status, cls: `s-${r.status}` };
+  if (q) {
+    const what = { before: "paused before the step", after: "paused: check the result", failure: "step failed: what now?", input: "needs an input",
+      confirm: "asks before running", danger: "dangerous: double check", typed: "type to confirm", manual: "manual step: waiting for you", choose: "which way?" }[q.type] || "waiting for you";
+    return { label: what, cls: q.type === "failure" ? "s-failed" : "waiting" };
+  }
+  return { label: "running", cls: "s-running" };
+}
+
+function cxRenderTop(state) {
+  const r = state.run, el = main.querySelector(".cx-top");
+  const live = state.live && !CX_ENDED.includes(r.status);
+  const cur = cxCurrent(state), st = state.steps[cur];
+  const ph = cxPhase(state);
+  // Time in the section: since its first step started.
+  let section = "", inSection = "";
+  if (st?.section) {
+    section = st.section;
+    const first = state.steps.find((s) => s.section === section && s.started && !s.started.startsWith("0001"));
+    if (first) inSection = `<span class="cx-clock" data-since="${esc(first.started)}" ${!live ? `data-until="${esc(r.ended || "")}"` : ""}></span>`;
+  }
+  el.innerHTML = `
+    <div class="cx-title">
+      <a href="#/runs/${enc(r.id)}" class="cx-back" data-classic title="The classic run page (with the runbooks list)">☰</a>
+      <h1><a href="#/runbooks/${enc(r.runbook)}">${esc(r.runbook)}</a></h1>
+      <span class="muted">${r.runbook_version ? `v${r.runbook_version} · ` : ""}${esc(r.id)} · ${esc(r.mode)}${r.dry_run ? " · dry run" : ""}</span>
+      <span class="spacer"></span>
+      <span class="badge ${esc(ph.cls)}">${ICONS[r.status] || ""} ${esc(ph.label)}</span>
+      <span class="muted" title="Since the run started"><span class="cx-clock" data-since="${esc(r.started)}" ${!live ? `data-until="${esc(r.ended || "")}"` : ""}></span></span>
+    </div>
+    <div class="cx-status">
+      ${cur >= 0 ? `<span class="cx-at"><b>Step ${cur + 1}</b> of ${state.steps.length}: ${esc(st.name)}</span>` : `<span class="cx-at muted">${CX_ENDED.includes(r.status) ? "Finished" : "Starting…"}</span>`}
+      ${section ? `<span class="cx-chip" title="The section the run is in, and how long since its first step started">§ ${esc(section)} ${inSection}</span>` : ""}
+      ${cxWindowChip(r)}
+      ${(state.messages || []).slice(-1).map((m) => `<span class="muted small">ℹ ${esc(m)}</span>`).join("")}
+    </div>
+    <div class="cx-toolbar">${cxToolbar(state, live)}</div>
+    ${cxBanners(state, live)}`;
+  cxBindTop(state, el, live);
+}
+
+function cxWindowChip(r) {
+  const w = r.window;
+  if (!w) return "";
+  const target = parseOffset(w.target);
+  if (w.opened && !w.closed) {
+    return `<span class="cx-chip cx-window open" title="Production is down until the window closes">🔴 Maintenance window open <span class="mw-clock" data-since="${esc(w.opened)}" data-target="${target ?? ""}"></span>${w.target ? ` / ${esc(w.target)}` : ""}</span>`;
+  }
+  if (w.opened && w.closed) {
+    const len = (new Date(w.closed) - new Date(w.opened)) / 1000;
+    return `<span class="cx-chip cx-window ${target != null && len > target ? "over" : ""}">🟢 Window closed after ${fmtOffset(len, false)}${w.target ? ` (target ${esc(w.target)})` : ""}</span>`;
+  }
+  return `<span class="cx-chip cx-window muted">Window not open yet${w.open_step >= 0 ? ` (opens at step ${w.open_step + 1})` : ""}${w.target ? ` · target ${esc(w.target)}` : ""}</span>`;
+}
+
+// cxToolbar: the run's controls. Answers the run's question with buttons
+// where that's all it needs (inputs, typed checks and choices are answered
+// in the action pane), and the step/pause controls while it's live.
+function cxToolbar(state, live) {
+  const r = state.run, q = state.question, ctl = state.controls || {};
+  const btn = (act, label, cls = "", title = "", on = false) => `<button data-act="${esc(act)}" class="${cls} ${on ? "on" : ""}" title="${esc(title)}">${label}</button>`;
+  if (!live) {
+    const stop = state.steps.findIndex((s) => !CX_DONE.includes(s.status));
+    return [
+      ["failed", "aborted"].includes(r.status) && stop >= 0 ? btn("resume", "▶ Resume…", "primary", `Continue from step ${stop + 1}`) : "",
+      btn("rerun", "↻ Run again…"),
+      btn("raw", "Raw log", "", "The whole run as a plain log"),
+    ].join("");
+  }
+  const QA = {
+    before: [["run", "▶ Run step", "primary"], ["skip", "⏭ Skip"], ["continue", "⏩ Run the rest", "", "Run this and the remaining steps without pausing"]],
+    after: [["continue", "▶ Continue", "primary"], ["retry", "↻ Run again"], ["fail", "✘ Mark failed…"]],
+    confirm: [["run", "▶ Run", "primary"], ["skip", "⏭ Skip"]],
+    manual: [["done", "✔ Done", "primary"], ["skip", "⏭ Skip"], ["fail", "✘ Failed…"]],
+    failure: [["retry", "↻ Retry", "primary"], ["way", "↪ Another way…"], ["skip", "⏭ Skip"], ["force", "⚑ Force success…"]],
+  };
+  let answers = "";
+  if (q && QA[q.type]) {
+    answers = QA[q.type].filter(([v]) => q.options?.includes(v)).map(([v, l, c, t]) => btn(`answer:${v}`, l, c, t)).join("");
+  } else if (q) {
+    answers = btn("focus-question", "↓ Answer below", "primary", "This question needs more than a button: it's in the action pane");
+  }
+  const cur = cxCurrent(state);
+  const next = cur + 1; // 0-based step after the current one
+  const has = (list, i) => (list || []).includes(i + 1);
+  return `${answers}${answers ? `<span class="cx-sep"></span>` : ""}
+    ${btn("step-mode", "⏯ Step through", "", "Pause before every remaining step", !!ctl.step_mode)}
+    ${next < state.steps.length ? btn("pause-next", "⏸ Pause before next", "", `Pause before step ${next + 1}`, has(ctl.pause_before, next)) : ""}
+    ${cur >= 0 ? btn("pause-after", "⏸ Pause after this", "", `Pause after step ${cur + 1} to check its result`, has(ctl.pause_after, cur)) : ""}
+    <span class="spacer"></span>
+    ${btn("abort", "■ Abort run", "danger")}`;
+}
+
+function cxBanners(state, live) {
+  const r = state.run, p = state.plan;
+  let out = "";
+  const edits = r.edits || [];
+  if (edits.length && !r.edits_saved) {
+    const steps = [...new Set(edits.map((e) => e.step + 1))].sort((a, b) => a - b);
+    out += `<div class="cx-banner edits">✎ ${steps.length === 1 ? `Step ${steps[0]} was` : `Steps ${steps.join(", ")} were`} changed in this run; the runbook doesn't have ${steps.length === 1 ? "the change" : "the changes"}. <button data-act="save-edits" class="primary">Save to runbook</button></div>`;
+  }
+  if (live && p && p.latest > p.version && p.latest !== state.versionDismissed && (p.changed?.length || p.shape)) {
+    out += p.shape
+      ? `<div class="cx-banner version">⚠ The runbook was saved as version ${p.latest} during this run, and ${esc(p.shape)}: this run can't take it. Carry on with version ${p.version}, or abort and run version ${p.latest}.
+          <button data-act="dismiss-version">Carry on</button><button data-act="abort" class="danger">Abort run</button></div>`
+      : `<div class="cx-banner version">⚠ The runbook was saved as version ${p.latest} during this run. Steps not run yet that it changes: ${p.changed.map((n) => `<a href="#" data-pick="${n - 1}">${n}</a>`).join(", ")}.
+          <button data-act="adopt" class="primary">Use version ${p.latest} for the rest</button><button data-act="dismiss-version">Keep version ${p.version}</button><button data-act="abort" class="danger">Abort run</button></div>`;
+  }
+  return out;
+}
+
+function cxBindTop(state, el, live) {
+  const r = state.run;
+  el.querySelectorAll("[data-act]").forEach((b) => (b.onclick = async () => {
+    const act = b.dataset.act;
+    try {
+      if (act.startsWith("answer:")) return cxAnswer(state, act.slice(7));
+      switch (act) {
+        case "focus-question": return main.querySelector(".cx-action .question input, .cx-action .question select, .cx-action .question button")?.focus();
+        case "abort": return abortRun(state);
+        case "resume": location.hash = `#/runbooks/${enc(r.runbook)}?resume=${enc(r.id)}`; return;
+        case "rerun": location.hash = `#/runbooks/${enc(r.runbook)}?rerun=${enc(r.id)}`; return;
+        case "raw": return cxRawLog(state);
+        case "save-edits": {
+          if (!confirm(`Save this run's step edits as a new version of “${r.runbook}”?\nThe YAML is reformatted, so comments in it are dropped.`)) return;
+          const { version } = await api("POST", `/api/runs/${enc(r.id)}/save-edits`);
+          r.edits_saved = version;
+          toast(`Saved as version ${version}`);
+          state.onState();
+          return cxRender(state, { details: false });
+        }
+        case "dismiss-version": state.versionDismissed = state.plan.latest; return cxRender(state, { details: false });
+        case "adopt": {
+          const res = await api("POST", `/api/runs/${enc(r.id)}/adopt-version`, { version: state.plan.latest });
+          r.runbook_version = res.version;
+          toast(`On version ${res.version}: ${res.changed.length ? `steps ${res.changed.join(", ")} changed` : "no remaining step changed"}${res.restarted ? "; the current step starts again" : ""}`);
+          state.onState();
+          return cxRender(state);
+        }
+      }
+      // Step and pause controls.
+      const ctl = { step_mode: false, skip: [], pause_before: [], pause_after: [], ...(state.controls || {}) };
+      const toggle = (k, n) => (ctl[k] = ctl[k].includes(n) ? ctl[k].filter((x) => x !== n) : [...ctl[k], n]);
+      const cur = cxCurrent(state);
+      if (act === "step-mode") ctl.step_mode = !ctl.step_mode;
+      if (act === "pause-next") toggle("pause_before", cur + 2);
+      if (act === "pause-after") toggle("pause_after", cur + 1);
+      state.controls = await api("PUT", `/api/runs/${enc(r.id)}/controls`, ctl);
+      cxRender(state, { details: false });
+    } catch (e) { toast(e.message); }
+  }));
+  el.querySelector("[data-classic]").onclick = () => runView("classic");
+  el.querySelectorAll("[data-pick]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); cxSelect(state, +a.dataset.pick); }));
+}
+
+async function cxAnswer(state, value) {
+  const q = state.question;
+  if (!q) return;
+  let note = "";
+  if (value === "force") {
+    note = (prompt("Why accept this failure as success? (required)") || "").trim();
+    if (!note) return toast("Forcing a step needs a reason");
+  }
+  if (value === "fail") {
+    const why = prompt(q.type === "after" ? "What's wrong with the result?" : "Why did this step fail?");
+    if (why === null) return;
+    note = why;
+  }
+  try { await api("POST", `/api/runs/${enc(state.run.id)}/answer`, { question_id: q.id, value, note }); }
+  catch (e) { toast(e.message); }
+}
+
+async function cxRawLog(state) {
+  let text;
+  try { text = await (await fetch(`/api/runs/${enc(state.run.id)}/log`, { headers: { "X-Runnr": "1" } })).text(); } catch (e) { return toast(e.message); }
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step cx-raw";
+  dlg.innerHTML = `<div class="row"><h3>Raw log</h3><span class="spacer"></span><a class="button" href="/api/runs/${enc(state.run.id)}/log?download=1">Download</a><button data-close>Close</button></div><pre class="log">${esc(text)}</pre>`;
+  document.body.append(dlg);
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  dlg.showModal();
+}
+
+// ---------- left: sections and steps ----------
+
+function cxRenderList(state) {
+  const el = main.querySelector(".cx-list");
+  const keep = el.scrollTop;
+  const sel = cxSelected(state), cur = cxCurrent(state);
+  const changed = new Set((state.plan?.latest > state.plan?.version && state.plan.latest !== state.versionDismissed) ? state.plan.changed || [] : []);
+  const w = state.run.window;
+  const inWin = (i) => w && w.open_step >= 0 && i >= w.open_step && (w.close_step < 0 || i <= w.close_step);
+  let html = `<div class="cx-list-head"><b>Steps</b><span class="spacer"></span>
+    <label class="small" title="Keep the step the run is on selected"><input type="checkbox" data-follow ${state.follow ? "checked" : ""}> follow the run</label></div><ol>`;
+  state.steps.forEach((s, i) => {
+    if (s.section && (i === 0 || state.steps[i - 1].section !== s.section)) {
+      const members = state.steps.filter((x) => x.section === s.section);
+      const done = members.every((x) => CX_DONE.includes(x.status));
+      const info = (state.rbSections || []).find((x) => x.name === s.section);
+      const at = parseOffset(info?.window_offset);
+      html += `<li class="cx-sec ${done ? "done" : ""}" title="${esc(info?.description || s.section)}"><span>${done ? "✔ " : ""}${esc(s.section)}</span>${at != null ? `<span class="cx-when">T${fmtOffset(at)}</span>` : ""}</li>`;
+    }
+    const v = state.plan?.steps?.[i] || {};
+    const waiting = state.question?.step === i;
+    const cls = [`st-${s.status}`, waiting && "waiting", i === sel && "sel", i === cur && "cur", inWin(i) && "in-window", s.note === "before start step" && "dim"].filter(Boolean).join(" ");
+    const marks = [
+      s.status === "background" || v.background ? `<span title="Runs in the background">◐</span>` : "",
+      v.confirm_typing ? `<span class="cx-tag" title="Confirmed by typing ${esc(v.confirm_typing)}">type</span>` : v.dangerous ? `<span title="Dangerous">⚠</span>` : "",
+      s.optional ? `<span title="Optional">◇</span>` : "",
+      s.edited ? `<span title="Changed in this run">✎</span>` : "",
+      changed.has(i + 1) ? `<span class="cx-new" title="The runbook's newer version changes this step">new</span>` : "",
+    ].join("");
+    const right = s.started && !s.started.startsWith("0001") ? (duration(s.started, s.ended) || "") : v.offset ? `T${esc(v.offset)}` : "";
+    html += `<li class="cx-step ${cls}" data-i="${i}" title="${esc(`${i + 1}. ${s.name}${s.note ? ` (${s.note})` : ""}`)}">
+      <span class="ic">${waiting ? "⏸" : ICONS[s.status] || ""}</span><span class="n">${i + 1}</span><span class="nm">${esc(s.name)}</span>
+      <span class="mk">${marks}</span><span class="tm">${right}</span></li>`;
+  });
+  el.innerHTML = html + "</ol>";
+  el.scrollTop = keep;
+  el.querySelectorAll(".cx-step").forEach((li) => (li.onclick = () => cxSelect(state, +li.dataset.i)));
+  el.querySelector("[data-follow]").onchange = (e) => {
+    state.follow = e.target.checked;
+    if (state.follow) cxSelect(state, Math.max(0, cxCurrent(state)), true);
+  };
+  // Keep the run's step in view while following.
+  if (state.follow && cur >= 0) el.querySelector(`.cx-step[data-i="${cur}"]`)?.scrollIntoView({ block: "nearest" });
+}
+
+function cxSelect(state, i, follow = false) {
+  if (state.editing && state.editing.i !== i && !confirm("Discard your unapplied edit?")) return;
+  state.editing = null;
+  state.selected = i;
+  state.follow = follow || i === cxCurrent(state);
+  cxRender(state);
+}
+
+// ---------- details: the step as defined (editable while live) ----------
+
+function cxEditable(state, i) {
+  if (!state.live || CX_ENDED.includes(state.run.status) || !state.plan?.live) return false;
+  if (state.question?.step === i) return true;
+  const cur = state.steps.findIndex((s) => ["pending", "running"].includes(s.status));
+  return cur >= 0 && i >= cur && ["pending", "running"].includes(state.steps[i].status);
+}
+
+function cxRenderDetails(state) {
+  const pane = main.querySelector(".cx-details");
+  const i = cxSelected(state), s = state.steps[i];
+  if (!s) return;
+  const v = state.plan?.steps?.[i] || {};
+  const head = pane.querySelector(".cx-pane-head"), body = pane.querySelector(".cx-pane-body");
+  const can = cxEditable(state, i);
+  head.innerHTML = `<b>Step ${i + 1}</b><span class="cx-head-name" title="${esc(s.name)}">${esc(s.name)}</span><span class="spacer"></span>
+    ${state.editing ? "" : can ? `<button data-edit title="Change this step for this run">✎ Edit</button>` : state.live ? `<span class="muted small">${CX_DONE.includes(s.status) || s.status === "failed" ? "already run" : ""}</span>` : `<a class="small" href="#/runbooks/${enc(state.run.runbook)}/edit">edit the runbook</a>`}`;
+  if (state.editing) return cxRenderEditor(state, head, body);
+  const row = (k, val) => (val ? `<tr><td>${k}</td><td>${val}</td></tr>` : "");
+  const code = (t) => `<code>${esc(t)}</code>`;
+  const flags = [v.always && "setup (always)", v.optional && "optional", v.dangerous && "dangerous", v.confirm && "confirm first", v.background && "background", v.choose && "asks which way"].filter(Boolean);
+  body.innerHTML = `
+    ${v.description ? `<div class="doing">${esc(v.description)}</div>` : ""}
+    ${v.expect ? `<div class="expect"><b>Expect:</b> ${esc(v.expect)}</div>` : ""}
+    <table class="kv cx-kv">
+      ${row("kind", esc(v.kind || s.kind) + (flags.length ? ` · ${esc(flags.join(" · "))}` : ""))}
+      ${row("section", esc(v.section || ""))}${row("owner", esc(v.owner || ""))}
+      ${row("only when", v.when && code(v.when))}${row("skip if", v.skip_if && code(v.skip_if))}
+      ${row("confirm by typing", v.confirm_typing && code(v.confirm_typing))}
+      ${row("waits for", (v.wait_for || []).map(code).join(", "))}${row("stops after", v.stop_after && code(v.stop_after))}
+      ${row("ok if output matches", v.ok_if && code(v.ok_if))}${row("fails if output matches", v.fail_if && code(v.fail_if))}
+      ${row("verified on resume by", v.verify && code(v.verify))}
+      ${row("dir", v.dir && code(v.dir))}${row("timeout", esc(v.timeout || ""))}${row("retries", v.retries ? String(v.retries) : "")}
+      ${row("repeat", esc(v.repeat || ""))}
+      ${row("planned", v.offset ? `T${esc(v.offset)} (relative to the window opening)` : "")}
+      ${row("publishes", [...(v.outputs || []), ...(v.secret_outputs || []).map((o) => `${o} (secret)`)].map(code).join(" "))}
+    </table>
+    ${v.ways?.length ? v.ways.map((w) => `<h4>${esc(w.name)}${w.preferred ? " <span class='muted small'>(preferred)</span>" : ""}</h4><pre class="cmd">${esc(w.command)}</pre>`).join("")
+      : v.command ? `<pre class="cmd">${esc(v.command)}</pre>` : ""}
+    ${s.notes?.length ? renderNotes(s.notes) : ""}`;
+  head.querySelector("[data-edit]")?.addEventListener("click", () => cxStartEdit(state, i));
+}
+
+async function cxStartEdit(state, i) {
+  try {
+    const def = await api("GET", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`);
+    state.editing = { i, yaml: def.yaml, orig: def.yaml, error: "" };
+    state.follow = false;
+    cxRenderDetails(state);
+    main.querySelector(".cx-details textarea")?.focus();
+  } catch (e) { toast(e.message); }
+}
+
+function cxRenderEditor(state, head, body) {
+  const ed = state.editing, i = ed.i;
+  const waiting = state.question?.step === i;
+  head.innerHTML = `<b>Edit step ${i + 1}</b><span class="muted small">for this run</span><span class="spacer"></span>
+    <button class="primary" data-apply>${waiting ? "Apply and run it again" : "Apply"}</button><button data-cancel>Cancel</button>`;
+  body.innerHTML = `<p class="muted small">${waiting ? "The run is waiting on this step: applying starts it again with the new version."
+    : state.steps[i].status === "running" ? "This step is running now; the change applies if it runs again (retry)." : "The run uses the new version when it gets here."}
+    Save to the runbook afterwards (the banner above), or the change is only in this run.</p>
+    <textarea class="editor cx-yaml" spellcheck="false">${esc(ed.yaml)}</textarea><div class="error-text">${esc(ed.error)}</div>`;
+  const ta = body.querySelector("textarea");
+  ta.oninput = () => (ed.yaml = ta.value);
+  ta.onkeydown = (e) => {
+    if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); ed.yaml = ta.value; }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) head.querySelector("[data-apply]").click();
+    if (e.key === "Escape") head.querySelector("[data-cancel]").click();
+  };
+  head.querySelector("[data-cancel]").onclick = () => {
+    if (ed.yaml !== ed.orig && !confirm("Discard your edit?")) return;
+    state.editing = null;
+    cxRenderDetails(state);
+  };
+  head.querySelector("[data-apply]").onclick = async () => {
+    try {
+      const res = await api("PUT", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`, ed.yaml, true);
+      state.run.edits = res.edits;
+      state.run.edits_saved = 0;
+      Object.assign(state.steps[i], { edited: true, name: res.view.name, kind: res.view.kind });
+      state.editing = null;
+      toast(res.restarted ? "Step changed; running it again" : "Step changed for this run");
+      state.onState();
+      cxRender(state);
+    } catch (e) { ed.error = e.message; body.querySelector(".error-text").textContent = e.message; }
+  };
+}
+
+// ---------- action: what the step is doing, did, or will do ----------
+
+function cxRenderAction(state) {
+  const pane = main.querySelector(".cx-action");
+  const i = cxSelected(state), s = state.steps[i], q = state.question;
+  const v = state.plan?.steps?.[i] || {};
+  const head = pane.querySelector(".cx-pane-head"), body = pane.querySelector(".cx-action-body");
+  const scroll = body.querySelector("pre.log");
+  const atEnd = !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 8;
+  const cur = cxCurrent(state);
+  head.innerHTML = `<b>${s?.status === "pending" ? "Will do" : s?.status === "running" || q?.step === i ? "Now" : "What happened"}</b>
+    ${q?.step === i ? `<span class="badge waiting">⏸ waiting for you</span>` : s ? `<span class="badge s-${esc(s.status)}">${ICONS[s.status] || ""} ${esc(s.status)}</span>` : ""}
+    <span class="spacer"></span>
+    ${i !== cur && cur >= 0 ? `<button class="link" data-goto="${cur}">→ step ${cur + 1}, where the run is</button>` : ""}
+    ${state.live ? `<button class="link" data-note="${i + 1}">✎ note</button>` : ""}`;
+  let html = "";
+  // An input the run is asking for, whatever's selected.
+  if (q?.step === -1) html += renderQuestion(q, state.run.id);
+  if (q?.step === i) html += renderQuestion(q, state.run.id);
+  if (s) {
+    if (s.status === "pending" && !s.log.length) {
+      const where = state.fg?.step === i ? "" : v.background ? " It will start in its own terminal (the background pane) and the run will go on." : v.kind === "tty" ? " It will need a terminal: it opens here." : "";
+      html += `<p class="muted">Not reached yet.${where}</p>${v.command ? `<pre class="cmd">${esc(v.command)}</pre>` : ""}`;
+    } else {
+      // A step on a terminal shows it below; its log is the recorded session once it ends.
+      const asking = q?.step === i && ["before", "confirm", "danger", "typed", "choose"].includes(q.type) && !s.log.length;
+      html += asking || (state.fg?.step === i && !state.fg.ended && s.status === "running") ? "" : thisRun(s, i);
+    }
+  }
+  body.innerHTML = html;
+  const log = body.querySelector("pre.log");
+  if (log && atEnd) log.scrollTop = log.scrollHeight;
+  body.querySelectorAll(".question").forEach((el) => bindQuestion(el, q, state.run.id));
+  head.querySelector("[data-goto]")?.addEventListener("click", () => cxSelect(state, cur, true));
+  head.querySelector("[data-note]")?.addEventListener("click", async () => {
+    const text = (prompt(`Note on step ${i + 1}:`) || "").trim();
+    if (!text) return;
+    try { pushNote(state, i, await api("POST", `/api/runs/${enc(state.run.id)}/notes`, { step: i + 1, text, author: author() })); cxRender(state); } catch (e) { toast(e.message); }
+  });
+  // A step's terminal shows in this pane when that step is selected (or it's the run's step).
+  const fg = main.querySelector(".cx-fg");
+  const showFg = state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
+  fg.hidden = !showFg;
+  if (showFg) cxShowSession(state.fg, fg.querySelector(".cx-term"));
+}
+
+// ---------- terminals in the panes ----------
+
+function cxHostTerms(state) {
+  term.host = {
+    started(s) {
+      if (s.background) { state.bgActive = s.id; cxRenderBg(state); }
+      else { state.fg = s; cxRenderAction(state); cxLayout(state); }
+    },
+    ended(s) {
+      if (s.background) cxRenderBg(state);
+      else if (state.fg === s) {
+        // Recorded with the step: the log shows it. Leave it a moment.
+        setTimeout(() => { if (state.fg === s) { state.fg = null; cxRenderAction(state); cxLayout(state); } }, 1500);
+      }
+    },
+    show(s) {
+      if (s.background) { state.bgActive = s.id; cxRenderBg(state); }
+      else { state.fg = s; cxRenderAction(state); }
+    },
+  };
+}
+
+function cxShowSession(s, container) {
+  if (s.el.parentElement !== container) {
+    container.querySelectorAll(".term-pane").forEach((p) => p.remove());
+    container.append(s.el);
+  }
+  s.el.hidden = false;
+  if (!s.opened) { s.xt.open(s.el); s.opened = true; }
+  requestAnimationFrame(() => { try { s.fit.fit(); } catch {} });
+  if (!s.observed) {
+    s.observed = true;
+    new ResizeObserver(() => { if (s.el.offsetParent) try { s.fit.fit(); } catch {} }).observe(s.el);
+  }
+}
+
+function cxRenderBg(state) {
+  const pane = main.querySelector(".cx-bg");
+  const bgs = [...term.sessions.values()].filter((s) => s.background);
+  pane.querySelector(".cx-tabs").innerHTML = bgs.map((s) => `<button class="term-tab ${s.id === state.bgActive ? "on" : ""} ${s.ended ? "ended" : ""}" data-bg="${esc(s.id)}" title="${esc(s.title)}"><span class="term-dot"></span>${esc(s.title.replace(/^background · /, ""))}</button>`).join("")
+    + `<span class="spacer"></span>${bgs.find((s) => s.id === state.bgActive && !s.ended) ? `<button class="link" data-end>End session</button>` : ""}`;
+  pane.querySelectorAll("[data-bg]").forEach((b) => (b.onclick = () => { state.bgActive = b.dataset.bg; cxRenderBg(state); }));
+  pane.querySelector("[data-end]")?.addEventListener("click", () => {
+    const s = term.sessions.get(state.bgActive);
+    if (s && confirm(`End “${s.title}”? It's hung up, like closing its terminal.`)) sendTerm(s, { end: true });
+  });
+  const s = term.sessions.get(state.bgActive) || bgs[bgs.length - 1];
+  if (s) { state.bgActive = s.id; cxShowSession(s, pane.querySelector(".cx-term")); }
+  cxLayout(state);
+}
+
+// ---------- layout: resizable panes ----------
+
+function cxLayout(state) {
+  const z = state.sizes;
+  const body = main.querySelector(".cx-body");
+  if (!body) return;
+  body.style.setProperty("--cx-left", `${z.left}px`);
+  const hasBg = [...term.sessions.values()].some((s) => s.background);
+  main.querySelector(".cx-bg").hidden = !hasBg;
+  main.querySelector('[data-gutter="action-bg"]').hidden = !hasBg;
+  main.querySelector(".cx-details").style.flexGrow = z.details;
+  main.querySelector(".cx-action").style.flexGrow = z.action;
+  main.querySelector(".cx-bg").style.flexGrow = z.bg;
+}
+
+function cxBindGutters(state) {
+  main.querySelectorAll("[data-gutter]").forEach((g) => (g.onpointerdown = (e) => {
+    e.preventDefault();
+    g.setPointerCapture(e.pointerId);
+    const z = state.sizes, which = g.dataset.gutter;
+    const startX = e.clientX, startY = e.clientY, start = { ...z };
+    const right = main.querySelector(".cx-right");
+    const total = right.clientHeight;
+    const panes = ["details", "action", "bg"].filter((k) => !main.querySelector(`.cx-${k}`).hidden);
+    const sum = panes.reduce((a, k) => a + start[k], 0);
+    document.body.classList.add("cx-dragging");
+    g.onpointermove = (ev) => {
+      if (which === "left") {
+        z.left = Math.max(180, Math.min(window.innerWidth - 360, start.left + ev.clientX - startX));
+      } else {
+        const [a, b] = which === "details-action" ? ["details", "action"] : ["action", "bg"];
+        const d = ((ev.clientY - startY) / total) * sum;
+        const min = sum * 0.08;
+        z[a] = Math.max(min, Math.min(start[a] + start[b] - min, start[a] + d));
+        z[b] = start[a] + start[b] - z[a];
+      }
+      cxLayout(state);
+    };
+    g.onpointerup = () => {
+      g.onpointermove = g.onpointerup = null;
+      document.body.classList.remove("cx-dragging");
+      cxSaveSizes(z);
+    };
+  }));
+}
+
+// The section and run clocks tick with the window's (app.js has one for .mw-clock).
+setInterval(() => {
+  document.querySelectorAll(".cx-clock[data-since]").forEach((el) => {
+    const end = el.dataset.until ? new Date(el.dataset.until) : new Date();
+    const sec = Math.max(0, (end - new Date(el.dataset.since)) / 1000);
+    el.textContent = fmtOffset(sec, false);
+  });
+}, 1000);

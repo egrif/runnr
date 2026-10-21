@@ -23,8 +23,11 @@ func (x *executor) View(i int) StepView {
 		When: s.When, Confirm: s.Confirm, Dangerous: s.Dangerous, Always: s.Always, Optional: s.Optional, Timeout: s.Timeout, Retries: s.Retries,
 		Outputs: s.Outputs, SecretOutputs: s.SecretOutputs,
 	}
-	v.Background, v.StopAfter = s.Background, s.StopAfter
+	v.Background, v.StopAfter, v.WaitFor = s.Background, s.StopAfter, s.WaitFor
 	v.Choose, v.Window = s.Choose, s.Window
+	v.ConfirmTyping = x.lenient(s.ConfirmTyping)
+	v.SkipIf, v.Verify = x.mask(x.lenient(s.SkipIf)), x.mask(x.lenient(s.Verify))
+	v.OkIf, v.FailIf = s.OkIf, s.FailIf
 	if d, ok := x.rb.PlannedOffset(i, x.vars); ok {
 		sec := int(d.Seconds())
 		v.Offset, v.OffsetSec = FormatOffset(d), &sec

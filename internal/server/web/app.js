@@ -140,12 +140,17 @@ async function route() {
   if (stream) { stream.close(); stream = null; }
   resetTerm();
   resetSide();
+  document.body.classList.remove("console-mode");
   const h = location.hash || "#/";
   renderSidebar();
   let m;
   try {
     if ((m = h.match(/^#\/runbooks\/([^/?]+)(?:\/(edit|tests))?(?:\?(.*))?$/))) return await viewRunbook(decodeURIComponent(m[1]), m[2] || "run", new URLSearchParams(m[3] || ""));
-    if ((m = h.match(/^#\/runs\/([^/]+)$/))) return await viewRun(decodeURIComponent(m[1]));
+    if ((m = h.match(/^#\/runs\/([^/]+)\/console$/))) { runView("console"); return await viewConsole(decodeURIComponent(m[1])); }
+    if ((m = h.match(/^#\/runs\/([^/]+)$/))) {
+      if (runView() === "console") return location.replace(`#/runs/${m[1]}/console`);
+      return await viewRun(decodeURIComponent(m[1]));
+    }
     if (h === "#/new") return await viewNew();
     if (h.startsWith("#/history")) return await viewHistory();
     if (h === "#/help") return viewHelp();
@@ -238,6 +243,15 @@ async function viewNew() {
 }
 
 // ---------- live / past run ----------
+
+// runView is the run page people last chose: "console" or "classic" (and
+// sets it, given one).
+function runView(set) {
+  try {
+    if (set) localStorage.setItem("runnr.runView", set);
+    return localStorage.getItem("runnr.runView") || "classic";
+  } catch { return set || "classic"; }
+}
 
 async function viewRun(id) {
   const { run, live, controls } = await api("GET", `/api/runs/${encodeURIComponent(id)}`);
@@ -366,6 +380,7 @@ function renderRun(state) {
       </div>
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
+      <a class="button" href="#/runs/${enc(run.id)}/console" title="One screen: the steps, the selected step's definition, what it's doing, and the background steps">▣ Console</a>
       ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
