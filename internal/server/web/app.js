@@ -133,6 +133,7 @@ function renderSidebar() {
 
 $("#filter").addEventListener("input", renderSidebar);
 $("#new-btn").addEventListener("click", () => (location.hash = "#/new"));
+$("#import-btn").addEventListener("click", () => pickImportFiles());
 
 // ---------- router ----------
 
@@ -232,16 +233,10 @@ async function viewNew() {
   main.innerHTML = `<h1>New runbook</h1>
     <p class="muted">Edit the starter below, or import a file; the <code>name</code> field becomes the runbook's identifier.</p>
     <div class="row new-opts"><label>Collection ${colPicker("new-col", "None")}</label>
-      <label class="link">Import a file… <input type="file" id="import-file" accept=".yaml,.yml,text/yaml" hidden></label></div>
+      <button class="link" id="import-file">Import files…</button></div>
     <section id="tab"></section>`;
   $("#new-col").onchange = (e) => { const v = pickedCol(e.target.value); if (v && !collections.some((c) => c.name === v)) e.target.add(new Option(v, v), 1); e.target.value = v; };
-  $("#import-file").onchange = async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    $("#yaml").value = await f.text();
-    $("#yaml").dispatchEvent(new Event("input"));
-    toast(`Loaded ${f.name}: check it, then Save`);
-  };
+  $("#import-file").onclick = () => pickImportFiles({ collection: $("#new-col").value });
   renderEditor($("#tab"), raw, null);
 }
 

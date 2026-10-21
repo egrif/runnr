@@ -57,6 +57,8 @@ code, pre, textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospac
 .brand img { display: block; }
 .empty .logo { display: block; width: min(760px, 100%); height: auto; margin: 0 auto 8px; }
 .side-actions { display: flex; flex-direction: column; gap: 8px; }
+.side-new { display: flex; gap: 6px; }
+.side-new #new-btn { flex: 1; }
 .nav-link { padding: 4px 0; }
 #filter { width: 100%; }
 #runbook-list { list-style: none; margin: 0; padding: 0; }
@@ -764,3 +766,10 @@ body.cx-dragging-pane .xterm { pointer-events: none; }
 .cx-editpane .cx-edit-host { border: 0; border-radius: 0; }
 .cx-editpane .cx-edit-empty { padding: 12px; }
 .cx-drop[hidden], .cx-holder[hidden] { display: none; }
+dialog.import-dialog { width: min(640px, calc(100vw - 32px)); }
+.import-item { margin: 8px 0; padding: 10px 12px; }
+.import-item .row { gap: 8px; margin: 0 0 4px; }
+.import-item label.check { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-weight: 400; }
+.import-item input[data-as] { width: 16em; }
+.warn-text { color: var(--warn); }
+.ok-text { color: var(--ok, #2e8b57); }

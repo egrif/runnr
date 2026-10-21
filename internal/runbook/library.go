@@ -103,3 +103,33 @@ functions:
       echo "hello, ${1:-world}"
 `, name)
 }
+
+var nameLineRe = regexp.MustCompile(`(?m)^name:[ \t]*.*$`)
+
+// SetName renames a runbook or library document: its top-level name line
+// is replaced, the rest left as written.
+func SetName(raw []byte, name string) ([]byte, error) {
+	loc := nameLineRe.FindIndex(raw)
+	if loc == nil {
+		return nil, fmt.Errorf("no top-level name: line to rename")
+	}
+	out := append([]byte{}, raw[:loc[0]]...)
+	out = append(out, "name: "+name...)
+	return append(out, raw[loc[1]:]...), nil
+}
+
+// DocKind says what a YAML document is: "runbook" (it has steps),
+// "library" (functions, no steps), or "" if neither.
+func DocKind(raw []byte) string {
+	var top map[string]any
+	if yaml.Unmarshal(raw, &top) != nil {
+		return ""
+	}
+	if _, ok := top["steps"]; ok {
+		return "runbook"
+	}
+	if _, ok := top["functions"]; ok {
+		return "library"
+	}
+	return ""
+}

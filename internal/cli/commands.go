@@ -282,15 +282,21 @@ func editLoop(st *store.Store, name string) error {
 
 func importCmd(s func() *store.Store) *cobra.Command {
 	var force bool
-	var collection string
+	var collection, as string
 	cmd := &cobra.Command{
 		Use:   "import <file>...",
 		Short: "Validate and add runbook files to the library (- reads stdin)",
 		Long: `Validate and add runbook files to the library (- reads stdin).
 
---collection also adds them to that collection (created if it doesn't exist).`,
+A runbook whose name is taken is refused, unless --force (it's saved as a
+new version of that one; the earlier versions are kept) or --as NAME
+(imported under another name). --collection also adds them to that
+collection (created if it doesn't exist).`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if as != "" && len(args) != 1 {
+				return errors.New("--as renames one file: give one")
+			}
 			var failed bool
 			var imported []string
 			for _, f := range args {
@@ -301,13 +307,25 @@ func importCmd(s func() *store.Store) *cobra.Command {
 				} else {
 					raw, err = os.ReadFile(f)
 				}
+				if err == nil && as != "" {
+					raw, err = runbook.SetName(raw, as)
+				}
+				var prev int
+				if rb, perr := runbook.Parse(raw); err == nil && perr == nil {
+					if d, lerr := s().Load(rb.Name); lerr == nil {
+						prev = d.Version
+					}
+				}
 				if err == nil {
 					var rb *runbook.Runbook
 					var ver int
 					if rb, ver, err = s().Save(raw, store.SaveOpts{Overwrite: force}); err == nil {
-						fmt.Printf("imported %s → %s (version %d)\n", f, rb.Name, ver)
+						fmt.Println(importReport(f, rb.Name, ver, prev))
 						imported = append(imported, rb.Name)
 						continue
+					}
+					if !force && prev > 0 {
+						err = fmt.Errorf("%w (version %d): --force saves this as its next version, --as NAME imports it under another name", err, prev)
 					}
 				}
 				failed = true
@@ -326,7 +344,8 @@ func importCmd(s func() *store.Store) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "overwrite existing runbooks")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "save over runbooks with the same name (as a new version)")
+	cmd.Flags().StringVar(&as, "as", "", "import the runbook under this name (its name: is changed)")
 	cmd.Flags().StringVarP(&collection, "collection", "c", "", "add the imported runbooks to this collection")
 	return cmd
 }
@@ -1452,6 +1471,7 @@ shells opened from runnr. To use them in any other terminal:
   eval "$(runnr lib export <name>)"`,
 	}
 	var noEdit, force bool
+	var libAs string
 	newC := &cobra.Command{
 		Use: "new <name>", Short: "Create a library from a starter and open it in $EDITOR", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1480,16 +1500,31 @@ shells opened from runnr. To use them in any other terminal:
 				if err != nil {
 					return err
 				}
+				if libAs != "" {
+					if raw, err = runbook.SetName(raw, libAs); err != nil {
+						return fmt.Errorf("%s: %w", f, err)
+					}
+				}
+				var prev int
+				if l, perr := runbook.ParseLibrary(raw); perr == nil {
+					if d, lerr := s().LoadLibrary(l.Name); lerr == nil && !d.Builtin {
+						prev = d.Version
+					}
+				}
 				lib, ver, err := s().SaveLibrary(raw, store.SaveOpts{Overwrite: force})
 				if err != nil {
+					if !force && prev > 0 {
+						err = fmt.Errorf("%w (version %d): --force saves this as its next version, --as NAME imports it under another name", err, prev)
+					}
 					return fmt.Errorf("%s: %w", f, err)
 				}
-				fmt.Printf("imported %s → library %s (version %d)\n", f, lib.Name, ver)
+				fmt.Println(importReport(f, "library "+lib.Name, ver, prev))
 			}
 			return nil
 		},
 	}
-	importC.Flags().BoolVarP(&force, "force", "f", false, "overwrite existing libraries")
+	importC.Flags().BoolVarP(&force, "force", "f", false, "save over libraries with the same name (as a new version)")
+	importC.Flags().StringVar(&libAs, "as", "", "import the library under this name (its name: is changed)")
 	var ver int
 	showC := &cobra.Command{
 		Use: "show <name>", Short: "Print a library's YAML (--version N for an older save)", Args: cobra.ExactArgs(1),
@@ -1818,4 +1853,17 @@ func nonEmptyEnv(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// importReport says what importing file did: added it, saved it as a new
+// version of the one with its name, or nothing (it was unchanged).
+func importReport(file, name string, ver, prev int) string {
+	switch {
+	case prev == 0:
+		return fmt.Sprintf("imported %s → %s (version %d)", file, name, ver)
+	case prev == ver:
+		return fmt.Sprintf("unchanged %s → %s (version %d)", file, name, ver)
+	default:
+		return fmt.Sprintf("replaced %s with %s (version %d → %d)", name, file, prev, ver)
+	}
 }
