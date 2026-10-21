@@ -39,6 +39,26 @@ func TestDangerousInSequenceNeedsNoDoubleCheck(t *testing.T) {
 	}
 }
 
+// skip_if means the work's already done, so a step it skips is in sequence: a
+// dangerous step after it needs no double check (like a when: that's false).
+func TestDangerousAfterSkipIfNeedsNoDoubleCheck(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - {name: setup, run: 'true', always: true}
+  - {name: delete the replica, run: 'echo deleting', skip_if: 'echo no replica'}
+  - {name: cutover, run: 'echo cut', dangerous: true, confirm: true}
+`)
+	ui := &dangerUI{scripted: scripted{confirms: []bool{true}}, answers: []bool{false}}
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Sanctioned: true})
+	if r := run.Steps[1]; r.Status != StatusSkipped || !strings.HasPrefix(r.Note, "skip_if:") {
+		t.Fatalf("step 2: %+v", r)
+	}
+	if run.Status != StatusSucceeded || len(ui.asked) != 0 || run.Steps[2].Status != StatusSucceeded {
+		t.Fatalf("%s %s asked=%q", run.Status, statuses(run), ui.asked)
+	}
+}
+
 func TestDangerousOutOfSequence(t *testing.T) {
 	rb := mustParse(t, dangerRB)
 	for _, tc := range []struct {

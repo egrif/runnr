@@ -41,6 +41,10 @@ func (x *executor) confirmTyped(ctx context.Context, i int, step runbook.Step, w
 	return yes, err
 }
 
+// NoteSkipIf starts the note of a step that skip_if skipped (the work's already
+// done); the command's first line of output may follow in parentheses.
+const NoteSkipIf = "skip_if: already done"
+
 // skipIf runs a step's skip_if command: true means the work's already done.
 func (x *executor) skipIf(ctx context.Context, i int, step runbook.Step) (bool, string, error) {
 	if step.SkipIf == "" {
@@ -61,7 +65,7 @@ func (x *executor) skipIf(ctx context.Context, i int, step runbook.Step) (bool, 
 	if out.err != nil {
 		return false, "", nil
 	}
-	note := "skip_if: already done"
+	note := NoteSkipIf
 	if l := firstLine(x.mask(strings.TrimSpace(out.stdout))); l != "" {
 		note += " (" + l + ")"
 	}
