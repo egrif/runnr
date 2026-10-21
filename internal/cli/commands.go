@@ -558,7 +558,8 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		Sanctioned: ver > 0 && !f.noHistory && !f.dry, Resumed: l.resumed,
 		// A resume leaves out every step that finished, not only those
 		// before where it starts.
-		CarryDone: l.resumed != nil,
+		// (Unless the operator chose the steps with --skip.)
+		CarryDone: l.resumed != nil && f.skip == "",
 	}
 	if f.tmux {
 		d, err := newTmuxDetacher()
@@ -690,7 +691,9 @@ func resumeCmd(s func() *store.Store) *cobra.Command {
 		Short: "Continue a failed or aborted run from where it stopped",
 		Long: `Start a new run of the same runbook with the same inputs, beginning at the
 first step that didn't succeed. Steps that finished in that run, before or
-after it, are left out (the review can put one back). Secret inputs aren't
+after it, are left out (the review can put one back; with --skip, only the
+steps you list are). An optional background step that didn't finish (a
+watcher) runs again. Secret inputs aren't
 stored, so they're asked for again (or pass them with -v). Steps marked
 'always' run again.`,
 		Args: cobra.ExactArgs(1),

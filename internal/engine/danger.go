@@ -52,6 +52,28 @@ func (x *executor) skipResumedDone() {
 	}
 }
 
+// restartWatchers, on a resume, runs again the optional background steps
+// before StartAt that didn't finish in the resumed run (a status watcher
+// that exited or was stopped): they don't decide where a resume starts,
+// but they shouldn't silently stay off either. The review can leave one out.
+func (x *executor) restartWatchers() {
+	prev := x.opts.Resumed
+	if prev == nil || len(prev.Steps) != len(x.run.Steps) {
+		return
+	}
+	for i := 0; i < min(x.opts.StartAt, len(x.rb.Steps)); i++ {
+		s := x.rb.Steps[i]
+		if !s.Optional || !s.Background {
+			continue
+		}
+		if st := prev.Steps[i].Status; st == StatusFailed || st == StatusAborted {
+			if skip, _, _ := x.ctl.Get(i); skip {
+				x.ctl.Toggle("skip", i)
+			}
+		}
+	}
+}
+
 // carryResumed marks the steps this run leaves out that already finished,
 // in sequence, in the run it resumes.
 func (x *executor) carryResumed() {

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
@@ -81,9 +82,13 @@ func (t *Terminal) watch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Ctrl-C belongs to what's being watched, and for a moment after
+	// coming back (one meant for it can land just after).
+	release := t.interrupts.hold("(Ctrl-C went to the background step you were watching)")
 	defer func() {
 		_ = term.Restore(fd, old)
 		fmt.Fprintln(t.out, t.c("2", "\r\n  ── back in runnr"))
+		time.AfterFunc(ttyGrace, release)
 	}()
 	if w, h, err := term.GetSize(int(os.Stdout.Fd())); err == nil {
 		b.conn.SetSize(uint16(h), uint16(w))

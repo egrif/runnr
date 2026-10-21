@@ -175,7 +175,8 @@ function cxToolbar(state, live) {
   const r = state.run, q = state.question, ctl = state.controls || {};
   const btn = (act, label, cls = "", title = "", on = false) => `<button data-act="${esc(act)}" class="${cls} ${on ? "on" : ""}" title="${esc(title)}">${label}</button>`;
   if (!live) {
-    const stop = state.steps.findIndex((s) => !CX_DONE.includes(s.status));
+    // Optional steps don't decide where a resume starts (engine.ResumePoint).
+    const stop = state.steps.findIndex((s) => !s.optional && !CX_DONE.includes(s.status));
     return [
       ["failed", "aborted"].includes(r.status) && stop >= 0 ? btn("resume", "▶ Resume…", "primary", `Continue from step ${stop + 1}`) : "",
       btn("rerun", "↻ Run again…"),

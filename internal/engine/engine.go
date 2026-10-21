@@ -504,6 +504,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		}
 	}
 	x.skipResumedDone()
+	x.restartWatchers()
 	x.carryResumed()
 	x.adoptBackground()
 	x.save()

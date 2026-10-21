@@ -145,3 +145,30 @@ steps:
 		t.Fatalf("%s %s", run.Status, statuses(run))
 	}
 }
+
+// On a resume, an optional background step before the resume point that
+// didn't finish (a watcher that exited) runs again; one that finished, or
+// a step that isn't optional or in the background, doesn't.
+func TestResumeRestartsWatchers(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - {name: watcher, run: 'echo watching', background: true, optional: true}
+  - {name: other optional, run: 'echo other', optional: true}
+  - {name: a, run: 'true'}
+  - {name: b, run: 'echo b-ran'}
+`)
+	prev := &Run{ID: "prev", Status: StatusFailed}
+	for i, st := range []Status{StatusFailed, StatusFailed, StatusSucceeded, StatusFailed} {
+		prev.Steps = append(prev.Steps, StepResult{Index: i, Name: rb.Steps[i].Name, Status: st, Optional: rb.Steps[i].Optional})
+	}
+	start := ResumePoint(prev)
+	if start != 3 {
+		t.Fatalf("resume point %d", start)
+	}
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{StartAt: start, Resumed: prev, CarryDone: true})
+	if run.Status != StatusSucceeded || statuses(run) != "succeeded,skipped,skipped,succeeded" {
+		t.Fatalf("%s %s %q", run.Status, statuses(run), ui.output)
+	}
+}
