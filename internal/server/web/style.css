@@ -650,3 +650,11 @@ table.kv.cx-kv { width: auto; }
 .cx-tag { font-size: 10px; border: 1px solid var(--muted); border-radius: 4px; padding: 0 3px; }
 .cx-bg .cx-pane-head, .cx-fg .cx-tabs { background: #15171c; color: #e4e6eb; border-bottom-color: #2c2e35; }
 .cx-bg .cx-pane-head .link { color: #8fb4ff; }
+.cx-step.excluded { opacity: .45; }
+.cx-step.excluded .nm { text-decoration: line-through; }
+.cx-inputs h4, .cx-stepopts h4 { margin: 0 0 8px; }
+.cx-stepopts .check { display: flex; margin: 4px 0; font-weight: 400; }
+.cx-stepopts .row { gap: 6px; margin-top: 8px; }
+.cx-action-body .card { margin-bottom: 10px; }
+.cx-toolbar button[disabled] { opacity: .45; }
+nav.tabs .tab-console { margin-left: auto; }

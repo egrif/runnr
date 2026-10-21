@@ -145,6 +145,7 @@ async function route() {
   renderSidebar();
   let m;
   try {
+    if ((m = h.match(/^#\/runbooks\/([^/?]+)\/console(?:\?(.*))?$/))) { runView("console"); return await viewConsoleLaunch(decodeURIComponent(m[1]), new URLSearchParams(m[2] || "")); }
     if ((m = h.match(/^#\/runbooks\/([^/?]+)(?:\/(edit|tests))?(?:\?(.*))?$/))) return await viewRunbook(decodeURIComponent(m[1]), m[2] || "run", new URLSearchParams(m[3] || ""));
     if ((m = h.match(/^#\/runs\/([^/]+)\/console$/))) { runView("console"); return await viewConsole(decodeURIComponent(m[1])); }
     if ((m = h.match(/^#\/runs\/([^/]+)$/))) {
@@ -194,6 +195,7 @@ async function viewRunbook(name, tab, query) {
       <a href="${href}/edit" class="${tab === "edit" ? "active" : ""}">Edit</a>
       <a href="${href}/tests" class="${tab === "tests" ? "active" : ""}">Tests</a>
       <a href="#/history?runbook=${encodeURIComponent(name)}">History</a>
+      <a href="${href}/console" class="tab-console" title="Set up a run and run it in the console: steps, definitions, what's happening and background steps on one screen">▣ Console</a>
     </nav>
     <section id="tab"></section>`;
   bindMembership(main, name, () => route());

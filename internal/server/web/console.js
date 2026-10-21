@@ -231,8 +231,8 @@ function cxBindTop(state, el, live) {
       switch (act) {
         case "focus-question": return main.querySelector(".cx-action .question input, .cx-action .question select, .cx-action .question button")?.focus();
         case "abort": return abortRun(state);
-        case "resume": location.hash = `#/runbooks/${enc(r.runbook)}?resume=${enc(r.id)}`; return;
-        case "rerun": location.hash = `#/runbooks/${enc(r.runbook)}?rerun=${enc(r.id)}`; return;
+        case "resume": location.hash = `#/runbooks/${enc(r.runbook)}/console?resume=${enc(r.id)}`; return;
+        case "rerun": location.hash = `#/runbooks/${enc(r.runbook)}/console?rerun=${enc(r.id)}`; return;
         case "raw": return cxRawLog(state);
         case "save-edits": {
           if (!confirm(`Save this run's step edits as a new version of “${r.runbook}”?\nThe YAML is reformatted, so comments in it are dropped.`)) return;
@@ -305,7 +305,8 @@ function cxRenderList(state) {
   const w = state.run.window;
   const inWin = (i) => w && w.open_step >= 0 && i >= w.open_step && (w.close_step < 0 || i <= w.close_step);
   let html = `<div class="cx-list-head"><b>Steps</b><span class="spacer"></span>
-    <label class="small" title="Keep the step the run is on selected"><input type="checkbox" data-follow ${state.follow ? "checked" : ""}> follow the run</label></div><ol>`;
+    ${state.launch ? `<span class="muted small">${state.include.filter(Boolean).length} of ${state.steps.length} included</span>`
+      : `<label class="small" title="Keep the step the run is on selected"><input type="checkbox" data-follow ${state.follow ? "checked" : ""}> follow the run</label>`}</div><ol>`;
   state.steps.forEach((s, i) => {
     if (s.section && (i === 0 || state.steps[i - 1].section !== s.section)) {
       const members = state.steps.filter((x) => x.section === s.section);
@@ -316,13 +317,15 @@ function cxRenderList(state) {
     }
     const v = state.plan?.steps?.[i] || {};
     const waiting = state.question?.step === i;
-    const cls = [`st-${s.status}`, waiting && "waiting", i === sel && "sel", i === cur && "cur", inWin(i) && "in-window", s.note === "before start step" && "dim"].filter(Boolean).join(" ");
+    const cls = [`st-${s.status}`, state.include && !state.include[i] && "excluded", waiting && "waiting", i === sel && "sel", i === cur && "cur", inWin(i) && "in-window", s.note === "before start step" && "dim"].filter(Boolean).join(" ");
     const marks = [
       s.status === "background" || v.background ? `<span title="Runs in the background">◐</span>` : "",
       v.confirm_typing ? `<span class="cx-tag" title="Confirmed by typing ${esc(v.confirm_typing)}">type</span>` : v.dangerous ? `<span title="Dangerous">⚠</span>` : "",
       s.optional ? `<span title="Optional">◇</span>` : "",
       s.edited ? `<span title="Changed in this run">✎</span>` : "",
       changed.has(i + 1) ? `<span class="cx-new" title="The runbook's newer version changes this step">new</span>` : "",
+      state.before?.has(i) ? `<span title="Pauses before this step">⏸↑</span>` : "",
+      state.after?.has(i) ? `<span title="Pauses after this step">⏸↓</span>` : "",
     ].join("");
     const right = s.started && !s.started.startsWith("0001") ? (duration(s.started, s.ended) || "") : v.offset ? `T${esc(v.offset)}` : "";
     html += `<li class="cx-step ${cls}" data-i="${i}" title="${esc(`${i + 1}. ${s.name}${s.note ? ` (${s.note})` : ""}`)}">
@@ -332,10 +335,10 @@ function cxRenderList(state) {
   el.innerHTML = html + "</ol>";
   el.scrollTop = keep;
   el.querySelectorAll(".cx-step").forEach((li) => (li.onclick = () => cxSelect(state, +li.dataset.i)));
-  el.querySelector("[data-follow]").onchange = (e) => {
+  el.querySelector("[data-follow]")?.addEventListener("change", (e) => {
     state.follow = e.target.checked;
     if (state.follow) cxSelect(state, Math.max(0, cxCurrent(state)), true);
-  };
+  });
   // Keep the run's step in view while following.
   if (state.follow && cur >= 0) el.querySelector(`.cx-step[data-i="${cur}"]`)?.scrollIntoView({ block: "nearest" });
 }
@@ -345,7 +348,7 @@ function cxSelect(state, i, follow = false) {
   state.editing = null;
   state.selected = i;
   state.follow = follow || i === cxCurrent(state);
-  cxRender(state);
+  (state.render || cxRender)(state);
 }
 
 // ---------- details: the step as defined (editable while live) ----------
@@ -588,3 +591,189 @@ setInterval(() => {
     el.textContent = fmtOffset(sec, false);
   });
 }, 1000);
+
+// ---------- before the run: the launch console ----------
+
+// viewConsoleLaunch (#/runbooks/{name}/console, ?resume= or ?rerun= a run)
+// is the console before a run exists: the inputs and how to run it, which
+// steps to include and where to pause, and each step as it will run with
+// these inputs. Nothing runs until Start.
+async function viewConsoleLaunch(name, query) {
+  const mode = query.get("resume") ? "resume" : query.get("rerun") ? "rerun" : "run";
+  const fromId = query.get("resume") || query.get("rerun") || "";
+  const data = await api("GET", `/api/runbooks/${enc(name)}`);
+  const rb = data.runbook;
+  if (!rb) throw new Error(`${name} isn't valid: ${data.error || "fix it in the editor"}`);
+  const prev = fromId ? (await api("GET", `/api/runs/${enc(fromId)}`)).run : null;
+  const state = {
+    launch: true, mode, prev, rb, version: data.version, console: true,
+    run: { runbook: name, status: "pending", window: rb.maintenance_window ? { target: rb.maintenance_window.target } : null },
+    steps: rb.steps.map((s) => ({ name: s.name, section: s.section, status: "pending", kind: s.ways ? "ways" : s.checks ? "checks" : s.manual ? "manual" : "run", optional: s.optional, log: [] })),
+    include: rb.steps.map((s, i) => mode !== "resume" || !!s.always || !CX_DONE.includes(prev?.steps[i]?.status)),
+    before: new Set(), after: new Set(), selected: 0, follow: false, sizes: cxSizes(),
+    opts: { unattended: false, step: false, yes: false, dry: false }, vars: {},
+  };
+  // Prefill: the run being resumed or rerun has the inputs (secrets aside).
+  for (const i of rb.inputs || []) {
+    const v = prev?.inputs?.[i.name];
+    state.vars[i.name] = v && v !== "****" ? v : "";
+  }
+  state.render = cxLaunchRender;
+  document.body.classList.add("console-mode");
+  main.innerHTML = `
+    <div class="cx">
+      <header class="cx-top"></header>
+      <div class="cx-body" style="--cx-left:${state.sizes.left}px">
+        <nav class="cx-list"></nav>
+        <div class="cx-gutter-v" data-gutter="left" title="Drag to resize"></div>
+        <div class="cx-right">
+          <section class="cx-pane cx-details"><div class="cx-pane-head"></div><div class="cx-pane-body"></div></section>
+          <div class="cx-gutter-h" data-gutter="details-action"></div>
+          <section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-term"></div></div></div></section>
+          <div class="cx-gutter-h" data-gutter="action-bg" hidden></div>
+          <section class="cx-pane cx-bg" hidden><div class="cx-pane-head"><div class="cx-tabs"></div></div><div class="cx-pane-body cx-term"></div></section>
+        </div>
+      </div>
+    </div>`;
+  cxBindGutters(state);
+  let t;
+  state.refresh = () => {
+    clearTimeout(t);
+    t = setTimeout(async () => {
+      try {
+        const steps = (await api("POST", "/api/preview", { runbook: name, vars: cxLaunchVars(state), from_run: mode === "resume" ? fromId : "" })).steps;
+        state.plan = { steps };
+        cxRenderList(state);
+        cxRenderDetails(state);
+      } catch (e) { toast(e.message); }
+    }, 300);
+  };
+  cxLaunchRender(state);
+  cxLaunchRenderAction(state, true);
+  state.refresh();
+}
+
+function cxLaunchVars(state) {
+  const out = {};
+  for (const i of state.rb.inputs || []) {
+    const v = state.vars[i.name] ?? "";
+    if (!(i.secret && v === "")) out[i.name] = v; // blank secrets: asked for when the run gets to them
+  }
+  return out;
+}
+
+function cxLaunchRender(state) {
+  cxLaunchRenderTop(state);
+  cxRenderList(state);
+  cxRenderDetails(state);
+  cxLaunchRenderAction(state, false);
+  cxLayout(state);
+}
+
+function cxLaunchRenderTop(state) {
+  const { rb, mode, prev, opts } = state;
+  const n = state.include.filter(Boolean).length;
+  const what = { run: "Start run", rerun: "Run again", resume: "Resume" }[mode];
+  const el = main.querySelector(".cx-top");
+  const tog = (k, label, title, dis = false) => `<button data-opt="${k}" class="${opts[k] ? "on" : ""}" title="${esc(title)}" ${dis ? "disabled" : ""}>${label}</button>`;
+  el.innerHTML = `
+    <div class="cx-title">
+      <a href="#/runbooks/${enc(rb.name)}" class="cx-back" title="The runbook's page">☰</a>
+      <h1><a href="#/runbooks/${enc(rb.name)}">${esc(rb.name)}</a></h1>
+      <span class="muted">v${state.version} · ${esc((rb.description || "").split("\n")[0])}</span>
+      <span class="spacer"></span>
+      <span class="badge">○ not started</span>
+    </div>
+    <div class="cx-status">
+      <span class="cx-at">${mode === "run" ? "A new run" : `${mode === "resume" ? "Resuming" : "Running again"} <a href="#/runs/${enc(prev.id)}/console">${esc(prev.id)}</a> (${esc(prev.status)})${mode === "resume" ? ": steps that finished are left out" : ""}`}</span>
+      <span class="cx-chip">${n} of ${state.steps.length} steps</span>
+      ${rb.maintenance_window ? `<span class="cx-chip cx-window muted">Maintenance window${rb.maintenance_window.target ? `, target ${esc(rb.maintenance_window.target)}` : ""}</span>` : ""}
+    </div>
+    <div class="cx-toolbar">
+      <button class="primary" data-start>▶ ${what}</button>
+      <span class="cx-sep"></span>
+      ${tog("unattended", "Unattended", "Nobody answers: inputs come from here or defaults, and any failure ends the run")}
+      ${tog("step", "⏯ Step through", "Pause before every step", opts.unattended)}
+      ${tog("yes", "Auto-approve", "Approve confirm-gated steps (unattended runs)", !opts.unattended)}
+      ${tog("dry", "Dry run", "Show what each step would run, without running it")}
+      <span class="spacer"></span>
+      <a class="button" href="#/runbooks/${enc(rb.name)}/edit">Edit the runbook</a>
+    </div>`;
+  el.querySelectorAll("[data-opt]").forEach((b) => (b.onclick = () => { opts[b.dataset.opt] = !opts[b.dataset.opt]; cxLaunchRenderTop(state); }));
+  el.querySelector("[data-start]").onclick = () => cxLaunchStart(state);
+}
+
+// The action pane, before the run: the inputs, and the selected step's
+// include and pause settings. The inputs form is kept as typed (rebuilt
+// only when asked), so re-rendering doesn't lose focus.
+function cxLaunchRenderAction(state, rebuild) {
+  const pane = main.querySelector(".cx-action");
+  const head = pane.querySelector(".cx-pane-head"), body = pane.querySelector(".cx-action-body");
+  const i = state.selected, s = state.steps[i];
+  head.innerHTML = `<b>Before the run</b><span class="spacer"></span><span class="muted small">nothing runs until ${esc({ run: "Start run", rerun: "Run again", resume: "Resume" }[state.mode])}</span>`;
+  if (rebuild || !body.querySelector(".cx-inputs")) {
+    const inputs = state.rb.inputs || [];
+    body.innerHTML = `
+      <div class="card cx-inputs">
+        <h4>Inputs</h4>
+        ${inputs.length ? `<div class="form-grid">${inputs.map((inp) => {
+          const v = state.vars[inp.name] || "";
+          const ctl = inp.choices?.length
+            ? `<select name="${esc(inp.name)}">${!inp.default ? `<option value=""></option>` : ""}${inp.choices.map((c) => `<option ${c === (v || inp.default) ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`
+            : `<input name="${esc(inp.name)}" type="${inp.secret ? "password" : "text"}" value="${esc(v)}" placeholder="${esc(inp.default || "")}" autocomplete="off">`;
+          const hint = [inp.description, inp.secret && "secret: not stored; leave blank to be asked when it's needed"].filter(Boolean).join(" · ");
+          return `<label>${esc(inp.name)}${inp.required ? " *" : ""}</label>${ctl}${hint ? `<div class="hint">${esc(hint)}</div>` : ""}`;
+        }).join("")}</div>` : `<p class="muted">This runbook takes no inputs.</p>`}
+      </div>
+      <div class="card cx-stepopts"></div>`;
+    body.querySelectorAll(".cx-inputs [name]").forEach((f) => (f.oninput = f.onchange = () => { state.vars[f.name] = f.value; state.refresh(); }));
+  }
+  const so = body.querySelector(".cx-stepopts");
+  so.innerHTML = s ? `<h4>Step ${i + 1}: ${esc(s.name)}</h4>
+    <label class="check"><input type="checkbox" data-o="include" ${state.include[i] ? "checked" : ""}> Include it in the run</label>
+    <label class="check"><input type="checkbox" data-o="before" ${state.before.has(i) ? "checked" : ""}> Pause before it</label>
+    <label class="check"><input type="checkbox" data-o="after" ${state.after.has(i) ? "checked" : ""}> Pause after it, to check the result</label>
+    <div class="row small"><button data-all>Include all</button>${state.prev ? `<button data-unfinished>Only what didn't finish last time</button>` : ""}<button data-nopause>Clear pauses</button></div>
+    ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<p class="muted small">In ${esc(state.prev.id)}: ${ICONS[state.prev.steps[i].status] || ""} ${esc(state.prev.steps[i].status)}</p>` : ""}` : "";
+  so.querySelectorAll("[data-o]").forEach((c) => (c.onchange = () => {
+    const k = c.dataset.o;
+    if (k === "include") state.include[i] = c.checked;
+    else c.checked ? state[k].add(i) : state[k].delete(i);
+    cxRenderList(state);
+    cxLaunchRenderTop(state);
+  }));
+  so.querySelector("[data-all]").onclick = () => { state.include = state.steps.map(() => true); cxLaunchRender(state); };
+  so.querySelector("[data-nopause]").onclick = () => { state.before.clear(); state.after.clear(); cxLaunchRender(state); };
+  so.querySelector("[data-unfinished]")?.addEventListener("click", () => {
+    state.include = state.rb.steps.map((st, k) => !!st.always || !CX_DONE.includes(state.prev.steps[k]?.status));
+    cxLaunchRender(state);
+  });
+}
+
+async function cxLaunchStart(state) {
+  const { rb, opts, mode, prev } = state;
+  const missing = (rb.inputs || []).filter((i) => i.required && !i.default && !i.secret && !(state.vars[i.name] || "").trim());
+  if (missing.length) {
+    toast(`Fill in ${missing.map((i) => i.name).join(", ")} first`);
+    return main.querySelector(`.cx-inputs [name="${missing[0].name}"]`)?.focus();
+  }
+  const nums = (pred) => rb.steps.map((_, i) => i).filter(pred).map((i) => i + 1);
+  const body = {
+    vars: cxLaunchVars(state), unattended: opts.unattended, yes: opts.yes, dry_run: opts.dry, step_mode: opts.step && !opts.unattended,
+    skip: nums((i) => !state.include[i]), pause_before: nums((i) => state.before.has(i)), pause_after: nums((i) => state.after.has(i)),
+  };
+  if (opts.unattended) {
+    const ch = rb.steps.map((s, i) => i).filter((i) => state.include[i] && rb.steps[i].choose && (rb.steps[i].ways || []).length > 1);
+    if (ch.length) {
+      if (!confirm(`Steps ${ch.map((i) => i + 1).join(", ")} normally ask which way to do them. Unattended, they'll use their preferred way. Start anyway?`)) return;
+      body.use_preferred = true;
+    }
+  }
+  try {
+    const { id } = mode === "resume"
+      ? await api("POST", `/api/runs/${enc(prev.id)}/resume`, body)
+      : await api("POST", "/api/runs", { ...body, runbook: rb.name, previous: prev?.id || "" });
+    runView("console");
+    location.hash = `#/runs/${enc(id)}/console`;
+  } catch (e) { toast(e.message); }
+}
