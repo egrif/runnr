@@ -67,7 +67,8 @@ type termSession struct {
 	transcript string
 }
 
-// startTerm starts command (or $SHELL if "") on a pty connected to conn and
+// startTerm starts command (or, if "", an interactive shell: shell if
+// given, else the runbook's or $SHELL) on a pty connected to conn and
 // returns at once; wait for it with wait. conn is closed when it ends.
 func (x *executor) startTerm(ctx context.Context, shell, command string, extra []string, dir string, conn TermConn) (*termSession, error) {
 	var cmd *exec.Cmd
@@ -75,7 +76,7 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 	if command == "" {
 		var shellEnv []string
 		var err error
-		if cmd, shellEnv, cleanup, err = x.interactiveShell(); err != nil {
+		if cmd, shellEnv, cleanup, err = x.interactiveShell(shell); err != nil {
 			return nil, err
 		}
 		extra = append(extra, shellEnv...)

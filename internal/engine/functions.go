@@ -54,11 +54,11 @@ func (x *executor) setupFunctions() error {
 
 func (x *executor) Functions() []FuncInfo { return x.functions }
 
-// interactiveShell is the runbook's shell (else the operator's $SHELL),
-// interactive, with their config for it loaded and then the run's
-// functions. done cleans up afterwards.
-func (x *executor) interactiveShell() (cmd *exec.Cmd, env []string, done func(), err error) {
-	sh := interactiveShellName(x.rb.Shell)
+// interactiveShell is shell if given, else the runbook's (else the
+// operator's $SHELL), interactive, with their config for it loaded and then
+// the run's functions. done cleans up afterwards.
+func (x *executor) interactiveShell(shell string) (cmd *exec.Cmd, env []string, done func(), err error) {
+	sh := interactiveShellName(nonEmpty(shell, x.rb.Shell))
 	done = func() {}
 	if x.funcFile == "" {
 		return x.command(context.Background(), sh), nil, done, nil
@@ -94,6 +94,14 @@ func (x *executor) interactiveShell() (cmd *exec.Cmd, env []string, done func(),
 			return nil, nil, done, err
 		}
 		return x.command(context.Background(), sh, "--rcfile", rc, "-i"), nil, done, nil
+	case "sh", "dash", "ksh":
+		// An interactive POSIX shell reads $ENV: the operator's (if any), then the functions.
+		rc := filepath.Join(dir, "shrc")
+		body := `[ -n "$RUNNR_ENV" ] && [ -f "$RUNNR_ENV" ] && . "$RUNNR_ENV"; . "$RUNNR_FUNCTIONS"` + "\n"
+		if err := os.WriteFile(rc, []byte(body), 0o600); err != nil {
+			return nil, nil, done, err
+		}
+		return x.command(context.Background(), sh, "-i"), []string{"ENV=" + rc, "RUNNR_ENV=" + os.Getenv("ENV")}, done, nil
 	}
 	// Other shells: the functions are in $RUNNR_FUNCTIONS to source by hand.
 	return x.command(context.Background(), sh), nil, done, nil

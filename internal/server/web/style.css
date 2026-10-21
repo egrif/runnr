@@ -699,3 +699,9 @@ dialog.fn-picker input[type=search] { width: 100%; margin: 8px 0; }
 .term-box .term-body { height: 300px; min-height: 120px; resize: vertical; overflow: hidden; padding: 4px; }
 .term-box .term-pane { height: 100%; }
 .term-box.ended .term-dot { background: var(--muted); }
+.cx-act-tabs { margin-left: 6px; }
+.cx-act-tabs button { padding: 2px 10px; font-size: 12px; }
+.cx-action .cx-pane-body > [hidden] { display: none; }
+.term-tab .term-x { background: none; border: none; color: inherit; padding: 0 0 0 6px; cursor: pointer; opacity: .6; font-size: 11px; }
+.term-tab .term-x:hover { opacity: 1; }
+.cx-bg .term-tab { cursor: pointer; }

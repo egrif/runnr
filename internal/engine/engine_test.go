@@ -978,7 +978,8 @@ func TestFunctionsInShells(t *testing.T) {
 			t.Setenv("HOME", home)
 			t.Setenv("ZDOTDIR", "")
 			t.Setenv("SHELL", sh)
-			rb := mustParse(t, "name: t\nfunctions:\n  greet: {body: 'echo \"hello, $1\"'}\nsteps:\n  - {name: a, run: 'true'}\n")
+			// A shell at a step is the shell the step runs in (here, the runbook's).
+			rb := mustParse(t, "name: t\nshell: "+sh+"\nfunctions:\n  greet: {body: 'echo \"hello, $1\"'}\nsteps:\n  - {name: a, run: 'true'}\n")
 			ui := &stepper{decisions: []StepDecision{StepRun}, shellAt: "a", keys: "greet shell; myalias_ok; exit\n"}
 			run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Controls: NewControls(ControlsView{StepAll: true})})
 			if run.Status != StatusSucceeded || len(run.Steps[0].Shells) != 1 {

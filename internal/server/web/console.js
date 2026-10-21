@@ -557,8 +557,12 @@ function cxRenderAction(state) {
   const scroll = body.querySelector("pre.log");
   const atEnd = !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 8;
   const cur = cxCurrent(state);
+  // A step's terminal (a tty step, or a shell opened at it) is a tab beside Now.
+  const showFg = state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
+  const onTerm = showFg && state.actionTab === "term";
   head.innerHTML = `<b>${s?.status === "pending" ? "Will do" : s?.status === "running" || q?.step === i ? "Now" : "What happened"}</b>
     ${q?.step === i ? `<span class="badge waiting">⏸ waiting for you</span>` : s ? `<span class="badge s-${esc(s.status)}">${ICONS[s.status] || ""} ${esc(s.status)}</span>` : ""}
+    ${showFg ? `<div class="seg cx-act-tabs"><button data-atab="now" class="${onTerm ? "" : "on"}" title="The step: its question and output">Now${q?.step === i ? " ●" : ""}</button><button data-atab="term" class="${onTerm ? "on" : ""}" title="${esc(state.fg.title)}">⌨ ${state.fg.shell ? "Shell" : "Terminal"}</button></div>` : ""}
     <span class="spacer"></span>
     ${i !== cur && cur >= 0 ? `<button class="link" data-goto="${cur}">→ step ${cur + 1}, where the run is</button>` : ""}
     ${state.live ? `<button class="link" data-note="${i + 1}">✎ note</button>` : ""}`;
@@ -587,10 +591,15 @@ function cxRenderAction(state) {
     try { pushNote(state, i, await api("POST", `/api/runs/${enc(state.run.id)}/notes`, { step: i + 1, text, author: author() })); cxRender(state); } catch (e) { toast(e.message); }
   });
   // A step's terminal shows in this pane when that step is selected (or it's the run's step).
+  head.querySelectorAll("[data-atab]").forEach((b) => (b.onclick = () => {
+    state.actionTab = b.dataset.atab;
+    cxRenderAction(state);
+    if (state.actionTab === "term") state.fg?.xt.focus();
+  }));
   const fg = main.querySelector(".cx-fg");
-  const showFg = state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
-  fg.hidden = !showFg;
-  if (showFg) {
+  body.hidden = onTerm;
+  fg.hidden = !onTerm;
+  if (onTerm) {
     const s = state.fg;
     const bar = fg.querySelector(".cx-tabs");
     if (bar && bar.dataset.for !== s.id) {
@@ -626,18 +635,21 @@ function cxHostTerms(state) {
   term.host = {
     started(s) {
       if (s.background) { state.bgActive = s.id; cxRenderBg(state); }
-      else { state.fg = s; cxRenderAction(state); cxLayout(state); s.xt.focus(); }
+      else { state.fg = s; state.actionTab = "term"; cxRenderAction(state); cxLayout(state); s.xt.focus(); }
     },
     ended(s) {
-      if (s.background) cxRenderBg(state);
-      else if (state.fg === s) {
-        // Recorded with the step: the log shows it. Leave it a moment.
-        setTimeout(() => { if (state.fg === s) { state.fg = null; cxRenderAction(state); cxLayout(state); } }, 1500);
+      if (s.background) {
+        // Done: its output is recorded with the step. Gone from the pane shortly.
+        cxRenderBg(state);
+        setTimeout(() => cxRemoveBg(state, s), 3000);
+      } else if (state.fg === s) {
+        // Recorded with the step: the log shows it. Leave it a moment, then back to Now.
+        setTimeout(() => { if (state.fg === s) { state.fg = null; state.actionTab = "now"; cxRenderAction(state); cxLayout(state); } }, 1500);
       }
     },
     show(s) {
       if (s.background) { state.bgActive = s.id; cxRenderBg(state); }
-      else { state.fg = s; cxRenderAction(state); }
+      else { state.fg = s; state.actionTab = "term"; cxRenderAction(state); s.xt.focus(); }
     },
   };
 }
@@ -659,16 +671,34 @@ function cxShowSession(s, container) {
 function cxRenderBg(state) {
   const pane = main.querySelector(".cx-bg");
   const bgs = [...term.sessions.values()].filter((s) => s.background);
-  pane.querySelector(".cx-tabs").innerHTML = bgs.map((s) => `<button class="term-tab ${s.id === state.bgActive ? "on" : ""} ${s.ended ? "ended" : ""}" data-bg="${esc(s.id)}" title="${esc(s.title)}"><span class="term-dot"></span>${esc(s.title.replace(/^background · /, ""))}</button>`).join("")
-    + `<span class="spacer"></span>${bgs.find((s) => s.id === state.bgActive && !s.ended) ? `<button class="link" data-end>End session</button>` : ""}`;
-  pane.querySelectorAll("[data-bg]").forEach((b) => (b.onclick = () => { state.bgActive = b.dataset.bg; cxRenderBg(state); }));
-  pane.querySelector("[data-end]")?.addEventListener("click", () => {
-    const s = term.sessions.get(state.bgActive);
-    if (s && confirm(`End “${s.title}”? It's hung up, like closing its terminal.`)) sendTerm(s, { end: true });
-  });
+  pane.querySelector(".cx-tabs").innerHTML = bgs.map((s) => `<span class="term-tab ${s.id === state.bgActive ? "on" : ""} ${s.ended ? "ended" : ""}" data-bg="${esc(s.id)}" title="${esc(s.title)}${s.ended ? " (ended)" : ""}"><span class="term-dot"></span>${esc(s.title.replace(/^background · /, ""))}
+      <button class="term-x" data-close-bg="${esc(s.id)}" title="${s.ended ? "Close" : "End it (hang up) and close"}">✕</button></span>`).join("");
+  pane.querySelectorAll("[data-bg]").forEach((b) => (b.onclick = (e) => {
+    if (e.target.closest("[data-close-bg]")) return;
+    state.bgActive = b.dataset.bg;
+    cxRenderBg(state);
+  }));
+  pane.querySelectorAll("[data-close-bg]").forEach((b) => (b.onclick = (e) => {
+    e.stopPropagation();
+    const s = term.sessions.get(b.dataset.closeBg);
+    if (!s) return;
+    if (s.ended) return cxRemoveBg(state, s);
+    if (confirm(`End “${s.title}”? It's hung up, like closing its terminal, and the run goes on without it.`)) sendTerm(s, { end: true });
+  }));
   const s = term.sessions.get(state.bgActive) || bgs[bgs.length - 1];
   if (s) { state.bgActive = s.id; cxShowSession(s, pane.querySelector(".cx-term")); }
   cxLayout(state);
+}
+
+// cxRemoveBg takes an ended background session out of the pane (its output
+// is recorded with its step).
+function cxRemoveBg(state, s) {
+  if (!term.sessions.has(s.id)) return;
+  term.sessions.delete(s.id);
+  s.el.remove();
+  s.xt.dispose();
+  if (state.bgActive === s.id) state.bgActive = null;
+  cxRenderBg(state);
 }
 
 // ---------- layout: resizable panes ----------

@@ -162,7 +162,13 @@ func (x *executor) openShell(ctx context.Context, idx int) error {
 	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
 	extra = append(extra, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile, "RUNNR_SHELL=1")
 
-	_, transcript, err := x.inTerminal(ctx, idx, title, "", "", extra, dir)
+	// At a step, the shell the step runs in (its own, else the runbook's,
+	// else sh), so what works in the shell works in the step.
+	shell := ""
+	if idx >= 0 && idx < len(x.rb.Steps) {
+		shell = nonEmpty(step.Shell, nonEmpty(x.rb.Shell, "sh"))
+	}
+	_, transcript, err := x.inTerminal(ctx, idx, title, shell, "", extra, dir)
 	if t := strings.TrimSpace(x.mask(transcript)); t != "" && idx >= 0 {
 		x.run.Steps[idx].Shells = append(x.run.Steps[idx].Shells, t)
 		x.save()
