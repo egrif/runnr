@@ -14,6 +14,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
       <button id="validate">Validate</button>
       ${name ? `<button id="run-tests" title="Run this runbook's tests against what's in the editor, before saving">▶ Run tests</button>` : ""}
       <div class="seg"><button id="as-struct">Structured</button><button id="as-yaml" class="on">YAML</button></div>
+      <button type="button" data-fnpick="#yaml" class="fn-pick-yaml" title="Insert a function at the cursor in the YAML (Ctrl+Shift+F)">ƒ Insert function</button>
       ${version ? `<span class="muted">version ${version} · saved ${new Date(updatedAt).toLocaleString()}</span>` : ""}
       <span class="spacer"></span>
       ${name ? `<button class="danger" id="delete">Delete</button>` : ""}
@@ -26,6 +27,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
     </div>
     <div id="struct-pane" hidden></div>`;
   const ta = $("#yaml");
+  setFnContext(() => (ed.mode === "struct" ? ed.doc : ta.value));
   const show = (res) => {
     const v = $("#validation");
     v.className = "validation " + (res.ok ? "ok" : "bad");
@@ -262,7 +264,7 @@ function control(path, kind, val, opts = {}) {
   const ph = opts.placeholder ? ` placeholder="${esc(opts.placeholder)}"` : "";
   switch (kind) {
     case "area": return `<textarea data-path="${p}" rows="${opts.rows || 2}"${ph}>${esc(val || "")}</textarea>`;
-    case "code": return `<textarea class="code" data-path="${p}" rows="${opts.rows || Math.min(24, Math.max(6, String(val || "").split("\n").length + 2))}" spellcheck="false"${ph}>${esc(val || "")}</textarea>`;
+    case "code": return `<div class="code-wrap"><textarea class="code" data-path="${p}" rows="${opts.rows || Math.min(24, Math.max(6, String(val || "").split("\n").length + 2))}" spellcheck="false"${ph}>${esc(val || "")}</textarea>${fnPickBtn()}</div>`;
     case "int": return `<input type="number" min="0" data-path="${p}" data-kind="int" value="${esc(val ?? "")}"${ph}>`;
     case "bool": return `<input type="checkbox" data-path="${p}" ${val ? "checked" : ""}>`;
     case "list": return `<input data-path="${p}" data-kind="list" value="${esc((val || []).join(", "))}"${ph}>`;
@@ -1120,12 +1122,19 @@ function renderStepEditor(el, { doc, comments, i, yaml }) {
     <div class="row editor-bar se1-bar">
       <div class="seg"><button data-m="struct" class="on">Structured</button><button data-m="yaml">YAML</button></div>
       <button data-validate title="Check the runbook with this step as edited">Validate</button>
+      <button type="button" class="fn-pick-yaml" data-fnpick-yaml title="Insert a function at the cursor (Ctrl+Shift+F)">ƒ Insert function</button>
       <span class="validation se1-v"></span>
     </div>
     <div class="se1-struct struct-pane"></div>
     <div class="se1-yaml" hidden><textarea class="editor cx-yaml" spellcheck="false"></textarea></div>`;
   ed.pane = el.querySelector(".se1-struct");
   const ta = el.querySelector("textarea"), v = el.querySelector(".se1-v");
+  setFnContext(() => doc);
+  // In the YAML view, its textarea; in the form, the code field last typed in.
+  el.querySelector("[data-fnpick-yaml]").onclick = () => {
+    const t = ed.mode === "yaml" ? ta : (fnPick.last && el.contains(fnPick.last) ? fnPick.last : el.querySelector(".se1-struct textarea.code"));
+    if (t) openFnPicker(t);
+  };
   const show = (res) => { v.className = "validation se1-v " + (res.ok ? "ok" : "bad"); v.textContent = res.ok ? "✔ valid" : res.error; };
   ta.onkeydown = (e) => { if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); } };
   // fromYAML takes the YAML view's text into the form's step.

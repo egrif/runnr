@@ -648,6 +648,7 @@ func (rb *Runbook) Validate() error {
 			errs = append(errs, err)
 		}
 	}
+	errs = append(errs, rb.zshOnlyErrors()...)
 	seen := map[string]bool{}
 	for i, in := range rb.Inputs {
 		if !identRe.MatchString(in.Name) {
