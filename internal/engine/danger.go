@@ -30,7 +30,8 @@ func inSequence(r StepResult) bool {
 	case StatusSucceeded, StatusForced, StatusBackground:
 		return true
 	case StatusSkipped:
-		return r.Note == "condition false" || r.Note == NoteCarried || strings.HasPrefix(r.Note, "auto-skipped")
+		return r.Note == "condition false" || r.Note == NoteCarried || strings.HasPrefix(r.Note, "auto-skipped") ||
+			strings.HasPrefix(r.Note, NoteSkipIf) // the work's already done
 	}
 	return false
 }
