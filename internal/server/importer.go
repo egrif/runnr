@@ -3,8 +3,13 @@ package server
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
 )
@@ -119,4 +124,81 @@ func (s *Server) importDoc(w http.ResponseWriter, r *http.Request) {
 		res["collection"] = col
 	}
 	writeJSON(w, http.StatusCreated, res)
+}
+
+// Importing a folder on this machine, as a project (see package project):
+//
+//	POST /api/import/scan     {dir, values, renames, include, skip} → the plan
+//	POST /api/import/project  {…, replace: [paths] | replace_all, collection} → the plan and what was done
+
+type projectReq struct {
+	Dir     string            `json:"dir"`
+	Values  map[string]string `json:"values"`
+	Renames map[string]string `json:"renames"`
+	Include []string          `json:"include"`
+	Skip    []string          `json:"skip"`
+	// Replace are the files (paths) to save as the next version of the
+	// one with their name; ReplaceAll, every such file.
+	Replace    []string `json:"replace"`
+	ReplaceAll bool     `json:"replace_all"`
+	Collection string   `json:"collection"`
+}
+
+func (s *Server) scanProject(req projectReq) (*project.Plan, error) {
+	if req.Dir == "" {
+		return nil, errors.New("give a folder")
+	}
+	return project.Scan(project.Options{Dir: expandHome(req.Dir), Values: req.Values, Renames: req.Renames, Include: req.Include, Skip: req.Skip, Lookup: project.StoreLookup(s.st)})
+}
+
+func (s *Server) importScan(w http.ResponseWriter, r *http.Request) {
+	var req projectReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	p, err := s.scanProject(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) importProject(w http.ResponseWriter, r *http.Request) {
+	var req projectReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	p, err := s.scanProject(req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	res := project.Apply(p, func(d project.Doc) bool { return req.ReplaceAll || slices.Contains(req.Replace, d.Path) }, project.StoreSaver(s.st))
+	if req.Collection != "" {
+		var names []string
+		for _, x := range res {
+			if x.Kind == project.Runbook && x.Status != "failed" && x.Status != "skipped" {
+				names = append(names, x.Name)
+			}
+		}
+		if len(names) > 0 {
+			if _, _, err := s.st.AddToCollection(req.Collection, true, names...); err != nil {
+				writeErr(w, err)
+				return
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plan": p, "results": res})
+}
+
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if h, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(h, strings.TrimPrefix(p, "~"))
+		}
+	}
+	return p
 }

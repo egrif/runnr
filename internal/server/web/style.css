@@ -773,3 +773,15 @@ dialog.import-dialog { width: min(640px, calc(100vw - 32px)); }
 .import-item input[data-as] { width: 16em; }
 .warn-text { color: var(--warn); }
 .ok-text { color: var(--ok, #2e8b57); }
+dialog.folder-import { width: min(920px, calc(100vw - 32px)); }
+.folder-import .imp-dir { flex: 1; }
+.folder-import .row { gap: 8px; }
+.folder-import h4 { margin: 14px 0 6px; }
+.imp-docs { width: 100%; border-collapse: collapse; }
+.imp-docs td { padding: 6px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.imp-docs tr.skipped td:not(:first-child) { opacity: .45; }
+.imp-docs .imp-name { width: 100%; font-weight: 600; }
+.imp-docs label.check { display: inline-flex; gap: 4px; align-items: center; margin-left: 6px; font-weight: 400; }
+.imp-vals input { width: 100%; min-width: 28em; }
+.imp-vals tr.needs code { color: var(--warn); font-weight: 700; }
+.imp-recent { flex-wrap: wrap; margin-top: 4px; }

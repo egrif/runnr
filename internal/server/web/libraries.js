@@ -16,7 +16,7 @@ async function viewLibraries() {
     </tbody></table>` : `<div class="empty">No libraries yet.</div>`}`;
   main.querySelectorAll("tr[data-lib]").forEach((tr) => (tr.onclick = () => (location.hash = `#/libraries/${enc(tr.dataset.lib)}`)));
   $("#new-lib").onclick = () => (location.hash = "#/libraries/new");
-  $("#import-lib").onclick = () => pickImportFiles();
+  $("#import-lib").onclick = () => openFolderImport();
 }
 
 async function viewLibrary(name) {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/egrif/runnr/internal/claude"
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/htmlview"
+	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/server"
@@ -281,55 +283,114 @@ func editLoop(st *store.Store, name string) error {
 }
 
 func importCmd(s func() *store.Store) *cobra.Command {
-	var force bool
+	var force, dry, noFound bool
 	var collection, as string
+	var sets, renames []string
 	cmd := &cobra.Command{
-		Use:   "import <file>...",
-		Short: "Validate and add runbook files to the library (- reads stdin)",
-		Long: `Validate and add runbook files to the library (- reads stdin).
+		Use:   "import <file|folder>...",
+		Short: "Add runbooks, libraries, fakes and test suites: files, or a project folder (- reads stdin)",
+		Long: `Add runnr files to the store: runbooks, function libraries, fake libraries
+and test suites. Give files, or a folder (its .yaml files, in subfolders
+too; other YAML is left alone). - reads a runbook from stdin.
 
-A runbook whose name is taken is refused, unless --force (it's saved as a
-new version of that one; the earlier versions are kept) or --as NAME
-(imported under another name). --collection also adds them to that
-collection (created if it doesn't exist).`,
+Placeholders, @NAME@, are filled in: @PROJECT_DIR@ is the folder (else the
+current directory), @REPO_ROOT@ its git root, others --set NAME=VALUE.
+
+Each file's references are checked: a runbook's libraries, a suite's
+runbook and fake libraries must be in the import, stored, or built in. A
+library that's missing but defined once elsewhere in the repository is
+imported too (--no-found leaves it out).
+
+A file whose name is taken is refused, unless --force (it's saved as the
+next version of that one; earlier versions are kept) or --rename
+NAME=NEW (imported as NEW; references to it in the other files follow).
+--as NEW renames a single file. Files are saved libraries first, then
+fakes, runbooks and suites; one that can't go in (an error, a placeholder
+without a value, a missing reference) is reported and left out.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if as != "" && len(args) != 1 {
-				return errors.New("--as renames one file: give one")
+			if len(args) == 1 && args[0] == "-" {
+				return importStdin(s(), force, collection)
 			}
+			o := project.Options{Values: map[string]string{}, Renames: map[string]string{}, Lookup: project.StoreLookup(s())}
+			for _, a := range args {
+				if st, err := os.Stat(a); err == nil && st.IsDir() {
+					if o.Dir != "" {
+						return errors.New("give one folder (and any files)")
+					}
+					o.Dir = a
+				} else {
+					o.Paths = append(o.Paths, a)
+				}
+			}
+			for _, kv := range sets {
+				k, v, ok := strings.Cut(kv, "=")
+				if !ok {
+					return fmt.Errorf("--set %s: want NAME=VALUE", kv)
+				}
+				o.Values[strings.Trim(k, "@")] = v
+			}
+			rn := map[string]string{}
+			for _, kv := range renames {
+				k, v, ok := strings.Cut(kv, "=")
+				if !ok {
+					return fmt.Errorf("--rename %s: want NAME=NEW", kv)
+				}
+				rn[k] = v
+			}
+			p, err := project.Scan(o)
+			if err != nil {
+				return err
+			}
+			if as != "" {
+				if len(p.Docs) != 1 {
+					return errors.New("--as renames one file: give one (or use --rename NAME=NEW)")
+				}
+				rn[p.Docs[0].Original] = as
+			}
+			// Renames by name, whatever the kind; libraries found elsewhere in the repository.
+			again := len(rn) > 0
+			for _, d := range p.Docs {
+				if v, ok := rn[d.Original]; ok {
+					o.Renames[d.Kind+":"+d.Original] = v
+				}
+				for _, r := range d.Refs {
+					if r.Found == "" && len(r.Candidates) == 1 && !noFound && !slices.Contains(o.Include, r.Candidates[0]) {
+						o.Include = append(o.Include, r.Candidates[0])
+						again = true
+					}
+				}
+			}
+			if again {
+				if p, err = project.Scan(o); err != nil {
+					return err
+				}
+			}
+			for _, d := range p.Docs {
+				if d.Included {
+					fmt.Printf("also importing %s (%s %s, needed here)\n", d.Rel, d.Kind, d.Name)
+				}
+			}
+			if dry {
+				return printPlan(p)
+			}
+			res := project.Apply(p, func(project.Doc) bool { return force }, project.StoreSaver(s()))
 			var failed bool
 			var imported []string
-			for _, f := range args {
-				var raw []byte
-				var err error
-				if f == "-" {
-					raw, err = io.ReadAll(os.Stdin)
-				} else {
-					raw, err = os.ReadFile(f)
+			for _, r := range res {
+				switch r.Status {
+				case "failed", "exists":
+					failed = true
+					fmt.Fprintln(os.Stderr, r)
+				default:
+					fmt.Println(r)
 				}
-				if err == nil && as != "" {
-					raw, err = runbook.SetName(raw, as)
+				if r.Kind == project.Runbook && r.Status != "failed" && r.Status != "skipped" {
+					imported = append(imported, r.Name)
 				}
-				var prev int
-				if rb, perr := runbook.Parse(raw); err == nil && perr == nil {
-					if d, lerr := s().Load(rb.Name); lerr == nil {
-						prev = d.Version
-					}
-				}
-				if err == nil {
-					var rb *runbook.Runbook
-					var ver int
-					if rb, ver, err = s().Save(raw, store.SaveOpts{Overwrite: force}); err == nil {
-						fmt.Println(importReport(f, rb.Name, ver, prev))
-						imported = append(imported, rb.Name)
-						continue
-					}
-					if !force && prev > 0 {
-						err = fmt.Errorf("%w (version %d): --force saves this as its next version, --as NAME imports it under another name", err, prev)
-					}
-				}
-				failed = true
-				fmt.Fprintf(os.Stderr, "%s:\n%s\n", f, indent(err.Error()))
+			}
+			if len(p.Unset) > 0 {
+				fmt.Fprintf(os.Stderr, "placeholders without a value (--set NAME=VALUE): %s\n", strings.Join(p.Unset, ", "))
 			}
 			if collection != "" && len(imported) > 0 {
 				_, created, err := s().AddToCollection(collection, true, imported...)
@@ -344,10 +405,72 @@ collection (created if it doesn't exist).`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "save over runbooks with the same name (as a new version)")
-	cmd.Flags().StringVar(&as, "as", "", "import the runbook under this name (its name: is changed)")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "save over files with the same name (as their next version)")
+	cmd.Flags().StringVar(&as, "as", "", "import a single file under this name (its name: is changed)")
+	cmd.Flags().StringArrayVar(&renames, "rename", nil, "import NAME as NEW (NAME=NEW; references to it follow)")
+	cmd.Flags().StringArrayVar(&sets, "set", nil, "a placeholder's value (NAME=VALUE, for @NAME@)")
+	cmd.Flags().BoolVar(&noFound, "no-found", false, "don't import missing libraries found elsewhere in the repository")
+	cmd.Flags().BoolVarP(&dry, "dry-run", "n", false, "say what would be imported, and change nothing")
 	cmd.Flags().StringVarP(&collection, "collection", "c", "", "add the imported runbooks to this collection")
 	return cmd
+}
+
+// printPlan says what an import would do.
+func printPlan(p *project.Plan) error {
+	fmt.Printf("folder %s", p.Dir)
+	if p.RepoRoot != "" {
+		fmt.Printf(" (repository %s)", p.RepoRoot)
+	}
+	fmt.Println()
+	for _, d := range p.Docs {
+		state := "new"
+		switch {
+		case d.Error != "":
+			state = "error: " + d.Error
+		case d.Same:
+			state = fmt.Sprintf("unchanged (version %d)", d.Version)
+		case d.Exists:
+			state = fmt.Sprintf("name taken (version %d)", d.Version)
+		}
+		fmt.Printf("  %-8s %-28s %s  %s\n", d.Kind, d.Name, d.Rel, state)
+		for _, r := range d.Refs {
+			if r.Found == "" {
+				fmt.Printf("           needs %s %s%s\n", r.Kind, r.Name, map[bool]string{true: " (found: " + strings.Join(r.Candidates, ", ") + ")"}[len(r.Candidates) > 0])
+			}
+		}
+	}
+	if len(p.Unset) > 0 {
+		fmt.Printf("placeholders without a value: %s\n", strings.Join(p.Unset, ", "))
+	}
+	return p.OK()
+}
+
+// importStdin imports one runbook from standard input.
+func importStdin(st *store.Store, force bool, collection string) error {
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return err
+	}
+	var prev int
+	if rb, err := runbook.Parse(raw); err == nil {
+		if d, err := st.Load(rb.Name); err == nil {
+			prev = d.Version
+		}
+	}
+	rb, ver, err := st.Save(raw, store.SaveOpts{Overwrite: force})
+	if err != nil {
+		if !force && prev > 0 {
+			err = fmt.Errorf("%w (version %d): --force saves this as its next version", err, prev)
+		}
+		return err
+	}
+	fmt.Println(importReport("-", rb.Name, ver, prev))
+	if collection != "" {
+		if _, _, err := st.AddToCollection(collection, true, rb.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func deleteCmd(s func() *store.Store) *cobra.Command {

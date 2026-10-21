@@ -133,7 +133,7 @@ function renderSidebar() {
 
 $("#filter").addEventListener("input", renderSidebar);
 $("#new-btn").addEventListener("click", () => (location.hash = "#/new"));
-$("#import-btn").addEventListener("click", () => pickImportFiles());
+$("#import-btn").addEventListener("click", () => openFolderImport());
 
 // ---------- router ----------
 

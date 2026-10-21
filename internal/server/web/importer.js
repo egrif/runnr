@@ -109,3 +109,129 @@ async function openImport(files, opts = {}) {
   };
   dlg.showModal();
 }
+
+// ---------- a project folder ----------
+
+// The folder import reads a folder on the machine runnr runs on (see
+// package project): runbooks, libraries, fakes and test suites, with
+// placeholders filled in and references checked. Every change rescans, so
+// what's shown is what Import will do.
+
+const IMP_DIRS = "runnr.importDirs";
+const impLoad = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || "null") ?? d; } catch { return d; } };
+const impSave = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const KIND_LABEL = { runbook: "runbook", library: "library", fakes: "fake library", suite: "test suite" };
+
+function openFolderImport(dir = "") {
+  const recent = impLoad(IMP_DIRS, []);
+  const st = { dir: dir || recent[0] || "", values: {}, renames: {}, include: [], skip: [], replace: new Set(), plan: null, results: null, autoIncluded: false };
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step import-dialog folder-import";
+  dlg.innerHTML = `<h3>Import a project folder</h3>
+    <p class="muted small">Its runbooks, libraries, fake libraries and test suites (in subfolders too), from the machine runnr runs on. Placeholders (<code>@NAME@</code>) are filled in, and references checked. <button class="link" data-upload>Upload files instead…</button></p>
+    <div class="row"><input class="imp-dir" placeholder="~/dev/my-repo/ops/my-project" spellcheck="false" value="${esc(st.dir)}"><button data-scan class="primary">Scan</button></div>
+    <div class="row imp-recent small">${recent.map((d) => `<button class="link" data-recent="${esc(d)}" title="${esc(d)}">${esc(d.split("/").slice(-2).join("/"))}</button>`).join(" · ")}</div>
+    <div class="imp-plan"></div>
+    <div class="error-text imp-error"></div>
+    <div class="row imp-actions" hidden>${colPicker("imp-col2", "No collection")}<span class="spacer"></span><button class="primary" data-ok>Import</button><button data-close>Cancel</button></div>`;
+  document.body.append(dlg);
+  const $d = (s) => dlg.querySelector(s);
+  const err = (m) => ($d(".imp-error").textContent = m || "");
+  $d("[data-upload]").onclick = () => { dlg.close(); pickImportFiles(); };
+  $d("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  $d("#imp-col2").onchange = (e) => { const v = pickedCol(e.target.value); if (v && ![...e.target.options].some((o) => o.value === v)) e.target.add(new Option(v, v), 1); e.target.value = v; };
+  dlg.querySelectorAll("[data-recent]").forEach((b) => (b.onclick = () => { $d(".imp-dir").value = b.dataset.recent; scan(true); }));
+  $d("[data-scan]").onclick = () => scan(true);
+  $d(".imp-dir").onkeydown = (e) => { if (e.key === "Enter") scan(true); };
+
+  const body = () => ({ dir: st.dir, values: st.values, renames: st.renames, include: st.include, skip: st.skip });
+  let seq = 0;
+  async function scan(fresh) {
+    if (fresh) {
+      st.dir = $d(".imp-dir").value.trim();
+      Object.assign(st, { values: impLoad(`runnr.importValues:${st.dir}`, {}), renames: {}, include: [], skip: [], replace: new Set(), results: null, autoIncluded: false });
+    }
+    if (!st.dir) return err("Give a folder");
+    const mine = ++seq;
+    err("");
+    try {
+      const plan = await api("POST", "/api/import/scan", body());
+      if (mine !== seq) return;
+      st.plan = plan;
+      if (fresh) impSave(IMP_DIRS, [st.dir, ...recent.filter((d) => d !== st.dir)].slice(0, 6));
+      // A library that's missing but defined once elsewhere in the repository comes along (it can be left out).
+      if (!st.autoIncluded) {
+        st.autoIncluded = true;
+        const found = plan.docs.flatMap((d) => d.refs || []).filter((r) => !r.found && r.candidates?.length === 1).map((r) => r.candidates[0]);
+        const add = [...new Set(found)].filter((c) => !st.include.includes(c));
+        if (add.length) { st.include.push(...add); return scan(false); }
+      }
+      draw();
+    } catch (e) { if (mine === seq) { st.plan = null; draw(); err(e.message); } }
+  }
+  let t;
+  const rescan = () => { clearTimeout(t); t = setTimeout(() => scan(false), 350); };
+
+  function draw() {
+    const p = st.plan;
+    $d(".imp-actions").hidden = !p;
+    if (!p) return ($d(".imp-plan").innerHTML = "");
+    const used = [...new Set(p.docs.flatMap((d) => d.placeholders || []))].sort();
+    const res = Object.fromEntries((st.results || []).map((r) => [r.rel, r]));
+    const neededBy = {};
+    for (const d of p.docs) for (const r of d.refs || []) (neededBy[`${r.kind}:${r.name}`] ||= []).push(d.name);
+    const row = (d) => {
+      const key = `${d.kind}:${d.original}`, skipped = st.skip.includes(d.path), r = res[d.rel];
+      const replaceBox = `<label class="check"><input type="checkbox" data-replace="${esc(d.path)}" ${st.replace.has(d.path) ? "checked" : ""}> save as version ${d.version + 1} (earlier versions are kept)</label>`;
+      let state;
+      if (d.error) state = `<span class="error-text">${esc(d.error)}</span>`;
+      else if (d.same) state = `<span class="muted">unchanged (version ${d.version})</span>`;
+      else if (d.exists) state = `<span class="warn-text">⚠ name taken: version ${d.version}, saved ${esc(new Date(d.updated_at).toLocaleString())}</span> ${replaceBox}`;
+      else state = `<span class="ok-text">new</span>${d.builtin ? ` <span class="warn-text">(takes the place of runnr's built-in library)</span>` : ""}`;
+      const unset = (d.placeholders || []).filter((k) => p.unset?.includes(k));
+      if (unset.length && !d.error) state += `<div class="small error-text">${unset.map((k) => `@${esc(k)}@`).join(", ")} needs a value (above)</div>`;
+      const missing = (d.refs || []).filter((x) => !x.found);
+      const refs = missing.map((x) => `<div class="small error-text">needs ${esc(KIND_LABEL[x.kind])} ${esc(x.name)}${x.candidates?.length ? `: ${x.candidates.map((c) => `<label class="check"><input type="checkbox" data-include="${esc(c)}" ${st.include.includes(c) ? "checked" : ""}> import ${esc(c.replace(p.repo_root + "/", ""))}</label>`).join(" ")}` : " (not in this folder, the repository or the store)"}</div>`).join("");
+      return `<tr class="${skipped ? "skipped" : ""}">
+        <td><input type="checkbox" data-take="${esc(d.path)}" ${skipped ? "" : "checked"} ${d.error ? "disabled" : ""} title="Import it"></td>
+        <td class="small">${esc(KIND_LABEL[d.kind] || "")}</td>
+        <td>${d.error && !d.name ? "" : `<input class="imp-name" data-rename="${esc(key)}" value="${esc(st.renames[key] ?? d.name)}" spellcheck="false" ${d.kind === "suite" && !d.original ? "" : ""}>`}
+          <div class="muted small">${esc(d.rel)}${d.included ? ` · from the repository, needed by ${esc((neededBy[`${d.kind}:${d.name}`] || []).join(", "))}` : ""}</div>${refs}</td>
+        <td class="small">${r ? `<b class="${["failed", "exists"].includes(r.status) ? "error-text" : "ok-text"}">${esc(r.status)}${r.version ? ` · v${r.version}` : ""}</b>${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}${r.status === "exists" ? `<div>${replaceBox}</div>` : ""}` : state}</td></tr>`;
+    };
+    $d(".imp-plan").innerHTML = `
+      <div class="muted small">Folder <code>${esc(p.dir)}</code>${p.repo_root ? ` in repository <code>${esc(p.repo_root)}</code>` : ""}</div>
+      ${used.length ? `<h4>Placeholders</h4><table class="kv imp-vals">${used.map((k) => `<tr class="${p.unset?.includes(k) ? "needs" : ""}"><td><code>@${esc(k)}@</code></td><td><input data-val="${esc(k)}" value="${esc(st.values[k] ?? p.values[k] ?? "")}" placeholder="${p.unset?.includes(k) ? "needs a value" : ""}" spellcheck="false"></td></tr>`).join("")}</table>` : ""}
+      <h4>Files</h4>
+      ${p.docs.length ? `<table class="imp-docs">${p.docs.map(row).join("")}</table>` : `<p class="muted">No runnr files here.</p>`}
+      ${p.ignored?.length ? `<details class="small muted"><summary>${p.ignored.length} other YAML file${p.ignored.length === 1 ? "" : "s"} left alone</summary>${p.ignored.map(esc).join("<br>")}</details>` : ""}`;
+    dlg.querySelectorAll("[data-val]").forEach((i) => (i.oninput = () => { st.values[i.dataset.val] = i.value; impSave(`runnr.importValues:${st.dir}`, st.values); rescan(); }));
+    dlg.querySelectorAll("[data-rename]").forEach((i) => (i.onchange = () => { const v = i.value.trim(), k = i.dataset.rename; if (!v || v === k.split(":")[1]) delete st.renames[k]; else st.renames[k] = v; scan(false); }));
+    dlg.querySelectorAll("[data-take]").forEach((c) => (c.onchange = () => { st.skip = c.checked ? st.skip.filter((x) => x !== c.dataset.take) : [...st.skip, c.dataset.take]; scan(false); }));
+    dlg.querySelectorAll("[data-include]").forEach((c) => (c.onchange = () => { st.include = c.checked ? [...st.include, c.dataset.include] : st.include.filter((x) => x !== c.dataset.include); scan(false); }));
+    dlg.querySelectorAll("[data-replace]").forEach((c) => (c.onchange = () => { c.checked ? st.replace.add(c.dataset.replace) : st.replace.delete(c.dataset.replace); }));
+    const todo = p.docs.filter((d) => !d.error && !d.same && !st.skip.includes(d.path));
+    $d("[data-ok]").textContent = st.results ? "Import again" : `Import${todo.length ? ` ${todo.length} file${todo.length === 1 ? "" : "s"}` : ""}`;
+  }
+
+  $d("[data-ok]").onclick = async (e) => {
+    const ok = e.currentTarget;
+    ok.disabled = true;
+    try {
+      const out = await api("POST", "/api/import/project", { ...body(), replace: [...st.replace], collection: $d("#imp-col2").value });
+      st.plan = out.plan;
+      st.results = out.results;
+      await loadRunbooks();
+      const bad = out.results.filter((r) => ["failed", "exists"].includes(r.status));
+      const n = out.results.filter((r) => ["imported", "replaced"].includes(r.status)).length;
+      draw();
+      err(bad.length ? `${bad.length} file${bad.length === 1 ? "" : "s"} not imported: see why above, change it and Import again.` : "");
+      toast(n ? `Imported ${n} file${n === 1 ? "" : "s"}` : "Nothing new to import");
+      if (!bad.length) { $d("[data-close]").textContent = "Done"; }
+    } catch (x) { err(x.message); }
+    ok.disabled = false;
+  };
+  dlg.showModal();
+  if (st.dir) scan(true); else $d(".imp-dir").focus();
+}

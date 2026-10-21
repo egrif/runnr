@@ -134,6 +134,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/shells", s.openShell)
 	mux.HandleFunc("POST /api/import/check", s.importCheck)
 	mux.HandleFunc("POST /api/import", s.importDoc)
+	mux.HandleFunc("POST /api/import/scan", s.importScan)
+	mux.HandleFunc("POST /api/import/project", s.importProject)
 	mux.HandleFunc("GET /api/shells/{id}/events", s.shellEvents)
 	mux.HandleFunc("POST /api/shells/{id}/term", s.shellInput)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
