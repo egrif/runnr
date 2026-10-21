@@ -87,6 +87,14 @@ func (x *executor) execStream(ctx context.Context, i int, step runbook.Step, com
 	defer os.RemoveAll(tmp)
 	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
 	env = append(env, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile)
+	if !step.TTY && !x.opts.DryRun {
+		// Questions the step asks (runnr_ask, runnr_confirm) come to runnr.
+		actx, stopAsk := context.WithCancel(ctx)
+		defer stopAsk()
+		if dir, err := x.serveAsk(actx, i, step, tmp); err == nil {
+			env = append(env, "RUNNR_ASK="+dir)
+		}
+	}
 
 	if command, err = x.withPrelude(command, tmp); err != nil {
 		return cmdResult{err: err}
@@ -116,7 +124,7 @@ func (x *executor) execStream(ctx context.Context, i int, step runbook.Step, com
 	cmd.Env = env
 	cmd.Dir = dir
 	cmd.WaitDelay = 5 * time.Second
-	setProcessGroup(cmd)
+	setProcessGroup(cmd) // (and how long cancelling waits)
 
 	var stdout bytes.Buffer
 	combined := &ringBuffer{}

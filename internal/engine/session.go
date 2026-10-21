@@ -23,8 +23,11 @@ func (x *executor) View(i int) StepView {
 		When: s.When, Confirm: s.Confirm, Dangerous: s.Dangerous, Always: s.Always, Optional: s.Optional, Timeout: s.Timeout, Retries: s.Retries,
 		Outputs: s.Outputs, SecretOutputs: s.SecretOutputs,
 	}
-	v.Background, v.StopAfter = s.Background, s.StopAfter
+	v.Background, v.StopAfter, v.WaitFor, v.CloseOnExit = s.Background, s.StopAfter, s.WaitFor, s.CloseOnExit
 	v.Choose, v.Window = s.Choose, s.Window
+	v.ConfirmTyping = x.lenient(s.ConfirmTyping)
+	v.SkipIf, v.Verify = x.mask(x.lenient(s.SkipIf)), x.mask(x.lenient(s.Verify))
+	v.OkIf, v.FailIf = s.OkIf, s.FailIf
 	if d, ok := x.rb.PlannedOffset(i, x.vars); ok {
 		sec := int(d.Seconds())
 		v.Offset, v.OffsetSec = FormatOffset(d), &sec
@@ -159,7 +162,13 @@ func (x *executor) openShell(ctx context.Context, idx int) error {
 	outFile, secFile := filepath.Join(tmp, "output"), filepath.Join(tmp, "secret")
 	extra = append(extra, "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile, "RUNNR_SHELL=1")
 
-	_, transcript, err := x.inTerminal(ctx, idx, title, "", "", extra, dir)
+	// At a step, the shell the step runs in (its own, else the runbook's,
+	// else sh), so what works in the shell works in the step.
+	shell := ""
+	if idx >= 0 && idx < len(x.rb.Steps) {
+		shell = nonEmpty(step.Shell, nonEmpty(x.rb.Shell, "sh"))
+	}
+	_, transcript, err := x.inTerminal(ctx, idx, title, shell, "", extra, dir)
 	if t := strings.TrimSpace(x.mask(transcript)); t != "" && idx >= 0 {
 		x.run.Steps[idx].Shells = append(x.run.Steps[idx].Shells, t)
 		x.save()

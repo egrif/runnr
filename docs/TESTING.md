@@ -178,6 +178,7 @@ and a scenario's `operator` overrides the suite's.
 | `confirm` | `yes`, `no` | `yes` |
 | `danger` (typed check out of sequence) | `type`, `decline` | `type` |
 | `typed` (`confirm_typing`) | `type`, `decline` | `type` |
+| `ask` (the step's `runnr_confirm`, `runnr_ask`) | `yes`, `no`, or the text to answer | `yes` (confirm), blank (ask) |
 | `manual` | `done`, `skip`, `fail` | `done` |
 | `failure` | `abort`, `retry`, `skip`, `way`, `force` | `abort` |
 | `before` (pauses, optional steps) | `run`, `skip`, `abort` | `run` |

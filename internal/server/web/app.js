@@ -140,12 +140,18 @@ async function route() {
   if (stream) { stream.close(); stream = null; }
   resetTerm();
   resetSide();
+  document.body.classList.remove("console-mode");
   const h = location.hash || "#/";
   renderSidebar();
   let m;
   try {
+    if ((m = h.match(/^#\/runbooks\/([^/?]+)\/console(?:\?(.*))?$/))) { runView("console"); return await viewConsoleLaunch(decodeURIComponent(m[1]), new URLSearchParams(m[2] || "")); }
     if ((m = h.match(/^#\/runbooks\/([^/?]+)(?:\/(edit|tests))?(?:\?(.*))?$/))) return await viewRunbook(decodeURIComponent(m[1]), m[2] || "run", new URLSearchParams(m[3] || ""));
-    if ((m = h.match(/^#\/runs\/([^/]+)$/))) return await viewRun(decodeURIComponent(m[1]));
+    if ((m = h.match(/^#\/runs\/([^/]+)\/console$/))) { runView("console"); return await viewConsole(decodeURIComponent(m[1])); }
+    if ((m = h.match(/^#\/runs\/([^/]+)$/))) {
+      if (runView() === "console") return location.replace(`#/runs/${m[1]}/console`);
+      return await viewRun(decodeURIComponent(m[1]));
+    }
     if (h === "#/new") return await viewNew();
     if (h.startsWith("#/history")) return await viewHistory();
     if (h === "#/help") return viewHelp();
@@ -189,6 +195,7 @@ async function viewRunbook(name, tab, query) {
       <a href="${href}/edit" class="${tab === "edit" ? "active" : ""}">Edit</a>
       <a href="${href}/tests" class="${tab === "tests" ? "active" : ""}">Tests</a>
       <a href="#/history?runbook=${encodeURIComponent(name)}">History</a>
+      <a href="${href}/console" class="tab-console" title="Set up a run and run it in the console: steps, definitions, what's happening and background steps on one screen">▣ Console</a>
     </nav>
     <section id="tab"></section>`;
   bindMembership(main, name, () => route());
@@ -239,6 +246,15 @@ async function viewNew() {
 
 // ---------- live / past run ----------
 
+// runView is the run page people last chose: "console" or "classic" (and
+// sets it, given one).
+function runView(set) {
+  try {
+    if (set) localStorage.setItem("runnr.runView", set);
+    return localStorage.getItem("runnr.runView") || "classic";
+  } catch { return set || "classic"; }
+}
+
 async function viewRun(id) {
   const { run, live, controls } = await api("GET", `/api/runs/${encodeURIComponent(id)}`);
   const state = { run, live, controls, steps: run.steps.map((s) => ({ ...s, log: [] })), question: null, open: new Set() };
@@ -278,10 +294,6 @@ async function viewRun(id) {
     if (e.kind.startsWith("term")) {
       termEvent(id, e);
       if (e.kind === "term") return; // terminal output doesn't change the page
-      if (!e.term.background) {
-        state.termStep = e.kind === "term_start" ? e.step : null;
-        state.termShell = e.kind === "term_start" && !!e.term.shell;
-      }
     }
     applyEvent(state, e);
     renderRun(state);
@@ -366,6 +378,7 @@ function renderRun(state) {
       </div>
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
+      <a class="button" href="#/runs/${enc(run.id)}/console" title="One screen: the steps, the selected step's definition, what it's doing, and the background steps">▣ Console</a>
       ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
@@ -373,7 +386,7 @@ function renderRun(state) {
     ${windowBanner(run)}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
     ${(state.messages || []).map((m) => `<p class="muted">ℹ ${esc(m)}</p>`).join("")}
-    ${runningBackground().length ? `<div class="bg-list">${runningBackground().map((s) => `<span class="bg-item">◐ ${esc(s.title.replace(/^background · /, ""))} <button class="link" data-show-bg="${esc(s.id)}">View</button></span>`).join("")}</div>` : ""}
+    ${runningBackground().length ? `<div class="bg-list">${runningBackground().map((s) => `<span class="bg-item">◐ ${esc(s.title.replace(/^background · /, ""))} <button class="link" data-show-bg="${esc(s.id)}" title="Go to its terminal, in its step">Show</button></span>`).join("")}</div>` : ""}
     <div class="notes">${renderNotes(run.notes)}<button class="link" data-note="0">✎ Add run note</button></div>
     ${renderState(run.state, state)}
     ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
@@ -398,7 +411,7 @@ function renderRun(state) {
             <button class="pill ${has(ctl.pause_after, i) ? "on" : ""}" data-ctl="pause_after" data-i="${i}" title="Stop after this step to check it">⏸ after</button>` : ""}
         </div>
         ${state.question?.step === i ? `<div class="step-body">${renderQuestion(state.question, run.id)}</div>` : ""}
-        ${state.termStep === i ? `<div class="step-body"><p class="term-note">⌨ A terminal is open for this step below${state.termShell ? " (shell): type exit or End session to come back to the run" : ": type there when it asks"}. <button class="link" data-show-term>Show terminal</button></p></div>` : ""}
+        ${hasTerm(run.id, i) ? `<div class="step-body term-slot" data-term-slot="${esc(termSlotKey(run.id, i))}"></div>` : ""}
         ${s.notes?.length ? `<div class="step-body">${renderNotes(s.notes)}</div>` : ""}
         ${state.open.has(i) ? `<div class="step-body two-col"><div>
           ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i], state.fns)}` : `
@@ -438,7 +451,6 @@ function renderRun(state) {
     openExplain({ runbook: run.runbook }, n, n ? `${n}. ${state.steps[n - 1].name}` : run.runbook);
   }));
   main.querySelectorAll("[data-show-bg]").forEach((b) => (b.onclick = () => showTerm(b.dataset.showBg)));
-  main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
   main.querySelectorAll("[data-reopen]").forEach((b) => (b.onclick = async (ev) => {
     ev.stopPropagation();
     b.disabled = true;
@@ -475,6 +487,7 @@ function renderRun(state) {
   $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?rerun=${enc(run.id)}`));
   const q = $(".question");
   if (q) bindQuestion(q, state.question, run.id);
+  termMountAll(); // terminals go back in their steps
 }
 
 // ---------- maintenance window ----------
@@ -681,13 +694,13 @@ const QLABELS_BY_TYPE = {
 };
 
 const QLABELS = {
-  run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…", way: "↪ Try another way…",
+  yes: "✔ Yes", no: "✘ No", run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…", way: "↪ Try another way…",
   shell: "⌨ Open shell", continue: "Run the rest without pausing",
 };
 
 function renderQuestion(q, runId) {
   let body = "";
-  if (q.type === "input") {
+  if (q.type === "input" || q.type === "ask_text") {
     const i = q.input;
     body = i.choices?.length
       ? `<select name="value">${i.choices.map((c) => `<option ${c === i.default ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`

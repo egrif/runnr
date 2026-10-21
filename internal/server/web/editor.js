@@ -14,6 +14,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
       <button id="validate">Validate</button>
       ${name ? `<button id="run-tests" title="Run this runbook's tests against what's in the editor, before saving">▶ Run tests</button>` : ""}
       <div class="seg"><button id="as-struct">Structured</button><button id="as-yaml" class="on">YAML</button></div>
+      <button type="button" data-fnpick="#yaml" class="fn-pick-yaml" title="Insert a function at the cursor in the YAML (Ctrl+Shift+F)">ƒ Insert function</button>
       ${version ? `<span class="muted">version ${version} · saved ${new Date(updatedAt).toLocaleString()}</span>` : ""}
       <span class="spacer"></span>
       ${name ? `<button class="danger" id="delete">Delete</button>` : ""}
@@ -26,6 +27,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
     </div>
     <div id="struct-pane" hidden></div>`;
   const ta = $("#yaml");
+  setFnContext(() => (ed.mode === "struct" ? ed.doc : ta.value));
   const show = (res) => {
     const v = $("#validation");
     v.className = "validation " + (res.ok ? "ok" : "bad");
@@ -262,7 +264,7 @@ function control(path, kind, val, opts = {}) {
   const ph = opts.placeholder ? ` placeholder="${esc(opts.placeholder)}"` : "";
   switch (kind) {
     case "area": return `<textarea data-path="${p}" rows="${opts.rows || 2}"${ph}>${esc(val || "")}</textarea>`;
-    case "code": return `<textarea class="code" data-path="${p}" rows="${opts.rows || Math.min(24, Math.max(6, String(val || "").split("\n").length + 2))}" spellcheck="false"${ph}>${esc(val || "")}</textarea>`;
+    case "code": return `<div class="code-wrap"><textarea class="code" data-path="${p}" rows="${opts.rows || Math.min(24, Math.max(6, String(val || "").split("\n").length + 2))}" spellcheck="false"${ph}>${esc(val || "")}</textarea>${fnPickBtn()}</div>`;
     case "int": return `<input type="number" min="0" data-path="${p}" data-kind="int" value="${esc(val ?? "")}"${ph}>`;
     case "bool": return `<input type="checkbox" data-path="${p}" ${val ? "checked" : ""}>`;
     case "list": return `<input data-path="${p}" data-kind="list" value="${esc((val || []).join(", "))}"${ph}>`;
@@ -410,6 +412,7 @@ const MORE_FIELDS = [
   ["continue_on_error", "Keep going if it fails", "bool", H.step.continue_on_error, () => true, "Behaviour"],
   ["tty", "Needs a terminal", "bool", H.step.tty, (k) => k === "run", "Behaviour"],
   ["background", "Run in background", "bool", H.step.background, (k, s) => k === "run" || (s.ways?.length > 0 && s.ways.every((w) => w.run)), "Behaviour"],
+  ["close_on_exit", "Close its terminal when done", "bool", H.step.close_on_exit, (k, s) => !!s.background, "Behaviour"],
   ["confirm_typing", "Confirm by typing", "text", H.step.confirm_typing, () => true, "Behaviour"],
   ["when", "Only when", "text", H.step.when, () => true, "Conditions & timing"],
   ["skip_if", "Skip if (command)", "text", H.step.skip_if, () => true, "Conditions & timing"],
@@ -509,6 +512,7 @@ function runPane(ed, s, i) {
       <button class="link" data-act="close-run" data-i="${i}">Close</button></div>
     ${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}
     ${r.question ? renderQuestion(r.question, r.id) : ""}
+    ${r.id ? `<div class="term-slot" data-term-slot="${esc(r.id)}:*"></div>` : ""}
     <pre class="log run-log">${lines || '<span class="info">starting…</span>'}</pre>
   </div>`;
 }
@@ -537,7 +541,12 @@ async function runThis(ed, i) {
   r.es = new EventSource(`/api/runs/${enc(r.id)}/events`);
   r.es.onmessage = (msg) => {
     const e = JSON.parse(msg.data);
-    if (e.kind.startsWith("term")) { termEvent(r.id, e); return; }
+    if (e.kind.startsWith("term")) {
+      termEvent(r.id, e);
+      // A terminal (this step's, or a setup step's) shows in the Run this pane.
+      if (e.kind !== "term") { r.term = e.kind === "term_start"; updateRunPane(ed, s); }
+      return;
+    }
     const name = ed.doc.steps[e.step]?.name;
     const tag = e.step >= 0 && e.step !== i ? `[setup: ${name}] ` : "";
     switch (e.kind) {
@@ -569,6 +578,7 @@ function updateRunPane(ed, s) {
   if (log) log.scrollTop = log.scrollHeight;
   const q = el.querySelector(".question");
   if (q) bindQuestion(q, ed.runs.get(s).question, ed.runs.get(s).id);
+  termMountAll();
 }
 
 // testValuesCard: inputs and extra variables used by Run this.
@@ -686,8 +696,13 @@ function renderStruct(ed) {
   // Library functions load once; draw again when they arrive.
   loadLibs(d.libraries).then((loaded) => { if (loaded && ed.mode === "struct") renderStruct(ed); });
   curEd = ed;
-  const pane = $("#struct-pane");
-  const html = `
+  const pane = ed.pane || $("#struct-pane");
+  // One step only (the run console's Edit this step): its form, as in the outline.
+  const single = ed.only != null && d.steps[ed.only];
+  const html = single ? `<div class="step-edit single-step">
+      <div class="se-details" style="width:${ed.widths[0] ? ed.widths[0] + "px" : "42%"}">${detailsPane(ed, d, single, ed.only)}</div>
+      <div class="split" data-split="0" title="Drag to resize"></div>
+      <div class="se-command">${stepLeft(ed, single, ed.only)}</div></div>` : `
     <div class="card">
       <h3>Runbook${cmtBtn([d, "#"])}</h3>
       <div class="fgroup-rows">
@@ -752,6 +767,7 @@ function renderStruct(ed) {
     if (q && r?.question) bindQuestion(q, r.question, r.id);
   });
   bindDrag(ed, pane);
+  termMountAll();
   const mw = pane.querySelector('[data-group="rb-window"]');
   if (mw) mw.ontoggle = () => (ed.windowOpen = mw.open);
   const tv = pane.querySelector("details.test-values");
@@ -832,6 +848,12 @@ function renderStruct(ed) {
     }
     if (t.matches("[data-sec-pick]") && e.type === "change") {
       const i = +t.dataset.i;
+      if (ed.only != null) {
+        // Editing one step in place: it keeps its position, only its section changes.
+        const v = t.value === "__new__" ? (prompt("New section name:") || "").trim() : t.value;
+        if (v || t.value === "") d.steps[i].section = v || undefined;
+        return renderStruct(ed);
+      }
       if (t.value === "__new__") {
         const v = (prompt("New section name (it starts at this step):") || "").trim();
         if (v) d.steps[i].section = v;
@@ -1091,5 +1113,73 @@ function bindDrag(ed, pane) {
     drag = null;
     renderStruct(ed);
     pane.dispatchEvent(new Event("input"));
+  };
+}
+
+// ---------- one step (the run console's Edit this step) ----------
+
+// renderStepEditor puts the editor's form for step i of doc (the runbook,
+// as /api/parse gives it) in el, with the same Structured / YAML views and
+// validation as the editor page. step() resolves to the step as edited
+// (null if the YAML doesn't parse), dirty() says whether it changed.
+function renderStepEditor(el, { doc, comments, i, yaml }) {
+  const ed = { mode: "struct", doc, only: i, test: { vars: {}, extra: {}, setup: true }, secretVars: {},
+    open: new Set(), adv: new Set(), runs: new Map(), wayTab: new WeakMap(), secOpen: new Set(), comments: new WeakMap() };
+  attachComments(ed, comments || {});
+  const orig = JSON.stringify(cleanDoc(doc.steps[i]));
+  el.innerHTML = `
+    <div class="row editor-bar se1-bar">
+      <div class="seg"><button data-m="struct" class="on">Structured</button><button data-m="yaml">YAML</button></div>
+      <button data-validate title="Check the runbook with this step as edited">Validate</button>
+      <button type="button" class="fn-pick-yaml" data-fnpick-yaml title="Insert a function at the cursor (Ctrl+Shift+F)">ƒ Insert function</button>
+      <span class="validation se1-v"></span>
+    </div>
+    <div class="se1-struct struct-pane"></div>
+    <div class="se1-yaml" hidden><textarea class="editor cx-yaml" spellcheck="false"></textarea></div>`;
+  ed.pane = el.querySelector(".se1-struct");
+  const ta = el.querySelector("textarea"), v = el.querySelector(".se1-v");
+  setFnContext(() => doc);
+  // In the YAML view, its textarea; in the form, the code field last typed in.
+  el.querySelector("[data-fnpick-yaml]").onclick = () => {
+    const t = ed.mode === "yaml" ? ta : (fnPick.last && el.contains(fnPick.last) ? fnPick.last : el.querySelector(".se1-struct textarea.code"));
+    if (t) openFnPicker(t);
+  };
+  const show = (res) => { v.className = "validation se1-v " + (res.ok ? "ok" : "bad"); v.textContent = res.ok ? "✔ valid" : res.error; };
+  ta.onkeydown = (e) => { if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); } };
+  // fromYAML takes the YAML view's text into the form's step.
+  const fromYAML = async () => {
+    const res = await api("POST", "/api/parse-step", ta.value, true);
+    if (!res.ok) { show(res); return false; }
+    doc.steps[i] = res.step;
+    return true;
+  };
+  const setMode = async (mode) => {
+    if (mode === ed.mode) return;
+    if (mode === "yaml") {
+      const res = await api("POST", "/api/format-step", cleanDoc(doc.steps[i]));
+      if (!res.ok) return show(res);
+      ta.value = res.raw;
+    } else if (!(await fromYAML())) return;
+    ed.mode = mode;
+    el.querySelector(".se1-struct").hidden = mode !== "struct";
+    el.querySelector(".se1-yaml").hidden = mode !== "yaml";
+    el.querySelectorAll("[data-m]").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+    if (mode === "struct") renderStruct(ed);
+    else ta.focus();
+  };
+  el.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => setMode(b.dataset.m)));
+  el.querySelector("[data-validate]").onclick = async () => {
+    if (ed.mode === "yaml" && !(await fromYAML())) return;
+    const y = await formatDoc(ed);
+    show(y.ok ? await api("POST", "/api/validate", y.raw, true) : y);
+  };
+  renderStruct(ed);
+  if (yaml) { ta.value = yaml; }
+  return {
+    async step() {
+      if (ed.mode === "yaml" && !(await fromYAML())) return null;
+      return cleanDoc(doc.steps[i]);
+    },
+    dirty: () => (ed.mode === "yaml" ? ta.value !== (yaml || ta.value) || JSON.stringify(cleanDoc(doc.steps[i])) !== orig : JSON.stringify(cleanDoc(doc.steps[i])) !== orig),
   };
 }

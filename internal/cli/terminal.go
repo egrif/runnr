@@ -805,6 +805,27 @@ func (t *Terminal) ConfirmDanger(ctx context.Context, idx int, step runbook.Step
 	return a == "y", nil
 }
 
+// AskStep: a question the running step asks (runnr_ask, runnr_confirm).
+func (t *Terminal) AskStep(ctx context.Context, idx int, _ runbook.Step, kind, prompt string) (string, error) {
+	for {
+		if kind == "confirm" {
+			fmt.Fprint(t.out, "  "+t.c("1;33", "? ")+prompt+t.c("2", " [y/n] "))
+		} else {
+			fmt.Fprint(t.out, "  "+t.c("1;33", "? ")+prompt+" ")
+		}
+		a, err := t.readLine(ctx)
+		if err != nil || kind != "confirm" {
+			return a, err
+		}
+		switch strings.ToLower(strings.TrimSpace(a)) {
+		case "y", "yes":
+			return "yes", nil
+		case "n", "no":
+			return "no", nil
+		}
+	}
+}
+
 // ConfirmTyped: a point of no return; the operator types the value.
 func (t *Terminal) ConfirmTyped(ctx context.Context, idx int, step runbook.Step, command, want string) (bool, error) {
 	fmt.Fprintln(t.out, t.c("1;31", "  ⚠ "+step.Name))

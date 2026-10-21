@@ -145,3 +145,70 @@ func ApplyEdits(rb *runbook.Runbook, edits []StepEdit) (*runbook.Runbook, error)
 	}
 	return &out, out.Validate()
 }
+
+// VersionAdopter moves a live run onto a newer saved version of its
+// runbook, for the steps it hasn't run yet.
+type VersionAdopter interface {
+	AdoptVersion(version int, steps []runbook.Step) (changed []int, err error)
+}
+
+var _ VersionAdopter = (*executor)(nil)
+
+// AdoptVersion replaces the current step and later ones with steps (the
+// runbook's steps at version) where they differ, and records the run as on
+// that version. The runbook must have the same steps (count); edits made in
+// this run that aren't saved yet must agree with it.
+func (x *executor) AdoptVersion(version int, steps []runbook.Step) ([]int, error) {
+	changed, err := x.adoptVersion(version, steps)
+	if err == nil {
+		x.save()
+	}
+	return changed, err
+}
+
+func (x *executor) adoptVersion(version int, steps []runbook.Step) ([]int, error) {
+	x.em.Lock()
+	defer x.em.Unlock()
+	if len(steps) != len(x.rb.Steps) {
+		return nil, fmt.Errorf("version %d has %d steps, this run has %d: abort this run, then run version %d", version, len(steps), len(x.rb.Steps), version)
+	}
+	cur := max(x.cur, 0)
+	if x.editsSaved == 0 {
+		for _, e := range LatestEdits(x.edits) {
+			if !reflect.DeepEqual(steps[e.Step], e.Def) {
+				return nil, fmt.Errorf("step %d (%s) was edited in this run and isn't saved, and version %d has it differently: save or redo the edit first", e.Step+1, e.Def.Name, version)
+			}
+		}
+	}
+	rb := *x.rb
+	rb.Steps = slices.Clone(x.rb.Steps)
+	var changed []int
+	for i := cur; i < len(steps); i++ {
+		if !reflect.DeepEqual(rb.Steps[i], steps[i]) {
+			rb.Steps[i] = steps[i]
+			changed = append(changed, i)
+		}
+	}
+	if err := rb.Validate(); err != nil {
+		return nil, fmt.Errorf("version %d: %w", version, err)
+	}
+	for _, i := range changed {
+		x.edits = append(x.edits, StepEdit{Step: i, At: time.Now(), Def: steps[i], Before: x.rb.Steps[i]})
+		x.rb.Steps[i] = steps[i]
+	}
+	// The run is on that version now: what it changed is in the runbook already.
+	x.run.RunbookVersion = version
+	x.editsSaved = version
+	return changed, nil
+}
+
+// MarkEdited marks the steps a run's edits changed (for a record loaded
+// before the run saved them).
+func MarkEdited(r *Run) {
+	for _, e := range r.Edits {
+		if e.Step < len(r.Steps) {
+			s := &r.Steps[e.Step]
+			s.Edited, s.Name = true, e.Def.Name
+		}
+	}
+}

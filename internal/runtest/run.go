@@ -307,7 +307,7 @@ func overlay(a, b Answers) Answers {
 		}
 		return x
 	}
-	return Answers{Confirm: pick(a.Confirm, b.Confirm), Danger: pick(a.Danger, b.Danger), Typed: pick(a.Typed, b.Typed), Manual: pick(a.Manual, b.Manual),
+	return Answers{Confirm: pick(a.Confirm, b.Confirm), Danger: pick(a.Danger, b.Danger), Typed: pick(a.Typed, b.Typed), Ask: pick(a.Ask, b.Ask), Manual: pick(a.Manual, b.Manual),
 		Failure: pick(a.Failure, b.Failure), Before: pick(a.Before, b.Before), After: pick(a.After, b.After), Way: pick(a.Way, b.Way)}
 }
 
