@@ -272,45 +272,36 @@ func (s *Server) formatStep(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "raw": string(out)})
 }
 
-// openAsideShell opens a shell alongside a live run (body: {"step": N},
-// 1-based; 0 or absent: the step the run is on). It starts in the browser
-// as a terminal (term_start, its title "shell alongside the run · …") and
-// runs while the run goes on.
-func (s *Server) openAsideShell(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Step int `json:"step"`
-	}
-	if r.ContentLength != 0 {
-		if err := decode(r, &req); err != nil {
-			writeErr(w, err)
-			return
-		}
-	}
+// setRunInputs changes a live run's inputs ({"values": {name: value},
+// "by": who}). They take effect before the run's next command; a step
+// waiting to run its command starts again with them.
+func (s *Server) setRunInputs(w http.ResponseWriter, r *http.Request) {
 	l := s.getLive(r.PathValue("id"))
 	if l == nil || l.session == nil {
 		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
 		return
 	}
-	as, ok := l.session.(engine.AsideSheller)
+	is, ok := l.session.(engine.InputSetter)
 	if !ok {
-		writeErr(w, errors.New("this run can't open a shell"))
+		writeErr(w, errors.New("this run's inputs can't be changed"))
 		return
 	}
-	if run, err := s.st.LoadRun(l.id); err == nil && !run.HasBegun() {
-		writeJSON(w, http.StatusConflict, map[string]string{"error": "the run hasn't started its steps yet (it's still settling its inputs)"})
+	var req struct {
+		Values map[string]string `json:"values"`
+		By     string            `json:"by"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
 		return
 	}
-	idx := req.Step - 1
-	if req.Step <= 0 {
-		idx = -1
-		if ed, ok := l.session.(engine.Editor); ok {
-			idx = ed.Current()
-		}
+	res, err := is.SetInputs(req.Values, req.By)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
-	go func() {
-		if err := as.ShellAside(idx); err != nil {
-			l.Notify(engine.Event{Kind: engine.EventOutput, Step: idx, Stream: "info", Text: "shell alongside the run: " + err.Error()})
-		}
-	}()
-	writeJSON(w, http.StatusAccepted, map[string]any{"step": idx + 1})
+	restarted := false
+	if ed, ok := l.session.(engine.Editor); ok && len(res.Changed) > 0 {
+		restarted = l.restartForInputs(ed.Current())
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changed": res.Changed, "stale": res.Stale, "replaces": res.Replaces, "restarted": restarted})
 }

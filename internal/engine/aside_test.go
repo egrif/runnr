@@ -17,7 +17,8 @@ func (a *asideUI) Bind(s Session) { a.session = s }
 func (a *asideUI) Notify(e Event) {
 	a.stepper.Notify(e)
 	if e.Kind == EventStepStarted && e.Step == 0 {
-		go func() { a.err <- a.session.(AsideSheller).ShellAside(0) }()
+		conn, _ := a.StartTerm(0, "shell")
+		go func() { a.err <- a.session.(AsideSheller).ShellAside(context.Background(), 0, conn) }()
 	}
 }
 
@@ -46,13 +47,50 @@ steps:
 	}
 }
 
-// A shell left open alongside the run is hung up when the run ends.
-func TestShellAsideEndsWithTheRun(t *testing.T) {
+// A shell left open alongside the run doesn't hold the run up: it carries
+// on after the run ends, and what it leaves then isn't applied.
+func TestShellAsideOutlivesTheRun(t *testing.T) {
 	rb := mustParse(t, "name: t\nshell: sh\nsteps:\n  - {name: slow, run: 'sleep 0.5'}\n")
-	ui := &asideUI{stepper: stepper{keys: "echo still here\n"}, err: make(chan error, 1)}
+	ui := &asideUI{stepper: stepper{keys: "sleep 1; echo late=1 >> \"$RUNNR_OUTPUT\"; exit\n"}, err: make(chan error, 1)}
 	start := time.Now()
 	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
-	if run.Status != StatusSucceeded || time.Since(start) > 5*time.Second {
+	if run.Status != StatusSucceeded || time.Since(start) > 900*time.Millisecond {
 		t.Fatalf("%s after %s", run.Status, time.Since(start))
+	}
+	select {
+	case err := <-ui.err:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the shell didn't end")
+	}
+	if run.State["late"] != "" || len(run.Steps[0].Shells) != 0 {
+		t.Fatalf("applied after the run: %v %v", run.State, run.Steps[0].Shells)
+	}
+}
+
+// A shell outside a run has the runbook's environment: inputs (else their
+// defaults), an earlier run's values, env and functions.
+func TestOpenShell(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+shell: sh
+inputs:
+  - {name: who, default: world}
+  - {name: where}
+env: {GREETING: "hi {{.who}}"}
+functions:
+  shout: {body: 'echo "$1!"'}
+steps:
+  - {name: one, run: 'true'}
+`)
+	conn := &scriptConn{keys: strings.NewReader("echo \"[$GREETING $where $done]\"; shout ok; exit\n"), closed: make(chan struct{})}
+	transcript, err := OpenShell(context.Background(), ShellSpec{Runbook: rb, Step: 0, Vars: map[string]string{"where": "here"}, State: map[string]string{"done": "yes"}}, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(transcript, "[hi world here yes]") || !strings.Contains(transcript, "ok!") {
+		t.Fatalf("transcript %q", transcript)
 	}
 }

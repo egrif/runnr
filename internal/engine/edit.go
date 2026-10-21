@@ -14,6 +14,10 @@ import (
 // the step was edited: it starts again with its new definition.
 var ErrStepEdited = errors.New("step edited")
 
+// ErrInputsChanged, like ErrStepEdited, starts the waiting step again: the
+// run's inputs changed.
+var ErrInputsChanged = fmt.Errorf("inputs changed: %w", ErrStepEdited)
+
 // StepEdit records a change made to a step during a run.
 type StepEdit struct {
 	Step int          `json:"step"`

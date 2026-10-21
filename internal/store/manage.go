@@ -1,0 +1,166 @@
+package store
+
+import (
+	"fmt"
+	"slices"
+	"time"
+
+	"github.com/egrif/runnr/internal/engine"
+)
+
+// Deleting keeps a document's versions, so a deleted runbook, library,
+// fake library, test suite or collection can be restored: its last
+// version is saved again.
+
+// Kinds of stored document, by the names the import and manage pages use.
+const (
+	KindRunbook    = "runbook"
+	KindLibrary    = "library"
+	KindFakes      = "fakes"
+	KindSuite      = "suite"
+	KindCollection = "collection"
+)
+
+// Deleted is a document that was deleted: its last version is kept.
+type Deleted struct {
+	Kind    string    `json:"kind"`
+	Name    string    `json:"name"`
+	Version int       `json:"version"`
+	SavedAt time.Time `json:"saved_at"`
+}
+
+func tables(kind string) (table, versions string, err error) {
+	switch kind {
+	case KindRunbook:
+		return "runbooks", "runbook_versions", nil
+	case KindLibrary:
+		return libraryKind.table, libraryKind.versions, nil
+	case KindFakes:
+		return fakesKind.table, fakesKind.versions, nil
+	case KindSuite:
+		return suiteKind.table, suiteKind.versions, nil
+	case KindCollection:
+		return collectionKind.table, collectionKind.versions, nil
+	}
+	return "", "", fmt.Errorf("unknown kind %q", kind)
+}
+
+// ListDeleted lists the deleted documents of a kind.
+func (s *Store) ListDeleted(kind string) ([]Deleted, error) {
+	table, versions, err := tables(kind)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT v.name, MAX(v.version), MAX(v.created_at) FROM ` + versions + ` v
+		WHERE v.name NOT IN (SELECT name FROM ` + table + `) GROUP BY v.name ORDER BY v.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Deleted{}
+	for rows.Next() {
+		d := Deleted{Kind: kind}
+		var at string
+		if err := rows.Scan(&d.Name, &d.Version, &at); err != nil {
+			return nil, err
+		}
+		d.SavedAt = parseTS(at)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// Restore saves a deleted document's last version again (as its next
+// version), returning it.
+func (s *Store) Restore(kind, name string) (int, error) {
+	table, versions, err := tables(kind)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	if err := s.db.QueryRow(s.q(`SELECT COUNT(*) FROM `+table+` WHERE name = ?`), name).Scan(&n); err != nil {
+		return 0, err
+	}
+	if n > 0 {
+		return 0, fmt.Errorf("%s %q isn't deleted", kind, name)
+	}
+	var raw string
+	err = s.db.QueryRow(s.q(`SELECT raw FROM `+versions+` WHERE name = ? ORDER BY version DESC LIMIT 1`), name).Scan(&raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q: no saved version: %w", kind, name, ErrNotFound)
+	}
+	var v int
+	switch kind {
+	case KindRunbook:
+		_, v, err = s.Save([]byte(raw), SaveOpts{})
+	case KindLibrary:
+		_, v, err = s.SaveLibrary([]byte(raw), SaveOpts{})
+	case KindFakes:
+		_, v, err = s.SaveFakes([]byte(raw), SaveOpts{})
+	case KindSuite:
+		_, v, err = s.SaveSuite([]byte(raw), SaveOpts{})
+	case KindCollection:
+		_, v, err = s.SaveCollection([]byte(raw), SaveOpts{})
+	}
+	return v, err
+}
+
+// DeleteDoc deletes a document of a kind (its versions are kept).
+func (s *Store) DeleteDoc(kind, name string) error {
+	switch kind {
+	case KindRunbook:
+		return s.Delete(name)
+	case KindLibrary:
+		return s.DeleteLibrary(name)
+	case KindFakes:
+		return s.DeleteFakes(name)
+	case KindSuite:
+		return s.DeleteSuite(name)
+	case KindCollection:
+		return s.DeleteCollection(name)
+	}
+	return fmt.Errorf("unknown kind %q", kind)
+}
+
+// DeleteRun deletes a run's record and notes. A running one can't be.
+func (s *Store) DeleteRun(id string) error {
+	r, err := s.LoadRun(id)
+	if err != nil {
+		return err
+	}
+	if r.Status == engine.StatusRunning {
+		return fmt.Errorf("run %s is running: abort it first", id)
+	}
+	if _, err := s.db.Exec(s.q(`DELETE FROM runs WHERE id = ?`), id); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(s.q(`DELETE FROM run_notes WHERE run_id = ?`), id)
+	return err
+}
+
+// DeleteRunbook deletes a runbook (its versions are kept), takes it out of
+// the collections it's in and removes its scheduled runs (they couldn't
+// run). It says what else it did.
+func (s *Store) DeleteRunbook(name string) ([]string, error) {
+	if err := s.Delete(name); err != nil {
+		return nil, err
+	}
+	var also []string
+	cols, _ := s.ListCollections()
+	for _, c := range cols {
+		if c.Collection != nil && slices.Contains(c.Collection.Runbooks, name) {
+			if _, err := s.RemoveFromCollection(c.Name, name); err == nil {
+				also = append(also, "taken out of collection "+c.Name)
+			}
+		}
+	}
+	scheds, _ := s.ListSchedules(time.Now())
+	for _, sc := range scheds {
+		if sc.Runbook == name {
+			if err := s.DeleteSchedule(sc.ID); err == nil {
+				also = append(also, "scheduled run "+sc.At.Local().Format("Jan 2 15:04")+" removed")
+			}
+		}
+	}
+	return also, nil
+}

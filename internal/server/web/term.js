@@ -132,10 +132,13 @@ function resetTerm() {
   term.host = null;
 }
 
-function termEvent(runId, e) {
+// base is where its terminals take keystrokes (default: the run's); a
+// session from elsewhere (a console's shell) is keyed by runId too, since
+// terminal ids are only unique within their stream.
+function termEvent(runId, e, base) {
   const t = e.term;
-  if (e.kind === "term_start") return startTerm(runId, t, e.step);
-  const s = term.sessions.get(t.id);
+  if (e.kind === "term_start") return startTerm(runId, t, e.step, base);
+  const s = term.sessions.get(base ? `${runId}/${t.id}` : t.id);
   if (!s) return;
   if (e.kind === "term") {
     s.xt.write(Uint8Array.from(atob(t.data), (c) => c.charCodeAt(0)));
@@ -164,7 +167,7 @@ function termRemove(s) {
   term.sessions.delete(s.id);
 }
 
-function startTerm(runId, t, step) {
+function startTerm(runId, t, step, base) {
   const el = document.createElement("div");
   el.className = "term-pane";
   el.hidden = true;
@@ -176,7 +179,7 @@ function startTerm(runId, t, step) {
   });
   const fit = new FitAddon.FitAddon();
   xt.loadAddon(fit);
-  const s = { id: t.id, runId, slot: termSlotKey(runId, step), title: t.title, step, shell: !!t.shell, background: !!t.background, closeOnExit: !!t.close_on_exit, command: t.command, expect: t.expect, functions: t.functions, xt, fit, el, ended: false, opened: false };
+  const s = { id: base ? `${runId}/${t.id}` : t.id, termId: t.id, base: base || `/api/runs/${enc(runId)}`, runId, slot: termSlotKey(runId, step), title: t.title, step, shell: !!t.shell, background: !!t.background, closeOnExit: !!t.close_on_exit, command: t.command, expect: t.expect, functions: t.functions, xt, fit, el, ended: false, opened: false };
   // ⌘C / Ctrl+Shift+C copy the selection; plain Ctrl+C still interrupts.
   xt.attachCustomKeyEventHandler((ev) => {
     const copyKey = ev.key.toLowerCase() === "c" && (ev.metaKey || (ev.ctrlKey && ev.shiftKey));
@@ -212,5 +215,5 @@ async function copyTerm(s = activeSession()) {
 
 function sendTerm(s, extra) {
   if (!s.runId || s.ended) return;
-  api("POST", `/api/runs/${enc(s.runId)}/term`, { id: s.id, ...extra }).catch(() => {});
+  api("POST", `${s.base}/term`, { id: s.termId, ...extra }).catch(() => {});
 }

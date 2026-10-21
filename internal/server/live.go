@@ -58,6 +58,10 @@ type liveRun struct {
 	ctl     *engine.Controls
 	terms   map[string]*engine.PipeConn
 	tseq    int
+	// A shell outside a run (no session) has these instead.
+	mask  func(string) string
+	funcs []engine.FuncInfo
+	view  func(idx int) engine.StepView
 
 	mu      sync.Mutex
 	events  []WireEvent
@@ -65,6 +69,8 @@ type liveRun struct {
 	pending map[string]chan Answer
 	// qstep is the step each pending question is about.
 	qstep map[string]int
+	// qtype is each pending question's type.
+	qtype map[string]string
 	done  bool
 	qseq  int
 }
@@ -121,6 +127,7 @@ func (l *liveRun) answer(a Answer) error {
 	ch, ok := l.pending[a.QuestionID]
 	delete(l.pending, a.QuestionID)
 	delete(l.qstep, a.QuestionID)
+	delete(l.qtype, a.QuestionID)
 	l.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("no pending question %q", a.QuestionID)
@@ -134,7 +141,31 @@ func (l *liveRun) answer(a Answer) error {
 const (
 	answerEdited = "\x00edited"
 	answerReopen = "\x00reopen"
+	answerInputs = "\x00inputs"
 )
+
+// restartForInputs withdraws the questions on step i asked before it runs
+// its command (whether to run it, confirmations, which way, its manual
+// instructions), so it starts again with the run's new inputs. A question
+// about how it went (after it, or a failure) is left: the change counts
+// from the next try or step.
+func (l *liveRun) restartForInputs(i int) bool {
+	l.mu.Lock()
+	var ids []string
+	for id, st := range l.qstep {
+		switch l.qtype[id] {
+		case "before", "confirm", "danger", "typed", "choose", "manual":
+			if st == i {
+				ids = append(ids, id)
+			}
+		}
+	}
+	l.mu.Unlock()
+	for _, id := range ids {
+		_ = l.answer(Answer{QuestionID: id, Value: answerInputs})
+	}
+	return len(ids) > 0
+}
 
 // restartStep withdraws the questions waiting on step i, so it starts again
 // with its new definition. It reports whether there were any.
@@ -175,6 +206,10 @@ func (l *liveRun) ask(ctx context.Context, q Question) (Answer, error) {
 	q.ID = fmt.Sprintf("q%d", l.qseq)
 	l.pending[q.ID] = ch
 	l.qstep[q.ID] = q.Step
+	if l.qtype == nil {
+		l.qtype = map[string]string{}
+	}
+	l.qtype[q.ID] = q.Type
 	l.mu.Unlock()
 	if r, ok := l.session.(engine.Reopener); ok && q.Step >= 0 {
 		q.Reopenable = r.Reopenable() + 1
@@ -185,6 +220,9 @@ func (l *liveRun) ask(ctx context.Context, q Question) (Answer, error) {
 		l.publish(WireEvent{Event: engine.Event{Kind: "answered", Step: q.Step, Text: a.Value}, Answered: q.ID})
 		if a.Value == answerEdited {
 			return a, engine.ErrStepEdited
+		}
+		if a.Value == answerInputs {
+			return a, engine.ErrInputsChanged
 		}
 		if a.Value == answerReopen {
 			return a, engine.ErrReopen
@@ -197,6 +235,7 @@ func (l *liveRun) ask(ctx context.Context, q Question) (Answer, error) {
 		l.mu.Lock()
 		delete(l.pending, q.ID)
 		delete(l.qstep, q.ID)
+		delete(l.qtype, q.ID)
 		l.mu.Unlock()
 		return Answer{}, ctx.Err()
 	}
@@ -293,6 +332,8 @@ func (l *liveRun) startTerm(idx int, title string, background bool) *engine.Pipe
 		text := string(b)
 		if l.session != nil {
 			text = l.session.Mask(text)
+		} else if l.mask != nil {
+			text = l.mask(text)
 		}
 		l.publish(WireEvent{Event: engine.Event{Kind: "term", Step: idx}, Term: &TermEvent{ID: id, Data: base64.StdEncoding.EncodeToString([]byte(text))}})
 	}, 30, 120)
@@ -307,8 +348,14 @@ func (l *liveRun) startTerm(idx int, title string, background bool) *engine.Pipe
 		v := l.session.View(idx)
 		start.Command, start.Expect, start.CloseOnExit = v.Command, v.Expect, v.CloseOnExit && background
 	}
+	if idx >= 0 && l.session == nil && l.view != nil {
+		v := l.view(idx)
+		start.Command, start.Expect = v.Command, v.Expect
+	}
 	if start.Shell && l.session != nil {
 		start.Functions = l.session.Functions()
+	} else if start.Shell {
+		start.Functions = l.funcs
 	}
 	l.publish(WireEvent{Event: engine.Event{Kind: "term_start", Step: idx}, Term: start})
 	go func() {

@@ -7,7 +7,7 @@
 async function viewLibraries() {
   const libs = await api("GET", "/api/libraries");
   main.innerHTML = `
-    <div class="row"><h1>Libraries</h1><span class="spacer"></span><button class="primary" id="new-lib">+ New library</button></div>
+    <div class="row"><h1>Libraries</h1><span class="spacer"></span><button class="primary" id="new-lib">+ New library</button><button id="import-lib" title="Import library files">⇪ Import…</button></div>
     <p class="muted">Shell functions shared by runbooks. A runbook lists the libraries it uses under <code>libraries:</code>; their functions can then be called in every step and are loaded into shells opened from runnr. In any other terminal: <code>eval "$(runnr lib export &lt;name&gt;)"</code>.</p>
     ${libs.length ? `<table><thead><tr><th>Library</th><th>Functions</th><th>Description</th><th>Version</th></tr></thead><tbody>
       ${libs.map((l) => `<tr data-lib="${esc(l.name)}"><td><b>${esc(l.name)}</b></td>
@@ -16,6 +16,7 @@ async function viewLibraries() {
     </tbody></table>` : `<div class="empty">No libraries yet.</div>`}`;
   main.querySelectorAll("tr[data-lib]").forEach((tr) => (tr.onclick = () => (location.hash = `#/libraries/${enc(tr.dataset.lib)}`)));
   $("#new-lib").onclick = () => (location.hash = "#/libraries/new");
+  $("#import-lib").onclick = () => openFolderImport();
 }
 
 async function viewLibrary(name) {

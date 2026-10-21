@@ -90,6 +90,9 @@ type Run struct {
 	// runbook version they were saved as (0: not saved yet).
 	Edits      []StepEdit `json:"edits,omitempty"`
 	EditsSaved int        `json:"edits_saved,omitempty"`
+	// InputChanges are changes to the inputs during the run (Inputs has
+	// the values now).
+	InputChanges []InputChange `json:"input_changes,omitempty"`
 	// Previous is the run this one was compared against ("last time").
 	Previous string            `json:"previous,omitempty"`
 	Status   Status            `json:"status"`
@@ -157,6 +160,8 @@ const (
 	EventStepProgress EventKind = "step_progress"
 	// EventWindow: the maintenance window opened or closed (Run is set).
 	EventWindow EventKind = "window"
+	// EventInputs: the run's inputs changed (Run has them).
+	EventInputs EventKind = "inputs"
 )
 
 type Event struct {
@@ -454,13 +459,12 @@ type executor struct {
 	windowOpenedBy int
 	// typed: steps whose confirm_typing was answered (this time through).
 	typed map[int]bool
-	// ctx is the run's; vmu guards vars against shells opened alongside
-	// the run (they read them; only the run writes them); aside holds what
-	// those shells left.
-	ctx         context.Context
-	endAsideCtx context.CancelFunc
-	vmu         sync.RWMutex
+	// vmu guards vars against shells opened alongside the run (they read
+	// them; only the run writes them); aside holds what those shells left.
+	vmu   sync.RWMutex
 	aside asideState
+	// inputs are changes to the inputs waiting to take effect.
+	inputs inputState
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -477,8 +481,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	own := *rb
 	own.Steps = slices.Clone(rb.Steps)
 	rb = &own
-	actx, endAsideCtx := context.WithCancel(ctx)
-	x := &executor{ctx: actx, endAsideCtx: endAsideCtx, rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
+	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
@@ -563,8 +566,7 @@ func (x *executor) finish(ctx context.Context, err error) {
 	if err != nil {
 		x.leaveDetached()
 	}
-	// Shells alongside the run end with it (hung up); what they left is taken.
-	x.endAsideCtx()
+	// What shells alongside the run left is taken; any still open carry on.
 	x.endAside()
 	x.tendBackground(-1, true)
 	if x.funcFile != "" {
@@ -661,6 +663,7 @@ func (x *executor) steps(ctx context.Context) error {
 		x.cur = i
 		x.em.Unlock()
 		x.takeAside()
+		x.takeInputs()
 		step := x.def(i)
 		if err := ctx.Err(); err != nil {
 			return err
@@ -772,11 +775,13 @@ func (x *executor) apply(step runbook.Step, out cmdResult) {
 	for k, v := range out.outputs {
 		x.vars[k] = v
 		delete(x.secretVars, k)
+		x.markPublished(k)
 	}
 	for k, v := range out.secrets {
 		x.vars[k] = v
 		x.secretVars[k] = true
 		x.addSecret(v, false)
+		x.markPublished(k)
 	}
 }
 

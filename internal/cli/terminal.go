@@ -234,6 +234,16 @@ func (t *Terminal) canShell() bool {
 // [v]iew the step, [e]nv (the run's state), [n]ote, and [!] shell. Each
 // returns to the same question afterwards.
 func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts map[string]string, def string) (string, error) {
+	return t.stepPromptAt(ctx, idx, false, prompt, opts, def)
+}
+
+// beforePrompt is stepPrompt for a question asked before the step runs its
+// command: changing the inputs there starts the step again with them.
+func (t *Terminal) beforePrompt(ctx context.Context, idx int, prompt string, opts map[string]string, def string) (string, error) {
+	return t.stepPromptAt(ctx, idx, true, prompt, opts, def)
+}
+
+func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, prompt string, opts map[string]string, def string) (string, error) {
 	extra := ""
 	all := map[string]string{}
 	if t.session != nil && idx >= 0 {
@@ -259,6 +269,10 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 	if len(t.running()) > 0 {
 		extra += " · [w]atch background"
 		all["w"], all["watch"] = "\x00watch", "\x00watch"
+	}
+	if is, ok := t.session.(engine.InputSetter); ok && idx >= 0 && len(is.InputDefs()) > 0 {
+		extra += " · [i]nputs"
+		all["i"], all["inputs"] = "\x00inputs", "\x00inputs"
 	}
 	if _, ok := t.session.(engine.Editor); ok && idx >= 0 && t.canShell() {
 		extra += " · [c]hange step"
@@ -301,6 +315,14 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 			if err := t.watch(ctx); err != nil {
 				return "", err
 			}
+		case "\x00inputs":
+			changed, err := t.changeInputs(ctx)
+			if err != nil {
+				fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
+			}
+			if changed && before {
+				return "", engine.ErrInputsChanged
+			}
 		case "\x00change":
 			changed, err := t.changeStep(ctx, idx)
 			if err != nil {
@@ -313,6 +335,68 @@ func (t *Terminal) stepPrompt(ctx context.Context, idx int, prompt string, opts 
 			return a, nil
 		}
 	}
+}
+
+// changeInputs asks which inputs to change and their new values. changed
+// means some did: they take effect before the run's next command.
+func (t *Terminal) changeInputs(ctx context.Context) (changed bool, err error) {
+	is := t.session.(engine.InputSetter)
+	defs := map[string]runbook.Input{}
+	cur := is.Inputs()
+	var line []string
+	for _, in := range is.InputDefs() {
+		defs[in.Name] = in
+		line = append(line, in.Name+"="+cur[in.Name])
+	}
+	fmt.Fprintln(t.out, t.c("2", "  inputs now: "+strings.Join(line, "  ")))
+	values := map[string]string{}
+	for {
+		fmt.Fprint(t.out, "  change which? (name, Enter when done): ")
+		name, err := t.readLine(ctx)
+		if err != nil {
+			return false, err
+		}
+		name = strings.TrimSpace(name)
+		if name == "" {
+			break
+		}
+		in, ok := defs[name]
+		if !ok {
+			fmt.Fprintln(t.out, t.c("31", "  no input "+name))
+			continue
+		}
+		if !in.Secret {
+			if cur[name] != "" {
+				in.Default = cur[name] // Enter keeps it
+			}
+		}
+		v, err := t.AskInput(ctx, in)
+		if err != nil {
+			return false, err
+		}
+		values[name] = v
+	}
+	if len(values) == 0 {
+		return false, nil
+	}
+	res, err := is.SetInputs(values, os.Getenv("USER"))
+	if err != nil {
+		return false, err
+	}
+	if len(res.Changed) == 0 {
+		fmt.Fprintln(t.out, t.c("2", "  nothing changed"))
+		return false, nil
+	}
+	fmt.Fprintln(t.out, t.c("32", "  changed "+strings.Join(res.Changed, ", ")+": they take effect before the next command"))
+	for _, k := range res.Changed {
+		if st := res.Stale[k]; len(st) > 0 {
+			fmt.Fprintln(t.out, t.c("33", fmt.Sprintf("  %s: step(s) %s already ran with the old value", k, strings.Trim(fmt.Sprint(st), "[]"))))
+		}
+	}
+	for _, k := range res.Replaces {
+		fmt.Fprintln(t.out, t.c("33", "  "+k+": a step had published a value for it; the new one takes its place"))
+	}
+	return true, nil
 }
 
 // changeStep edits step idx for this run in $VISUAL/$EDITOR, until it's
@@ -503,7 +587,7 @@ func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.St
 		fmt.Fprintln(t.out, t.c("33", "  ◇ Optional: this step isn't required. Run it, or skip it and carry on."))
 	}
 	prompt += " / [s]kip / [c]ontinue without pausing / [a]bort"
-	a, err := t.stepPrompt(ctx, v.Index, prompt, opts, "r")
+	a, err := t.beforePrompt(ctx, v.Index, prompt, opts, "r")
 	if err != nil {
 		return "", err
 	}
@@ -771,7 +855,7 @@ func (t *Terminal) Confirm(ctx context.Context, idx int, _ runbook.Step, command
 	for _, l := range strings.Split(strings.TrimRight(command, "\n"), "\n") {
 		fmt.Fprintln(t.out, t.c("2", "    "+l))
 	}
-	a, err := t.stepPrompt(ctx, idx, "Run this step? [y]es / [s]kip / [a]bort",
+	a, err := t.beforePrompt(ctx, idx, "Run this step? [y]es / [s]kip / [a]bort",
 		map[string]string{"y": "y", "yes": "y", "s": "s", "skip": "s", "a": "a", "abort": "a"}, "")
 	if err != nil {
 		return false, err
@@ -794,7 +878,7 @@ func (t *Terminal) ConfirmDanger(ctx context.Context, idx int, step runbook.Step
 		fmt.Fprintln(t.out, t.c("2", "    "+l))
 	}
 	n := strconv.Itoa(idx + 1)
-	a, err := t.stepPrompt(ctx, idx, "Type "+n+" to run it anyway / [s]kip / [a]bort",
+	a, err := t.beforePrompt(ctx, idx, "Type "+n+" to run it anyway / [s]kip / [a]bort",
 		map[string]string{n: "y", "s": "s", "skip": "s", "a": "a", "abort": "a"}, "")
 	if err != nil {
 		return false, err
@@ -837,7 +921,7 @@ func (t *Terminal) ConfirmTyped(ctx context.Context, idx int, step runbook.Step,
 		fmt.Fprintln(t.out, "  "+t.c("36", "expect: ")+step.Expect)
 	}
 	for {
-		a, err := t.stepPrompt(ctx, idx, "Type "+want+" to run it / [s]kip / [a]bort",
+		a, err := t.beforePrompt(ctx, idx, "Type "+want+" to run it / [s]kip / [a]bort",
 			map[string]string{want: "y", "s": "s", "skip": "s", "a": "a", "abort": "a"}, "")
 		if err != nil {
 			return false, err
@@ -856,7 +940,7 @@ func (t *Terminal) Manual(ctx context.Context, idx int, _ runbook.Step, text str
 	for _, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		fmt.Fprintln(t.out, "  "+t.c("35", "☞ ")+l)
 	}
-	a, err := t.stepPrompt(ctx, idx, "[d]one / [s]kip / [f]ail / [a]bort",
+	a, err := t.beforePrompt(ctx, idx, "[d]one / [s]kip / [f]ail / [a]bort",
 		map[string]string{"d": "d", "done": "d", "s": "s", "skip": "s", "f": "f", "fail": "f", "a": "a", "abort": "a"}, "")
 	if err != nil {
 		return "", "", err

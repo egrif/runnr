@@ -56,8 +56,10 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
-| `runnr import <file>...` | Validate and add files to the library (`-f` to overwrite, `-` for stdin, `-c <collection>` to add them to a collection) |
-| `runnr delete <name>` | Delete (`-f` to skip the prompt) |
+| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes and test suites: files, or a project folder (its subfolders too). Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along. A taken name is refused unless `-f` (saved as its next version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do. In the GUI: **⇪ Import…** in the sidebar does the same for a folder |
+| `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
+| `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
+| `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
 | `runnr test <suite\|runbook\|file>` | Test a runbook: run it with its commands faked and a simulated operator, against each scenario's expectations (`-s`, `-v`, `--log`); see [Testing runbooks](docs/TESTING.md) |
 | `runnr tests import/list/show/delete` · `runnr fakes import/list/show/delete/check` | Manage test suites and fake libraries; `fakes check` compares AWS CLI fakes with the CLI's real response shapes |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
@@ -161,6 +163,14 @@ At any step prompt you can also:
   with the step. `echo name=value >> "$RUNNR_OUTPUT"`
   in that shell publishes a value to later steps. Ctrl-C in the shell doesn't
   touch the run.
+- **`i`**: change the run's inputs. The new values are checked as at the
+  start and take effect before the run's next command: a step waiting to
+  run its command starts again with them; a command already running keeps
+  what it has. It says which steps already ran with the old value, and
+  replaces a value a step published under the same name. Each change is
+  recorded with the run (who, when, old → new), and a resume uses the new
+  values. In the GUI: **✎ Change inputs** on a live run (the run page, or
+  the console's Inputs), or `PUT /api/runs/{id}/inputs`.
 - **`f`** (failed steps): force the step to count as success. A reason is
   required; the step is recorded as `forced` with it, and whatever it
   published is kept.
@@ -397,8 +407,13 @@ Step list, Step definition, Step activity, Step edit (else the editor is a
 tab in Step activity), Terminal target (where a terminal step or a step's
 shell opens; else a tab in Step activity), Background target (several take
 background jobs in turn, each to the one with the fewest running) or Shell
-(a shell at the step the run is on, alongside the run: values it publishes
-reach the run when the next step starts; there can be several) or Run log
+(there can be several). A shell opens any time: before the run, with the
+runbook's environment and the inputs as filled in; while the steps run, at
+the step the run is on, alongside it (values it publishes reach the run
+when the next step starts, and it's recorded with the step); or after the
+run, with what it published. It stays open into the run's console and
+after the run ends, until you exit it, close its pane or leave the
+console; ↻ Reopen starts it again at the step the run is on now or Run log
 (every step's output, in order). The layout
 is kept in your browser; Reset layout puts it back.
 

@@ -163,7 +163,7 @@ func (t *Terminal) ChooseWay(ctx context.Context, v engine.StepView, failed int)
 		}
 		opts[strconv.Itoa(n+1)] = strconv.Itoa(n + 1)
 	}
-	a, err := t.stepPrompt(ctx, v.Index, fmt.Sprintf("Which? [1-%d, Enter = %s] / [a]bort", len(v.Ways), def), opts, def)
+	a, err := t.beforePrompt(ctx, v.Index, fmt.Sprintf("Which? [1-%d, Enter = %s] / [a]bort", len(v.Ways), def), opts, def)
 	if err != nil {
 		return 0, err
 	}

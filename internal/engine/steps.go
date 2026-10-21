@@ -34,11 +34,16 @@ func (x *executor) step(ctx context.Context, i int, step runbook.Step) error {
 		step = x.def(i)
 		res := &x.run.Steps[i]
 		res.Error, res.ExitCode, res.Note, res.Checks = "", nil, "", nil
-		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "✎ step edited: starting it again with the new version"})
+		why := "✎ step edited: starting it again with the new version"
+		if errors.Is(err, ErrInputsChanged) {
+			why = "inputs changed: starting the step again with the new values"
+		}
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: why})
 	}
 }
 
 func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error {
+	x.takeInputs()
 	res := &x.run.Steps[i]
 	if step.When != "" {
 		cond, err := x.render(step.When)
@@ -108,6 +113,7 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 	}
 
 	for {
+		x.takeInputs() // before each try: a change made while it was failing counts for the retry
 		a := x.attempt(ctx, i, step, res, confirmed)
 		confirmed = true // retries don't ask again
 		if a.hard != nil {

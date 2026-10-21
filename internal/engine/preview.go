@@ -44,6 +44,9 @@ func NewPreviewer(rb *runbook.Runbook, vars, state map[string]string, hasFuncs b
 	return &Previewer{x: x, hasFuncs: hasFuncs || len(rb.Functions) > 0}
 }
 
+// Mask hides the inputs' secrets in text.
+func (p *Previewer) Mask(text string) string { return p.x.mask(text) }
+
 // Plan is every step's view.
 func (p *Previewer) Plan() []StepView { return p.x.Plan() }
 

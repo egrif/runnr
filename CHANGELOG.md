@@ -1,0 +1,117 @@
+# Changelog
+
+## v0.2.0 — unreleased
+
+Shells you can open any time, importing a whole project folder, changing a
+run's inputs while it runs, and a page to delete and restore what's stored.
+
+### Added
+
+- **Shells, any time.** A console Shell pane opens a shell before the run
+  (the runbook's environment, with the inputs as filled in), alongside it
+  (at the step it's on; what it publishes reaches the run at the next
+  step, and it's recorded with the step), or after it (the run's values).
+  It stays open from the console before the run into the run's console and
+  after the run ends, until you exit it. **↻ Reopen** starts it again at the
+  step the run is on now.
+- **Import a project folder.** **⇪ Import…** in the sidebar, and
+  `runnr import <folder>`, take a folder's runbooks, libraries, fake
+  libraries and test suites at once:
+  - placeholders are filled in: `@PROJECT_DIR@` (the folder),
+    `@REPO_ROOT@` (its git root), and any other `@NAME@` from values you
+    give (`--set NAME=VALUE`); a file using one without a value isn't
+    imported, and says so;
+  - references are checked (a runbook's libraries, a suite's runbook and
+    fakes); a missing library defined elsewhere in the repository comes
+    along;
+  - renaming a file on the way in (`--rename NAME=NEW`) changes the
+    references to it in the other files, leaving the rest as written;
+  - a name that's taken is never saved over without a choice: save it as
+    the next version (`-f`; earlier versions are kept), rename it, or skip
+    it. `-n` says what would happen.
+- **Import files** from the sidebar too (Upload files instead…), with the
+  same choices for a taken name and fields for placeholders.
+- **Change a run's inputs while it runs.** **✎ Change inputs** on a live
+  run (its page, or the console's Inputs), `[i]nputs` at the CLI's step
+  prompts, or `PUT /api/runs/{id}/inputs`. Values are checked as at the
+  start and take effect before the next command; a step waiting to run its
+  command starts again with them. Each change is recorded (who, when, old
+  → new), a resume uses the new values, and steps that already ran with
+  the old value are pointed out.
+- **Manage** in the sidebar: everything stored (runbooks, libraries, fake
+  libraries, test suites, collections) with what uses each. Delete several
+  at once, with what depends on them spelled out first, and restore what
+  was deleted (its versions are kept). `runnr restore [kind name]` in the
+  CLI.
+- **Delete a run**: Delete run on a finished run's page, or
+  `runnr history --delete <run-id>`.
+
+### Changed
+
+- Deleting a runbook takes it out of its collections and removes its
+  scheduled runs.
+- `runnr import` takes folders and any runnr file (not only runbooks);
+  with `-f` it says whether each file was added, unchanged or replaced
+  (version N → M). `runnr import -` and `runnr lib import` refuse
+  placeholders without a value.
+- Shells alongside a run are no longer hung up when the run ends.
+
+## v0.1.0 — 2026-10-21
+
+The first release: runnr as a runbook manager with a CLI, a web GUI and an
+HTTP API, storing runbooks and runs in SQLite or Postgres.
+
+### Runbooks
+
+- Steps that run commands, manual steps, terminal (tty) steps, background
+  steps (they can outlive runnr under tmux), checks with repeat, ways to do
+  a step (choose one, or try another when one fails), optional steps,
+  dangerous steps (a typed double check out of sequence), points of no
+  return, sections, and a maintenance window with planned times.
+- Inputs (required, choices, secrets), shared outputs and secret outputs,
+  `env`, a profile sourced before every step, `requires` (programs a
+  runbook needs, checked by `runnr doctor`), and function libraries shared
+  by steps and shells (with runnr's own `std`).
+- Steps can ask the operator (`runnr_ask`, `runnr_confirm`).
+- Collections group runbooks; versions are kept for every save.
+
+### Running
+
+- Interactive and unattended runs, review before starting, step mode,
+  pause before or after steps, skip, retry, force a failed step with a
+  reason, notes on steps and runs, and a shell at any step with the run's
+  variables and the step's commands beside it.
+- Resume a failed or aborted run where it stopped, rerun, and compare with
+  the run before ("last time").
+- Change steps during a run, rerun them, and save the changes to the
+  runbook.
+- Abort a run from anywhere (`runnr abort`, the GUI), including one whose
+  process is gone.
+- `runnr run --tmux`: the run outlives the terminal; `runnr attach` and
+  `runnr watch`.
+- Schedule runs ahead, with a calendar and an agenda; maintenance window
+  notifications.
+
+### GUI
+
+- A run page (with History and Details for each step) and a run console:
+  the steps, the selected step's definition, what it's doing, terminals and
+  background jobs on one screen, in panes you arrange (drag to split or
+  swap; Step list, Step definition, Step activity, Step edit, Terminal
+  target, Background targets, Shells, Run log).
+- Set up a run in the console before it starts; edit a step in place.
+- A structured runbook editor (sections, ways, comments, a function
+  picker, checks for zsh-only syntax in runbooks that don't run zsh), and
+  a YAML view.
+- Terminals in the browser for terminal steps, shells and background jobs.
+
+### Testing, docs and help
+
+- `runnr test`: run a runbook with its commands faked and a simulated
+  operator, with fake libraries and test suites, optionally sandboxed;
+  Tests in the GUI.
+- Export a runbook as Markdown to follow by hand, or view it as an HTML
+  page (copy each step in one click, mark steps done).
+- Raw logs of past runs (`runnr history --raw`, Raw log in the GUI).
+- Explain: ask an AI model about a runbook's steps, through Anthropic,
+  other providers or an AI gateway; answers are kept locally.
