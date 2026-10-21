@@ -45,6 +45,8 @@ run's inputs while it runs, and a page to delete and restore what's stored.
   CLI.
 - **Delete a run**: Delete run on a finished run's page, or
   `runnr history --delete <run-id>`.
+- **Copy on select** in the GUI: selecting text in a terminal, a code field
+  or run output copies it. **Copy on select** in the sidebar turns it off.
 
 ### Changed
 
