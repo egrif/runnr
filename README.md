@@ -365,6 +365,21 @@ Shells (`!`) work the same way, so what you did by hand is recorded too.
 **End session** (GUI) hangs up a terminal like closing its window. Unattended runs have no one to type, so `tty` steps follow
 their `unattended` policy.
 
+**Asking from a step.** A script can ask the operator a question partway
+through: `runnr_confirm "Ready to cut over?"` succeeds on yes, and
+`answer=$(runnr_ask "Which cluster?")` gets text. Both are defined in every
+step. The question goes to whoever is running it: the CLI asks at its
+prompt, the GUI (and console) in the step's action pane, a test's operator
+answers it (`ask:`), and in an unattended run it fails rather than going on
+unanswered. In a `tty` step they read the terminal. (A plain `read` in a
+step that isn't `tty` gets no input: it has no keyboard.)
+
+**Stopping a step.** Aborting a run (or a step's `timeout`) stops what's
+running the way you would: Ctrl-C to the step's processes, SIGTERM 10
+seconds later if they're still there, SIGKILL at 20. A tool like Terraform
+gets to stop cleanly and release its lock. Detached background steps
+(`--tmux`) are left running.
+
 **Background steps** (`background: true`) start and let the run move on.
 They run on their own terminal until the `stop_after` step finishes (or the
 run ends), are visible as a tab in the GUI or with `w` in the CLI, and their

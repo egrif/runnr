@@ -399,6 +399,19 @@ func (l *liveRun) ConfirmDanger(ctx context.Context, idx int, step runbook.Step,
 	}
 }
 
+// AskStep: a question the running step asks (runnr_ask: answered in a
+// text box; runnr_confirm: yes or no).
+func (l *liveRun) AskStep(ctx context.Context, idx int, step runbook.Step, kind, prompt string) (string, error) {
+	text := "Asked by step " + strconv.Itoa(idx+1) + " (" + step.Name + ")"
+	if kind == "confirm" {
+		a, err := l.ask(ctx, Question{Type: "ask", Step: idx, Title: prompt, Text: text, Options: []string{"yes", "no"}})
+		return a.Value, err
+	}
+	in := runbook.Input{Name: "answer"}
+	a, err := l.ask(ctx, Question{Type: "ask_text", Step: idx, Title: prompt, Text: text, Input: &in})
+	return a.Value, err
+}
+
 // ConfirmTyped: a point of no return; the operator types the value.
 func (l *liveRun) ConfirmTyped(ctx context.Context, idx int, step runbook.Step, command, want string) (bool, error) {
 	for {

@@ -698,13 +698,13 @@ const QLABELS_BY_TYPE = {
 };
 
 const QLABELS = {
-  run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…", way: "↪ Try another way…",
+  yes: "✔ Yes", no: "✘ No", run: "▶ Run", skip: "Skip", abort: "Abort run", done: "✔ Done", fail: "✘ Failed", retry: "↻ Retry", force: "⚑ Force success…", way: "↪ Try another way…",
   shell: "⌨ Open shell", continue: "Run the rest without pausing",
 };
 
 function renderQuestion(q, runId) {
   let body = "";
-  if (q.type === "input") {
+  if (q.type === "input" || q.type === "ask_text") {
     const i = q.input;
     body = i.choices?.length
       ? `<select name="value">${i.choices.map((c) => `<option ${c === i.default ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`

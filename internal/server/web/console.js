@@ -116,7 +116,7 @@ function cxPhase(state) {
   if (CX_ENDED.includes(r.status)) return { label: r.status, cls: `s-${r.status}` };
   if (q) {
     const what = { before: "paused before the step", after: "paused: check the result", failure: "step failed: what now?", input: "needs an input",
-      confirm: "asks before running", danger: "dangerous: double check", typed: "type to confirm", manual: "manual step: waiting for you", choose: "which way?" }[q.type] || "waiting for you";
+      confirm: "asks before running", ask: "the step asks you", ask_text: "the step asks you", danger: "dangerous: double check", typed: "type to confirm", manual: "manual step: waiting for you", choose: "which way?" }[q.type] || "waiting for you";
     return { label: what, cls: q.type === "failure" ? "s-failed" : "waiting" };
   }
   return { label: "running", cls: "s-running" };
@@ -186,6 +186,7 @@ function cxToolbar(state, live) {
     before: [["run", "▶ Run step", "primary"], ["skip", "⏭ Skip"], ["continue", "⏩ Run the rest", "", "Run this and the remaining steps without pausing"]],
     after: [["continue", "▶ Continue", "primary"], ["retry", "↻ Run again"], ["fail", "✘ Mark failed…"]],
     confirm: [["run", "▶ Run", "primary"], ["skip", "⏭ Skip"]],
+    ask: [["yes", "✔ Yes", "primary"], ["no", "✘ No"]],
     manual: [["done", "✔ Done", "primary"], ["skip", "⏭ Skip"], ["fail", "✘ Failed…"]],
     failure: [["retry", "↻ Retry", "primary"], ["way", "↪ Another way…"], ["skip", "⏭ Skip"], ["force", "⚑ Force success…"]],
   };
@@ -588,7 +589,17 @@ function cxRenderAction(state) {
   const fg = main.querySelector(".cx-fg");
   const showFg = state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
   fg.hidden = !showFg;
-  if (showFg) cxShowSession(state.fg, fg.querySelector(".cx-term"));
+  if (showFg) {
+    const s = state.fg;
+    const bar = fg.querySelector(".cx-tabs");
+    if (bar && bar.dataset.for !== s.id) {
+      bar.dataset.for = s.id;
+      bar.innerHTML = `<span class="cx-fg-title">⌨ ${esc(s.title)}</span><span class="muted small cx-fg-hint">${s.shell ? "the run's variables are loaded · type exit to go back" : "type here when it asks"}</span>
+        <span class="spacer"></span><button class="link" data-fg-end title="Hang up, like closing the terminal">End session</button>`;
+      bar.querySelector("[data-fg-end]").onclick = () => { if (confirm(`End “${s.title}”? Whatever's running in it is hung up.`)) sendTerm(s, { end: true }); };
+    }
+    cxShowSession(s, fg.querySelector(".cx-term"));
+  }
 }
 
 // In a run, the inputs' action: the question asking for one, or the values
@@ -614,7 +625,7 @@ function cxHostTerms(state) {
   term.host = {
     started(s) {
       if (s.background) { state.bgActive = s.id; cxRenderBg(state); }
-      else { state.fg = s; cxRenderAction(state); cxLayout(state); }
+      else { state.fg = s; cxRenderAction(state); cxLayout(state); s.xt.focus(); }
     },
     ended(s) {
       if (s.background) cxRenderBg(state);

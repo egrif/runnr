@@ -117,8 +117,9 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 			}
 		}()
 	}
-	// Cancelling the run (or a timeout) kills the command.
-	stop := context.AfterFunc(ctx, func() { _ = cmd.Process.Kill() })
+	// Cancelling the run (or a timeout) stops what's on the terminal the way
+	// an operator would: Ctrl-C, then SIGTERM, then SIGKILL.
+	stop := context.AfterFunc(ctx, func() { interruptTerm(cmd.Process.Pid) })
 
 	go func() {
 		defer close(s.done)

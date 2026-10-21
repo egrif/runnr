@@ -32,9 +32,10 @@ func (x *executor) setupFunctions() error {
 		add(l.Name, l.Functions)
 	}
 	add("runbook", x.rb.Functions)
-	if script == "" {
-		return nil
-	}
+	// Every step can ask the operator a question (runnr_ask, runnr_confirm).
+	script += askFunctions
+	all["runnr_ask"] = FuncInfo{Name: "runnr_ask", Description: "Ask the operator a question and print the answer. Usage: runnr_ask PROMPT", From: "runnr"}
+	all["runnr_confirm"] = FuncInfo{Name: "runnr_confirm", Description: "Ask the operator yes or no; succeeds on yes. Usage: runnr_confirm PROMPT", From: "runnr"}
 	f, err := os.CreateTemp(x.opts.TempDir, "runnr-functions-*.sh")
 	if err != nil {
 		return err

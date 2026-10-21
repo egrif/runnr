@@ -677,3 +677,8 @@ nav.tabs .tab-console { margin-left: auto; }
 .cx-step-editor .step-edit { min-height: 260px; }
 .cx-step-editor .se1-yaml textarea { width: 100%; min-height: 320px; }
 .cx-edit-note { margin: 0 0 8px; }
+.cx-fg .cx-tabs { padding: 4px 10px; gap: 10px; flex: none; }
+.cx-fg-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cx-fg-hint { color: #9a9ba3; }
+.cx-fg .link { color: #8fb4ff; }
+.cx-fg:focus-within { outline: 2px solid var(--accent); }
