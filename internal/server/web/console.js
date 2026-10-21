@@ -449,16 +449,28 @@ function cxRenderInputsDetails(state, head, body) {
     </table>${state.launch ? `<p class="muted small">Fill them in in the pane below.</p>` : ""}` : `<p class="muted">This runbook takes no inputs.</p>`;
 }
 
+// cxStartEdit opens the editor's own form for step i: the runbook as saved
+// (for the sections, later steps and functions the form offers), with the
+// step as this run has it when editing it for the run.
 async function cxStartEdit(state, i) {
   const target = cxEditTarget(state, i);
   try {
-    const def = target === "run"
-      ? await api("GET", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`)
-      : await api("GET", `/api/runbooks/${enc(state.run.runbook)}/steps/${i + 1}`);
-    state.editing = { i, target, yaml: def.yaml, orig: def.yaml, version: def.version, error: "" };
+    const data = await api("GET", `/api/runbooks/${enc(state.run.runbook)}`);
+    const parsed = await api("POST", "/api/parse", data.raw, true);
+    if (!parsed.ok) throw new Error(`The saved runbook doesn't parse: ${parsed.error}`);
+    const doc = parsed.runbook;
+    if (target === "run") {
+      const def = await api("GET", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`);
+      const st = await api("POST", "/api/parse-step", def.yaml, true);
+      if (!st.ok) throw new Error(st.error);
+      if (i >= doc.steps.length) throw new Error("the saved runbook has fewer steps than this run; edit the step in the classic run page");
+      doc.steps[i] = st.step;
+    }
+    if (i >= doc.steps.length) throw new Error(`the runbook has no step ${i + 1} now`);
+    state.editing = { i, target, doc, comments: target === "run" ? {} : parsed.comments, version: data.version, error: "" };
     state.follow = false;
     cxRenderDetails(state);
-    main.querySelector(".cx-details textarea")?.focus();
+    cxLayout(state);
   } catch (e) { toast(e.message); }
 }
 
@@ -469,36 +481,38 @@ function cxRenderEditor(state, head, body) {
   head.innerHTML = `<b>Step ${i + 1}</b><span class="muted small">${run ? "editing it for this run" : `editing it in the runbook (version ${ed.version})`}</span><span class="spacer"></span>
     <button class="primary" data-apply>${run ? (waiting ? "Apply and run it again" : "Apply") : "Save to runbook"}</button>
     <button data-view title="Back to the step's definition">👁 View</button>`;
-  const note = run
-    ? `${waiting ? "The run is waiting on this step: applying starts it again with the new version."
-        : state.steps[i].status === "running" ? "This step is running now; the change applies if it runs again (retry)." : "The run uses the new version when it gets here."}
-       Save it to the runbook afterwards (the banner above), or the change is only in this run.`
-    : state.launch ? "Saving makes a new version of the runbook; the rest of its YAML (comments included) stays as it is. The run uses it when you start."
-    : `Saving makes a new version of the runbook; this run isn't changed.${state.run.runbook_version && state.plan?.latest && state.plan.latest !== state.run.runbook_version ? ` This run was on version ${state.run.runbook_version}: check step ${i + 1} is the same step in version ${state.plan.latest}.` : ""}`;
-  body.innerHTML = `<p class="muted small">${note}</p>
-    <textarea class="editor cx-yaml" spellcheck="false">${esc(ed.yaml)}</textarea><div class="error-text">${esc(ed.error)}</div>`;
-  const ta = body.querySelector("textarea");
-  ta.oninput = () => (ed.yaml = ta.value);
-  ta.onkeydown = (e) => {
-    if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); ed.yaml = ta.value; }
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) head.querySelector("[data-apply]").click();
-    if (e.key === "Escape") head.querySelector("[data-view]").click();
-  };
+  // The form is built once; re-rendering the head leaves what's typed alone.
+  if (!(ed.mounted && body.contains(ed.mounted))) {
+    const note = run
+      ? `${waiting ? "The run is waiting on this step: applying starts it again with the new version."
+          : state.steps[i].status === "running" ? "This step is running now; the change applies if it runs again (retry)." : "The run uses the new version when it gets here."}
+         Save it to the runbook afterwards (the banner above), or the change is only in this run.`
+      : state.launch ? "Saving makes a new version of the runbook with just this step changed. The run uses it when you start."
+      : `Saving makes a new version of the runbook with just this step changed; this run isn't changed.${state.run.runbook_version && ed.version !== state.run.runbook_version ? ` This run was on version ${state.run.runbook_version}; the runbook is at ${ed.version}: check it's the same step.` : ""}`;
+    body.innerHTML = `<p class="muted small cx-edit-note">${note}</p><div class="cx-step-editor"></div><div class="error-text"></div>`;
+    ed.mounted = body.querySelector(".cx-step-editor");
+    ed.handle = renderStepEditor(ed.mounted, { doc: ed.doc, comments: ed.comments, i });
+  }
+  const err = body.querySelector(".error-text");
   head.querySelector("[data-view]").onclick = () => {
-    if (ed.yaml !== ed.orig && !confirm("Discard your change?")) return;
+    if (ed.handle.dirty() && !confirm("Discard your change?")) return;
     state.editing = null;
     cxRenderDetails(state);
+    cxLayout(state);
   };
   head.querySelector("[data-apply]").onclick = async () => {
     try {
+      const step = await ed.handle.step();
+      if (!step) return;
+      const yaml = JSON.stringify(step); // JSON is YAML
       if (run) {
-        const res = await api("PUT", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`, ed.yaml, true);
+        const res = await api("PUT", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`, yaml, true);
         state.run.edits = res.edits;
         state.run.edits_saved = 0;
         Object.assign(state.steps[i], { edited: true, name: res.view.name, kind: res.view.kind });
         toast(res.restarted ? "Step changed; running it again" : "Step changed for this run");
       } else {
-        const res = await api("PUT", `/api/runbooks/${enc(state.run.runbook)}/steps/${i + 1}`, ed.yaml, true, { "If-Match": String(ed.version) });
+        const res = await api("PUT", `/api/runbooks/${enc(state.run.runbook)}/steps/${i + 1}`, yaml, true, { "If-Match": String(ed.version) });
         toast(`Saved to the runbook as version ${res.version}`);
         if (state.launch) {
           state.rb = res.runbook;
@@ -510,7 +524,7 @@ function cxRenderEditor(state, head, body) {
       if (state.launch) { state.refresh(); return cxLaunchRender(state); }
       state.onState?.();
       cxRender(state);
-    } catch (e) { ed.error = e.message; body.querySelector(".error-text").textContent = e.message; }
+    } catch (e) { err.textContent = e.message; }
   };
 }
 
@@ -655,7 +669,8 @@ function cxLayout(state) {
   const hasBg = [...term.sessions.values()].some((s) => s.background);
   main.querySelector(".cx-bg").hidden = !hasBg;
   main.querySelector('[data-gutter="action-bg"]').hidden = !hasBg;
-  main.querySelector(".cx-details").style.flexGrow = z.details;
+  // Editing a step needs room: the details pane takes most of the height meanwhile.
+  main.querySelector(".cx-details").style.flexGrow = state.editing ? Math.max(z.details, (z.action + z.bg) * 2.5) : z.details;
   main.querySelector(".cx-action").style.flexGrow = z.action;
   main.querySelector(".cx-bg").style.flexGrow = z.bg;
 }

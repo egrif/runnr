@@ -686,8 +686,13 @@ function renderStruct(ed) {
   // Library functions load once; draw again when they arrive.
   loadLibs(d.libraries).then((loaded) => { if (loaded && ed.mode === "struct") renderStruct(ed); });
   curEd = ed;
-  const pane = $("#struct-pane");
-  const html = `
+  const pane = ed.pane || $("#struct-pane");
+  // One step only (the run console's Edit this step): its form, as in the outline.
+  const single = ed.only != null && d.steps[ed.only];
+  const html = single ? `<div class="step-edit single-step">
+      <div class="se-details" style="width:${ed.widths[0] ? ed.widths[0] + "px" : "42%"}">${detailsPane(ed, d, single, ed.only)}</div>
+      <div class="split" data-split="0" title="Drag to resize"></div>
+      <div class="se-command">${stepLeft(ed, single, ed.only)}</div></div>` : `
     <div class="card">
       <h3>Runbook${cmtBtn([d, "#"])}</h3>
       <div class="fgroup-rows">
@@ -832,6 +837,12 @@ function renderStruct(ed) {
     }
     if (t.matches("[data-sec-pick]") && e.type === "change") {
       const i = +t.dataset.i;
+      if (ed.only != null) {
+        // Editing one step in place: it keeps its position, only its section changes.
+        const v = t.value === "__new__" ? (prompt("New section name:") || "").trim() : t.value;
+        if (v || t.value === "") d.steps[i].section = v || undefined;
+        return renderStruct(ed);
+      }
       if (t.value === "__new__") {
         const v = (prompt("New section name (it starts at this step):") || "").trim();
         if (v) d.steps[i].section = v;
@@ -1091,5 +1102,66 @@ function bindDrag(ed, pane) {
     drag = null;
     renderStruct(ed);
     pane.dispatchEvent(new Event("input"));
+  };
+}
+
+// ---------- one step (the run console's Edit this step) ----------
+
+// renderStepEditor puts the editor's form for step i of doc (the runbook,
+// as /api/parse gives it) in el, with the same Structured / YAML views and
+// validation as the editor page. step() resolves to the step as edited
+// (null if the YAML doesn't parse), dirty() says whether it changed.
+function renderStepEditor(el, { doc, comments, i, yaml }) {
+  const ed = { mode: "struct", doc, only: i, test: { vars: {}, extra: {}, setup: true }, secretVars: {},
+    open: new Set(), adv: new Set(), runs: new Map(), wayTab: new WeakMap(), secOpen: new Set(), comments: new WeakMap() };
+  attachComments(ed, comments || {});
+  const orig = JSON.stringify(cleanDoc(doc.steps[i]));
+  el.innerHTML = `
+    <div class="row editor-bar se1-bar">
+      <div class="seg"><button data-m="struct" class="on">Structured</button><button data-m="yaml">YAML</button></div>
+      <button data-validate title="Check the runbook with this step as edited">Validate</button>
+      <span class="validation se1-v"></span>
+    </div>
+    <div class="se1-struct struct-pane"></div>
+    <div class="se1-yaml" hidden><textarea class="editor cx-yaml" spellcheck="false"></textarea></div>`;
+  ed.pane = el.querySelector(".se1-struct");
+  const ta = el.querySelector("textarea"), v = el.querySelector(".se1-v");
+  const show = (res) => { v.className = "validation se1-v " + (res.ok ? "ok" : "bad"); v.textContent = res.ok ? "✔ valid" : res.error; };
+  ta.onkeydown = (e) => { if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); } };
+  // fromYAML takes the YAML view's text into the form's step.
+  const fromYAML = async () => {
+    const res = await api("POST", "/api/parse-step", ta.value, true);
+    if (!res.ok) { show(res); return false; }
+    doc.steps[i] = res.step;
+    return true;
+  };
+  const setMode = async (mode) => {
+    if (mode === ed.mode) return;
+    if (mode === "yaml") {
+      const res = await api("POST", "/api/format-step", cleanDoc(doc.steps[i]));
+      if (!res.ok) return show(res);
+      ta.value = res.raw;
+    } else if (!(await fromYAML())) return;
+    ed.mode = mode;
+    el.querySelector(".se1-struct").hidden = mode !== "struct";
+    el.querySelector(".se1-yaml").hidden = mode !== "yaml";
+    el.querySelectorAll("[data-m]").forEach((b) => b.classList.toggle("on", b.dataset.m === mode));
+    if (mode === "struct") renderStruct(ed);
+    else ta.focus();
+  };
+  el.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => setMode(b.dataset.m)));
+  el.querySelector("[data-validate]").onclick = async () => {
+    if (ed.mode === "yaml" && !(await fromYAML())) return;
+    const y = await formatDoc(ed);
+    show(y.ok ? await api("POST", "/api/validate", y.raw, true) : y);
+  };
+  renderStruct(ed);
+  if (yaml) { ta.value = yaml; }
+  return {
+    async step() {
+      if (ed.mode === "yaml" && !(await fromYAML())) return null;
+      return cleanDoc(doc.steps[i]);
+    },
+    dirty: () => (ed.mode === "yaml" ? ta.value !== (yaml || ta.value) || JSON.stringify(cleanDoc(doc.steps[i])) !== orig : JSON.stringify(cleanDoc(doc.steps[i])) !== orig),
   };
 }

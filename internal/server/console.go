@@ -235,3 +235,39 @@ func (s *Server) putRunbookStep(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"version": ver, "runbook": rb})
 }
+
+// parseStep reads one step's YAML into the structure the editor's form
+// works on ({ok, step} or {ok: false, error}).
+func (s *Server) parseStep(w http.ResponseWriter, r *http.Request) {
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	step, err := runbook.ParseStep(raw)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "step": step})
+}
+
+// formatStep writes one step (JSON, as the editor's form has it) as YAML.
+func (s *Server) formatStep(w http.ResponseWriter, r *http.Request) {
+	raw, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	step, err := runbook.ParseStep(raw) // JSON is YAML
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	out, err := runbook.FormatStep(step)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "raw": string(out)})
+}

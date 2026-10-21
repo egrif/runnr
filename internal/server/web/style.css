@@ -671,3 +671,9 @@ nav.tabs .tab-console { margin-left: auto; }
 .cx-split-b pre.cmd { margin-top: 0; white-space: pre; overflow: auto; }
 .cx-split-b h4 { margin: 0 0 4px; }
 .cx-details .cx-pane-body:has(.cx-split) { overflow: hidden; }
+.cx-step-editor .se1-bar { margin-bottom: 8px; gap: 8px; }
+.cx-step-editor .se1-v { font-size: 12px; padding: 2px 8px; }
+.cx-step-editor .se1-v:empty { display: none; }
+.cx-step-editor .step-edit { min-height: 260px; }
+.cx-step-editor .se1-yaml textarea { width: 100%; min-height: 320px; }
+.cx-edit-note { margin: 0 0 8px; }

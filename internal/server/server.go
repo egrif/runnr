@@ -138,6 +138,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/runs/{id}/controls", s.setControls)
 	mux.HandleFunc("POST /api/preview", s.preview)
 	mux.HandleFunc("POST /api/parse", s.parse)
+	mux.HandleFunc("POST /api/parse-step", s.parseStep)
+	mux.HandleFunc("POST /api/format-step", s.formatStep)
 	mux.HandleFunc("POST /api/format", s.format)
 	return s.guard(mux)
 }
