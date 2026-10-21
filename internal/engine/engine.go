@@ -308,6 +308,7 @@ type StepView struct {
 	Background    bool     `json:"background,omitempty"`
 	StopAfter     string   `json:"stop_after,omitempty"`
 	WaitFor       []string `json:"wait_for,omitempty"`
+	CloseOnExit   bool     `json:"close_on_exit,omitempty"`
 	ConfirmTyping string   `json:"confirm_typing,omitempty"`
 	SkipIf        string   `json:"skip_if,omitempty"`
 	OkIf          string   `json:"ok_if,omitempty"`

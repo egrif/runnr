@@ -382,7 +382,10 @@ gets to stop cleanly and release its lock. Detached background steps
 
 **Background steps** (`background: true`) start and let the run move on.
 They run on their own terminal until the `stop_after` step finishes (or the
-run ends), are visible as a tab in the GUI or with `w` in the CLI, and their
+run ends; `wait_for` on a later step lets one finish instead). When one
+ends, its terminal stays open saying how (✔ completed, ✘ exited with a
+status, ■ stopped) until you close it, or closes at once with
+`close_on_exit: true`. They're visible as a tab in the GUI or with `w` in the CLI, and their
 output is recorded with the step. They can't publish outputs.
 
 **Running in tmux.** `runnr run --tmux` (or `resume --tmux`) runs in a

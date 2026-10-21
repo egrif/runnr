@@ -38,7 +38,7 @@ async function viewConsole(id) {
           <div class="cx-gutter-h" data-gutter="details-action"></div>
           <section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-tabs"></div><div class="cx-term"></div></div></div></section>
           <div class="cx-gutter-h" data-gutter="action-bg" hidden></div>
-          <section class="cx-pane cx-bg" hidden><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div></div><div class="cx-pane-body cx-term"></div></section>
+          <section class="cx-pane cx-bg" hidden><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div><span class="cx-bg-status small"></span></div><div class="cx-pane-body cx-term"></div></section>
         </div>
       </div>
     </div>`;
@@ -639,9 +639,10 @@ function cxHostTerms(state) {
     },
     ended(s) {
       if (s.background) {
-        // Done: its output is recorded with the step. Gone from the pane shortly.
-        cxRenderBg(state);
-        setTimeout(() => cxRemoveBg(state, s), 3000);
+        // It stays, saying how it ended, until closed (✕), unless its step
+        // says to close it when done.
+        if (s.closeOnExit) cxRemoveBg(state, s);
+        else cxRenderBg(state);
       } else if (state.fg === s) {
         // Recorded with the step: the log shows it. Leave it a moment, then back to Now.
         setTimeout(() => { if (state.fg === s) { state.fg = null; state.actionTab = "now"; cxRenderAction(state); cxLayout(state); } }, 1500);
@@ -671,8 +672,12 @@ function cxShowSession(s, container) {
 function cxRenderBg(state) {
   const pane = main.querySelector(".cx-bg");
   const bgs = [...term.sessions.values()].filter((s) => s.background);
-  pane.querySelector(".cx-tabs").innerHTML = bgs.map((s) => `<span class="term-tab ${s.id === state.bgActive ? "on" : ""} ${s.ended ? "ended" : ""}" data-bg="${esc(s.id)}" title="${esc(s.title)}${s.ended ? " (ended)" : ""}"><span class="term-dot"></span>${esc(s.title.replace(/^background · /, ""))}
-      <button class="term-x" data-close-bg="${esc(s.id)}" title="${s.ended ? "Close" : "End it (hang up) and close"}">✕</button></span>`).join("");
+  pane.querySelector(".cx-tabs").innerHTML = bgs.map((s) => {
+    const [result, kind] = termResult(s);
+    return `<span class="term-tab ${s.id === state.bgActive ? "on" : ""} ${s.ended ? "ended" : ""}" data-result="${kind}" data-bg="${esc(s.id)}" title="${esc(s.title)}${s.ended ? ` · ${esc(result)}` : " · running"}"><span class="term-dot"></span>${s.ended ? `<b class="term-res">${esc(result.split(" ")[0])}</b>` : ""}${esc(s.title.replace(/^background · /, ""))}
+      <button class="term-x" data-close-bg="${esc(s.id)}" title="${s.ended ? "Close" : "End it (hang up) and close"}">✕</button></span>`;
+  }).join("");
+
   pane.querySelectorAll("[data-bg]").forEach((b) => (b.onclick = (e) => {
     if (e.target.closest("[data-close-bg]")) return;
     state.bgActive = b.dataset.bg;
@@ -687,6 +692,13 @@ function cxRenderBg(state) {
   }));
   const s = term.sessions.get(state.bgActive) || bgs[bgs.length - 1];
   if (s) { state.bgActive = s.id; cxShowSession(s, pane.querySelector(".cx-term")); }
+  // How the shown one stands: running, or how it ended.
+  const status = pane.querySelector(".cx-bg-status");
+  if (status) {
+    const [result, kind] = s ? termResult(s) : ["", ""];
+    status.textContent = s?.ended ? result : s ? "running" : "";
+    status.dataset.result = s?.ended ? kind : "running";
+  }
   cxLayout(state);
 }
 

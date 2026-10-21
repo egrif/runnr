@@ -132,6 +132,11 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 		close(ended)
 		resizing.Wait()
 		f.Close()
+		// The terminal can say how it ended (exit status, or stopped by a signal).
+		if es, ok := conn.(ExitSetter); ok && cmd.ProcessState != nil {
+			code := cmd.ProcessState.ExitCode()
+			es.SetExit(code)
+		}
 		conn.Close()
 		cleanup()
 		s.transcript = CleanTranscript(rec.String())
@@ -277,7 +282,12 @@ func CleanTranscript(raw string) string {
 
 // PipeConn is a TermConn for interactors whose operator is elsewhere (the
 // browser): input arrives through Input, output goes to the out function.
+// ExitSetter is a TermConn told, before it's closed, how its command
+// ended: the exit status, or -1 if a signal stopped it.
+type ExitSetter interface{ SetExit(code int) }
+
 type PipeConn struct {
+	exit   *int
 	out    func([]byte)
 	in     chan []byte
 	resize chan struct{}
@@ -332,6 +342,20 @@ func (p *PipeConn) Read(b []byte) (int, error) {
 func (p *PipeConn) Write(b []byte) (int, error) {
 	p.out(append([]byte(nil), b...))
 	return len(b), nil
+}
+
+// SetExit records how the command ended (ExitSetter).
+func (p *PipeConn) SetExit(code int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.exit = &code
+}
+
+// Exit is how the command ended (nil: not known).
+func (p *PipeConn) Exit() *int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.exit
 }
 
 func (p *PipeConn) Close() error {

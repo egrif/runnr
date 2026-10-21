@@ -27,6 +27,15 @@ function runningBackground() {
   return [...term.sessions.values()].filter((s) => s.background && !s.ended);
 }
 
+// termResult is how a session's command ended, for people: [text, kind].
+function termResult(s) {
+  if (!s.ended) return ["", ""];
+  if (s.exit == null) return ["ended", ""];
+  if (s.exit === 0) return ["✔ completed (exit 0)", "ok"];
+  if (s.exit < 0) return ["■ stopped", "stopped"];
+  return [`✘ exited with status ${s.exit}`, "fail"];
+}
+
 // termSlotKey is where a session goes: its run and step.
 const termSlotKey = (runId, step) => `${runId}:${step}`;
 
@@ -60,12 +69,14 @@ function termMountAll() {
       s.box.className = "term-box";
       s.box.innerHTML = `<div class="term-head"><span class="term-dot"></span><b class="term-title"></b><span class="muted small term-hint"></span>
           <span class="spacer"></span><button class="link term-copy-out" title="Copy the selection, or the whole session if nothing is selected (or select and press ⌘C / Ctrl+Shift+C)">Copy</button>
-          <button class="link term-end" title="Hang up, like closing a terminal window">End session</button></div>
+          <button class="link term-end" title="Hang up, like closing a terminal window">End session</button>
+          <button class="term-x term-close" title="Close (its output is recorded with the step)">✕</button></div>
         <details class="term-side" hidden><summary>The step's commands, and functions you can call</summary>
           <div class="row"><span class="spacer"></span><button class="link term-copy">Copy commands</button></div>
           <pre class="term-cmd"></pre><div class="term-expect"></div><div class="term-fns"></div></details>
         <div class="term-body"></div>`;
       s.box.querySelector(".term-copy-out").onclick = () => copyTerm(s);
+      s.box.querySelector(".term-close").onclick = () => termRemove(s);
       s.box.querySelector(".term-end").onclick = () => {
         if (!s.ended && confirm(`End “${s.title}”? Anything still running in it is hung up.`)) sendTerm(s, { end: true });
       };
@@ -96,9 +107,12 @@ function termMountAll() {
 
 function termHead(s) {
   const b = s.box;
+  const [result, kind] = termResult(s);
   b.classList.toggle("ended", !!s.ended);
+  b.dataset.result = kind;
   b.querySelector(".term-title").textContent = `${s.background ? "◐ " : "⌨ "}${s.title}`;
-  b.querySelector(".term-hint").textContent = s.ended ? "ended · recorded with the step"
+  b.querySelector(".term-close").hidden = !(s.ended && s.background);
+  b.querySelector(".term-hint").textContent = s.ended ? `${result} · recorded with the step`
     : s.shell ? "the run's variables are loaded · type exit (or End session) to go back to the run"
     : s.background ? "keeps running while the run goes on" : "type here when it asks · recorded with the step";
   b.querySelector(".term-end").hidden = !!s.ended;
@@ -127,12 +141,27 @@ function termEvent(runId, e) {
     s.xt.write(Uint8Array.from(atob(t.data), (c) => c.charCodeAt(0)));
   } else if (e.kind === "term_end") {
     s.ended = true;
-    s.xt.write("\r\n\x1b[2m── session ended ──\x1b[0m\r\n");
+    s.exit = t.exit;
+    const [result, kind] = termResult(s);
+    const color = { ok: "32", fail: "31", stopped: "33" }[kind] || "2";
+    s.xt.write(`\r\n\x1b[1;${color}m── ${result} ──\x1b[0m\r\n`);
     if (term.host) return term.host.ended(s);
     if (s.box) termHead(s);
-    // It's recorded with the step (the step's log shows it): put it away.
-    setTimeout(() => { s.gone = true; s.box?.remove(); s.xt.dispose(); term.sessions.delete(s.id); }, 2500);
+    // A background job stays, saying how it ended, until closed (✕), unless
+    // its step says to close it; a step's own terminal is put away shortly
+    // (the step's log has it).
+    if (s.background) { if (s.closeOnExit) termRemove(s); }
+    else setTimeout(() => termRemove(s), 2500);
   }
+}
+
+// termRemove takes a session off the page.
+function termRemove(s) {
+  if (s.gone) return;
+  s.gone = true;
+  s.box?.remove();
+  s.xt.dispose();
+  term.sessions.delete(s.id);
 }
 
 function startTerm(runId, t, step) {
@@ -147,7 +176,7 @@ function startTerm(runId, t, step) {
   });
   const fit = new FitAddon.FitAddon();
   xt.loadAddon(fit);
-  const s = { id: t.id, runId, slot: termSlotKey(runId, step), title: t.title, step, shell: !!t.shell, background: !!t.background, command: t.command, expect: t.expect, functions: t.functions, xt, fit, el, ended: false, opened: false };
+  const s = { id: t.id, runId, slot: termSlotKey(runId, step), title: t.title, step, shell: !!t.shell, background: !!t.background, closeOnExit: !!t.close_on_exit, command: t.command, expect: t.expect, functions: t.functions, xt, fit, el, ended: false, opened: false };
   // ⌘C / Ctrl+Shift+C copy the selection; plain Ctrl+C still interrupts.
   xt.attachCustomKeyEventHandler((ev) => {
     const copyKey = ev.key.toLowerCase() === "c" && (ev.metaKey || (ev.ctrlKey && ev.shiftKey));

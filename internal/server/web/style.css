@@ -705,3 +705,17 @@ dialog.fn-picker input[type=search] { width: 100%; margin: 8px 0; }
 .term-tab .term-x { background: none; border: none; color: inherit; padding: 0 0 0 6px; cursor: pointer; opacity: .6; font-size: 11px; }
 .term-tab .term-x:hover { opacity: 1; }
 .cx-bg .term-tab { cursor: pointer; }
+/* how a terminal's command ended */
+.term-box[data-result=ok] { border-color: var(--ok); }
+.term-box[data-result=fail] { border-color: var(--fail); }
+.term-box[data-result=stopped] { border-color: var(--warn); }
+.term-box[data-result=ok] .term-hint { color: #4cc27c; }
+.term-box[data-result=fail] .term-hint { color: #ef6b6b; }
+.term-box[data-result=stopped] .term-hint { color: #e0a84a; }
+.term-box .term-close { color: #e4e6eb; }
+.term-tab .term-res { margin-right: 4px; }
+.term-tab[data-result=ok] .term-res, .cx-bg-status[data-result=ok] { color: #4cc27c; }
+.term-tab[data-result=fail] .term-res, .cx-bg-status[data-result=fail] { color: #ef6b6b; }
+.term-tab[data-result=stopped] .term-res, .cx-bg-status[data-result=stopped] { color: #e0a84a; }
+.cx-bg-status { white-space: nowrap; font-weight: 600; }
+.cx-bg-status[data-result=running] { color: #9a9ba3; font-weight: 400; }

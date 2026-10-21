@@ -412,6 +412,7 @@ const MORE_FIELDS = [
   ["continue_on_error", "Keep going if it fails", "bool", H.step.continue_on_error, () => true, "Behaviour"],
   ["tty", "Needs a terminal", "bool", H.step.tty, (k) => k === "run", "Behaviour"],
   ["background", "Run in background", "bool", H.step.background, (k, s) => k === "run" || (s.ways?.length > 0 && s.ways.every((w) => w.run)), "Behaviour"],
+  ["close_on_exit", "Close its terminal when done", "bool", H.step.close_on_exit, (k, s) => !!s.background, "Behaviour"],
   ["confirm_typing", "Confirm by typing", "text", H.step.confirm_typing, () => true, "Behaviour"],
   ["when", "Only when", "text", H.step.when, () => true, "Conditions & timing"],
   ["skip_if", "Skip if (command)", "text", H.step.skip_if, () => true, "Conditions & timing"],

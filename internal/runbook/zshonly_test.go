@@ -20,3 +20,12 @@ func TestZshOnlySyntax(t *testing.T) {
 		}
 	}
 }
+
+func TestCloseOnExitNeedsBackground(t *testing.T) {
+	if _, err := Parse([]byte("name: t\nsteps:\n  - {name: a, run: 'true', close_on_exit: true}\n")); err == nil || !strings.Contains(err.Error(), "close_on_exit applies to background steps") {
+		t.Fatalf("%v", err)
+	}
+	if _, err := Parse([]byte("name: t\nsteps:\n  - {name: a, run: 'true', background: true, close_on_exit: true}\n")); err != nil {
+		t.Fatal(err)
+	}
+}

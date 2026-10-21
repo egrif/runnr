@@ -55,6 +55,7 @@ const FIELD_HELP = {
     tty: "The command needs a keyboard (prompts, live displays): it runs on a terminal you type into. Output is still recorded.",
     background: "Start the command and move on; it keeps running on its own terminal (a tab in the GUI, w in the CLI) until the “stop after” step finishes, or the run ends.",
     stop_after: "The step after which this background command is stopped (hung up).",
+    close_on_exit: "Close the background step's terminal as soon as its command ends. By default it stays open, saying how it ended (✔ completed, ✘ exited with a status, ■ stopped), until you close it (✕).",
     wait_for: "Background steps (by id or name) to wait for before this step runs: it waits for them to finish by themselves, and fails if one failed. (stop_after hangs up; wait_for lets it finish.)",
     confirm_typing: "For a point of no return: the operator must type this (a template, e.g. {{.silo_env}}) to run the step, whatever else was confirmed. Unattended runs can't run it.",
     skip_if: "A command run first: if it succeeds the step is skipped as already done (e.g. the resource exists). Template.",
@@ -196,7 +197,7 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
     <p>Every step has a <code>name</code> and exactly one of <code>run</code>, <code>manual</code>, <code>checks</code> or <code>ways</code>. The rest is optional.</p>
     ${helpTable("step", [["name"], ["description"], ["expect"], ["id"], ["section"], ["owner"], ["confirm"], ["dangerous"], ["choose"], ["window"], ["window_offset"], ["always"], ["optional"], ["when"], ["continue_on_error"],
       ["confirm_typing"], ["skip_if"], ["ok_if"], ["fail_if"], ["verify"],
-      ["tty"], ["background"], ["stop_after"], ["wait_for"], ["timeout"], ["retries"], ["retry_delay"], ["dir"], ["step_shell", "shell"], ["step_env", "env"],
+      ["tty"], ["background"], ["stop_after"], ["close_on_exit"], ["wait_for"], ["timeout"], ["retries"], ["retry_delay"], ["dir"], ["step_shell", "shell"], ["step_env", "env"],
       ["outputs"], ["secret_outputs", "secret_outputs"], ["capture"], ["unattended"]])}
 
     <h2 id="help-kinds">Kinds of step</h2>

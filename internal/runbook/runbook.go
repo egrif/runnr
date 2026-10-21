@@ -158,6 +158,9 @@ type Step struct {
 	// WaitFor are background steps (by id or name) this step waits for to
 	// finish by themselves before it runs; it fails if one of them failed.
 	WaitFor []string `yaml:"wait_for,omitempty" json:"wait_for,omitempty"`
+	// CloseOnExit closes a background step's terminal as soon as its
+	// command ends (by default it stays open, saying how it ended).
+	CloseOnExit bool `yaml:"close_on_exit,omitempty" json:"close_on_exit,omitempty"`
 
 	// Checks run as a group; the step passes when all of them pass.
 	// Repeat retries the group until it does.
@@ -858,6 +861,9 @@ func validateStep(where string, s Step) []error {
 	}
 	if (s.OkIf != "" || s.FailIf != "") && !hasRun(s) {
 		add("ok_if and fail_if apply to commands")
+	}
+	if s.CloseOnExit && !s.Background {
+		add("close_on_exit applies to background steps")
 	}
 	if s.ConfirmTyping != "" && s.Confirm {
 		add("confirm_typing replaces confirm: use one")

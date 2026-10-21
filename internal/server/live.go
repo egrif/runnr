@@ -221,6 +221,11 @@ type TermEvent struct {
 	Background bool `json:"background,omitempty"`
 	// Functions a shell can call, listed beside it.
 	Functions []engine.FuncInfo `json:"functions,omitempty"`
+	// CloseOnExit (background steps): close the terminal when it ends.
+	CloseOnExit bool `json:"close_on_exit,omitempty"`
+	// Exit (term_end) is how its command ended: the exit status, or -1 if
+	// a signal stopped it (absent: not known).
+	Exit *int `json:"exit,omitempty"`
 }
 
 // StartBackground implements engine.BackgroundHost: a browser terminal tab
@@ -300,7 +305,7 @@ func (l *liveRun) startTerm(idx int, title string, background bool) *engine.Pipe
 	start := &TermEvent{ID: id, Title: title, Shell: strings.HasPrefix(title, "shell"), Background: background}
 	if idx >= 0 && l.session != nil {
 		v := l.session.View(idx)
-		start.Command, start.Expect = v.Command, v.Expect
+		start.Command, start.Expect, start.CloseOnExit = v.Command, v.Expect, v.CloseOnExit && background
 	}
 	if start.Shell && l.session != nil {
 		start.Functions = l.session.Functions()
@@ -311,7 +316,7 @@ func (l *liveRun) startTerm(idx int, title string, background bool) *engine.Pipe
 		l.mu.Lock()
 		delete(l.terms, id)
 		l.mu.Unlock()
-		l.publish(WireEvent{Event: engine.Event{Kind: "term_end", Step: idx}, Term: &TermEvent{ID: id}})
+		l.publish(WireEvent{Event: engine.Event{Kind: "term_end", Step: idx}, Term: &TermEvent{ID: id, Exit: conn.Exit()}})
 	}()
 	return conn
 }
