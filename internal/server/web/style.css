@@ -210,15 +210,11 @@ table.inputs tbody tr:hover { background: none; cursor: default; }
 .icon-btn { padding: 2px 8px; }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
 
-#term-drawer { position: fixed; left: 260px; right: 0; bottom: 0; height: 42vh; background: #15171c; border-top: 2px solid var(--accent); display: flex; flex-direction: column; z-index: 10; box-shadow: 0 -6px 20px rgba(0,0,0,.2); }
-#term-drawer.ended { border-top-color: var(--muted); }
-#term-drawer[hidden] { display: none; }
 .term-head { display: flex; gap: 10px; align-items: center; padding: 6px 12px; color: #e4e6eb; font-size: 13px; border-bottom: 1px solid #2c2e35; }
 .term-head .muted { color: #9a9ba3; }
 .term-head .link { color: #8fb4ff; }
 .term-title { font-weight: 600; }
 .term-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
-#term-drawer.ended .term-dot { background: var(--muted); }
 .term-main { flex: 1; min-height: 0; display: flex; }
 .term-side { width: 38%; min-width: 260px; max-width: 560px; overflow: auto; padding: 8px 12px; border-right: 1px solid #2c2e35; color: #e4e6eb; font-size: 13px; }
 .term-side[hidden] { display: none; }
@@ -227,12 +223,8 @@ table.inputs tbody tr:hover { background: none; cursor: default; }
 .term-side .expect { background: #0b0c0f; color: #e4e6eb; }
 .term-body { flex: 1; min-width: 0; min-height: 0; padding: 4px 8px; }
 .shell-log summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-top: 6px; }
-body.term-open main { padding-bottom: calc(42vh + 24px); }
 .term-note { margin: 4px 0; color: var(--accent); font-weight: 600; }
-@media (max-width: 760px) { #term-drawer { left: 0; } }
 
-#term-drawer.big { height: 80vh; }
-body.term-big main { padding-bottom: calc(80vh + 24px); }
 .term-head .link { white-space: nowrap; }
 .term-head .term-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .term-tabs { display: flex; gap: 4px; min-width: 0; overflow-x: auto; }
@@ -692,3 +684,18 @@ dialog.fn-picker input[type=search] { width: 100%; margin: 8px 0; }
 .fn-list-pick { list-style: none; margin: 0; padding: 0; max-height: 48vh; overflow: auto; }
 .fn-list-pick li { padding: 6px 8px; border-radius: 6px; cursor: pointer; }
 .fn-list-pick li.on, .fn-list-pick li:hover { background: var(--focus); }
+
+/* ---------- terminals, in their steps ---------- */
+.term-slot { padding-top: 6px; }
+.term-slot:empty { display: none; }
+.term-box { background: #15171c; color: #e4e6eb; border-radius: 8px; overflow: hidden; border: 2px solid var(--accent); margin: 6px 0; }
+.term-box.ended { border-color: #2c2e35; }
+.term-box .term-head { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid #2c2e35; }
+.term-box .term-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.term-box .term-hint { color: #9a9ba3; }
+.term-box .link { color: #8fb4ff; }
+.term-box .term-side { padding: 4px 10px; border-bottom: 1px solid #2c2e35; font-size: 12px; }
+.term-box .term-side pre { max-height: 160px; overflow: auto; }
+.term-box .term-body { height: 300px; min-height: 120px; resize: vertical; overflow: hidden; padding: 4px; }
+.term-box .term-pane { height: 100%; }
+.term-box.ended .term-dot { background: var(--muted); }

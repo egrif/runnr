@@ -511,6 +511,7 @@ function runPane(ed, s, i) {
       <button class="link" data-act="close-run" data-i="${i}">Close</button></div>
     ${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}
     ${r.question ? renderQuestion(r.question, r.id) : ""}
+    ${r.id ? `<div class="term-slot" data-term-slot="${esc(r.id)}:*"></div>` : ""}
     <pre class="log run-log">${lines || '<span class="info">starting…</span>'}</pre>
   </div>`;
 }
@@ -539,7 +540,12 @@ async function runThis(ed, i) {
   r.es = new EventSource(`/api/runs/${enc(r.id)}/events`);
   r.es.onmessage = (msg) => {
     const e = JSON.parse(msg.data);
-    if (e.kind.startsWith("term")) { termEvent(r.id, e); return; }
+    if (e.kind.startsWith("term")) {
+      termEvent(r.id, e);
+      // A terminal (this step's, or a setup step's) shows in the Run this pane.
+      if (e.kind !== "term") { r.term = e.kind === "term_start"; updateRunPane(ed, s); }
+      return;
+    }
     const name = ed.doc.steps[e.step]?.name;
     const tag = e.step >= 0 && e.step !== i ? `[setup: ${name}] ` : "";
     switch (e.kind) {
@@ -571,6 +577,7 @@ function updateRunPane(ed, s) {
   if (log) log.scrollTop = log.scrollHeight;
   const q = el.querySelector(".question");
   if (q) bindQuestion(q, ed.runs.get(s).question, ed.runs.get(s).id);
+  termMountAll();
 }
 
 // testValuesCard: inputs and extra variables used by Run this.
@@ -759,6 +766,7 @@ function renderStruct(ed) {
     if (q && r?.question) bindQuestion(q, r.question, r.id);
   });
   bindDrag(ed, pane);
+  termMountAll();
   const mw = pane.querySelector('[data-group="rb-window"]');
   if (mw) mw.ontoggle = () => (ed.windowOpen = mw.open);
   const tv = pane.querySelector("details.test-values");

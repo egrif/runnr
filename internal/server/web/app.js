@@ -294,10 +294,6 @@ async function viewRun(id) {
     if (e.kind.startsWith("term")) {
       termEvent(id, e);
       if (e.kind === "term") return; // terminal output doesn't change the page
-      if (!e.term.background) {
-        state.termStep = e.kind === "term_start" ? e.step : null;
-        state.termShell = e.kind === "term_start" && !!e.term.shell;
-      }
     }
     applyEvent(state, e);
     renderRun(state);
@@ -390,7 +386,7 @@ function renderRun(state) {
     ${windowBanner(run)}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
     ${(state.messages || []).map((m) => `<p class="muted">ℹ ${esc(m)}</p>`).join("")}
-    ${runningBackground().length ? `<div class="bg-list">${runningBackground().map((s) => `<span class="bg-item">◐ ${esc(s.title.replace(/^background · /, ""))} <button class="link" data-show-bg="${esc(s.id)}">View</button></span>`).join("")}</div>` : ""}
+    ${runningBackground().length ? `<div class="bg-list">${runningBackground().map((s) => `<span class="bg-item">◐ ${esc(s.title.replace(/^background · /, ""))} <button class="link" data-show-bg="${esc(s.id)}" title="Go to its terminal, in its step">Show</button></span>`).join("")}</div>` : ""}
     <div class="notes">${renderNotes(run.notes)}<button class="link" data-note="0">✎ Add run note</button></div>
     ${renderState(run.state, state)}
     ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
@@ -415,7 +411,7 @@ function renderRun(state) {
             <button class="pill ${has(ctl.pause_after, i) ? "on" : ""}" data-ctl="pause_after" data-i="${i}" title="Stop after this step to check it">⏸ after</button>` : ""}
         </div>
         ${state.question?.step === i ? `<div class="step-body">${renderQuestion(state.question, run.id)}</div>` : ""}
-        ${state.termStep === i ? `<div class="step-body"><p class="term-note">⌨ A terminal is open for this step below${state.termShell ? " (shell): type exit or End session to come back to the run" : ": type there when it asks"}. <button class="link" data-show-term>Show terminal</button></p></div>` : ""}
+        ${hasTerm(run.id, i) ? `<div class="step-body term-slot" data-term-slot="${esc(termSlotKey(run.id, i))}"></div>` : ""}
         ${s.notes?.length ? `<div class="step-body">${renderNotes(s.notes)}</div>` : ""}
         ${state.open.has(i) ? `<div class="step-body two-col"><div>
           ${s.status === "pending" && state.preview?.[i] ? `<h4>Will do</h4>${stepDetails(state.preview[i], state.fns)}` : `
@@ -455,7 +451,6 @@ function renderRun(state) {
     openExplain({ runbook: run.runbook }, n, n ? `${n}. ${state.steps[n - 1].name}` : run.runbook);
   }));
   main.querySelectorAll("[data-show-bg]").forEach((b) => (b.onclick = () => showTerm(b.dataset.showBg)));
-  main.querySelectorAll("[data-show-term]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); showTermDrawer(); }));
   main.querySelectorAll("[data-reopen]").forEach((b) => (b.onclick = async (ev) => {
     ev.stopPropagation();
     b.disabled = true;
@@ -492,6 +487,7 @@ function renderRun(state) {
   $("#rerun") && ($("#rerun").onclick = () => (location.hash = `#/runbooks/${enc(run.runbook)}?rerun=${enc(run.id)}`));
   const q = $(".question");
   if (q) bindQuestion(q, state.question, run.id);
+  termMountAll(); // terminals go back in their steps
 }
 
 // ---------- maintenance window ----------
