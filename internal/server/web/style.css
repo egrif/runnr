@@ -658,3 +658,16 @@ table.kv.cx-kv { width: auto; }
 .cx-action-body .card { margin-bottom: 10px; }
 .cx-toolbar button[disabled] { opacity: .45; }
 nav.tabs .tab-console { margin-left: auto; }
+.cx-inputs-item .nm { font-weight: 600; }
+.cx-inputs-item { border-bottom: 1px dashed var(--border); margin-bottom: 2px; }
+.cx-inputs-item.needs .ic, .cx-inputs-table tr.needs td:first-child { color: var(--warn); font-weight: 700; }
+.cx-inputs-table { border-collapse: collapse; width: 100%; }
+.cx-inputs-table th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.cx-inputs-table td { padding: 6px 8px; vertical-align: top; border-bottom: 1px solid var(--border); }
+.cx-split { display: grid; grid-template-columns: minmax(0, calc(var(--cx-split, .45) * 100%)) 6px minmax(0, 1fr); gap: 0; height: 100%; min-height: 0; }
+.cx-split-a, .cx-split-b { overflow: auto; min-width: 0; padding: 0 10px; }
+.cx-split-a { padding-left: 0; }
+.cx-split-b { padding-right: 0; }
+.cx-split-b pre.cmd { margin-top: 0; white-space: pre; overflow: auto; }
+.cx-split-b h4 { margin: 0 0 4px; }
+.cx-details .cx-pane-body:has(.cx-split) { overflow: hidden; }

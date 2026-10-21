@@ -49,7 +49,7 @@ async function viewConsole(id) {
   const loadPlan = async () => {
     try { state.plan = await api("GET", `/api/runs/${enc(id)}/plan`); cxRender(state, { details: !state.editing }); } catch {}
   };
-  api("GET", `/api/runbooks/${enc(run.runbook)}`).then((d) => { state.rbSections = d.runbook?.sections; cxRender(state); }).catch(() => {});
+  api("GET", `/api/runbooks/${enc(run.runbook)}`).then((d) => { state.rbSections = d.runbook?.sections; state.inputDefs = d.runbook?.inputs; cxRender(state); }).catch(() => {});
   await loadPlan();
   let pt;
   state.onState = () => { clearTimeout(pt); pt = setTimeout(loadPlan, 400); };
@@ -72,9 +72,9 @@ async function viewConsole(id) {
     applyEvent(state, e);
     if (e.kind === "step_finished" || e.kind === "step_started") state.onState();
     // Follow the run: the step it's on (or asking about) is the selected one.
-    const at = cxCurrent(state);
+    const at = state.question?.step === -1 ? -1 : cxCurrent(state);
     const moved = at !== before || e.kind === "question";
-    if (state.follow && moved && at >= 0 && at !== state.selected && !state.editing) state.selected = at;
+    if (state.follow && moved && (at >= 0 || state.question?.step === -1) && at !== state.selected && !state.editing) state.selected = at;
     cxRender(state, { details: moved && !state.editing });
   };
   stream.onerror = () => { if (CX_ENDED.includes(state.run.status)) stream.close(); };
@@ -93,8 +93,10 @@ function cxCurrent(state) {
   return state.steps.findIndex((s) => s.status === "pending");
 }
 
+// The selection is a step's index, or -1 for the run's inputs (listed
+// first, without a number).
 function cxSelected(state) {
-  if (state.selected == null || state.selected < 0) state.selected = Math.max(0, cxCurrent(state));
+  if (state.selected == null) state.selected = state.launch ? -1 : Math.max(0, cxCurrent(state));
   return state.selected;
 }
 
@@ -307,6 +309,16 @@ function cxRenderList(state) {
   let html = `<div class="cx-list-head"><b>Steps</b><span class="spacer"></span>
     ${state.launch ? `<span class="muted small">${state.include.filter(Boolean).length} of ${state.steps.length} included</span>`
       : `<label class="small" title="Keep the step the run is on selected"><input type="checkbox" data-follow ${state.follow ? "checked" : ""}> follow the run</label>`}</div><ol>`;
+  {
+    const ins = cxInputs(state);
+    const missing = ins.filter((x) => x.required && !x.def && !x.secret && !x.value).length;
+    const asking = state.question?.step === -1;
+    const started = !state.launch && state.steps.some((x) => x.status !== "pending");
+    const cls = ["cx-inputs-item", sel === -1 && "sel", asking && "waiting", started && "st-succeeded", missing && "needs"].filter(Boolean).join(" ");
+    html += `<li class="cx-step ${cls}" data-i="-1" title="The run's inputs and the values they have">
+      <span class="ic">${asking ? "⏸" : missing ? "!" : started ? "✔" : "≡"}</span><span class="n"></span><span class="nm">Inputs</span>
+      <span class="mk"></span><span class="tm">${missing ? `${missing} to fill in` : ins.length ? `${ins.length} value${ins.length === 1 ? "" : "s"}` : "none"}</span></li>`;
+  }
   state.steps.forEach((s, i) => {
     if (s.section && (i === 0 || state.steps[i - 1].section !== s.section)) {
       const members = state.steps.filter((x) => x.section === s.section);
@@ -360,20 +372,45 @@ function cxEditable(state, i) {
   return cur >= 0 && i >= cur && ["pending", "running"].includes(state.steps[i].status);
 }
 
+// cxInputs are the runbook's inputs with the values they have: as typed
+// before the run, else the run's (secrets masked).
+function cxInputs(state) {
+  const defs = state.rb?.inputs || state.inputDefs || [];
+  const vals = state.launch ? state.vars : state.run.inputs || {};
+  const names = [...new Set([...defs.map((d) => d.name), ...Object.keys(vals)])];
+  return names.map((n) => {
+    const d = defs.find((x) => x.name === n) || {};
+    return { name: n, value: vals[n] ?? "", def: d.default || "", required: !!d.required, secret: !!d.secret, choices: d.choices || [], description: d.description || "" };
+  });
+}
+
+// cxEditTarget: what "Edit this step" changes. In a live run, the step for
+// this run (the current step or a later one; null once it's run); before a
+// run, or after one, the saved runbook.
+function cxEditTarget(state, i) {
+  if (i < 0) return null;
+  if (state.launch) return "runbook";
+  if (state.live && !CX_ENDED.includes(state.run.status)) return cxEditable(state, i) ? "run" : null;
+  return "runbook";
+}
+
 function cxRenderDetails(state) {
   const pane = main.querySelector(".cx-details");
-  const i = cxSelected(state), s = state.steps[i];
-  if (!s) return;
-  const v = state.plan?.steps?.[i] || {};
+  const i = cxSelected(state);
   const head = pane.querySelector(".cx-pane-head"), body = pane.querySelector(".cx-pane-body");
-  const can = cxEditable(state, i);
-  head.innerHTML = `<b>Step ${i + 1}</b><span class="cx-head-name" title="${esc(s.name)}">${esc(s.name)}</span><span class="spacer"></span>
-    ${state.editing ? "" : can ? `<button data-edit title="Change this step for this run">✎ Edit</button>` : state.live ? `<span class="muted small">${CX_DONE.includes(s.status) || s.status === "failed" ? "already run" : ""}</span>` : `<a class="small" href="#/runbooks/${enc(state.run.runbook)}/edit">edit the runbook</a>`}`;
+  if (i === -1) return cxRenderInputsDetails(state, head, body);
+  const s = state.steps[i];
+  if (!s) return;
   if (state.editing) return cxRenderEditor(state, head, body);
+  const v = state.plan?.steps?.[i] || {};
+  const target = cxEditTarget(state, i);
+  head.innerHTML = `<b>Step ${i + 1}</b><span class="cx-head-name" title="${esc(s.name)}">${esc(s.name)}</span><span class="spacer"></span>
+    ${target ? `<button data-edit title="${target === "run" ? "Change this step for this run" : "Change this step in the runbook (saved as a new version)"}">✎ Edit this step</button>`
+      : `<span class="muted small">already run</span>`}`;
   const row = (k, val) => (val ? `<tr><td>${k}</td><td>${val}</td></tr>` : "");
   const code = (t) => `<code>${esc(t)}</code>`;
   const flags = [v.always && "setup (always)", v.optional && "optional", v.dangerous && "dangerous", v.confirm && "confirm first", v.background && "background", v.choose && "asks which way"].filter(Boolean);
-  body.innerHTML = `
+  const text = `
     ${v.description ? `<div class="doing">${esc(v.description)}</div>` : ""}
     ${v.expect ? `<div class="expect"><b>Expect:</b> ${esc(v.expect)}</div>` : ""}
     <table class="kv cx-kv">
@@ -389,16 +426,36 @@ function cxRenderDetails(state) {
       ${row("planned", v.offset ? `T${esc(v.offset)} (relative to the window opening)` : "")}
       ${row("publishes", [...(v.outputs || []), ...(v.secret_outputs || []).map((o) => `${o} (secret)`)].map(code).join(" "))}
     </table>
-    ${v.ways?.length ? v.ways.map((w) => `<h4>${esc(w.name)}${w.preferred ? " <span class='muted small'>(preferred)</span>" : ""}</h4><pre class="cmd">${esc(w.command)}</pre>`).join("")
-      : v.command ? `<pre class="cmd">${esc(v.command)}</pre>` : ""}
     ${s.notes?.length ? renderNotes(s.notes) : ""}`;
+  const codeHTML = v.ways?.length ? v.ways.map((w) => `<h4>${esc(w.name)}${w.preferred ? " <span class='muted small'>(preferred)</span>" : ""}</h4><pre class="cmd">${esc(w.command)}</pre>`).join("")
+    : v.command ? `<pre class="cmd">${esc(v.command)}</pre>` : `<p class="muted">No code.</p>`;
+  body.innerHTML = `<div class="cx-split" style="--cx-split:${state.sizes.split || 0.45}">
+    <div class="cx-split-a">${text}</div><div class="cx-gutter-v" data-split title="Drag to resize"></div><div class="cx-split-b">${codeHTML}</div></div>`;
+  cxBindSplit(state, body.querySelector(".cx-split"));
   head.querySelector("[data-edit]")?.addEventListener("click", () => cxStartEdit(state, i));
 }
 
+// The details of the inputs: each one's definition, and its value.
+function cxRenderInputsDetails(state, head, body) {
+  const ins = cxInputs(state);
+  head.innerHTML = `<b>Inputs</b><span class="muted small">${state.launch ? "the values this run will start with" : "the values this run started with"}</span>`;
+  body.innerHTML = ins.length ? `<table class="cx-inputs-table">
+      <tr><th>Input</th><th>Value</th><th>Default</th><th></th></tr>
+      ${ins.map((x) => `<tr class="${x.required && !x.def && !x.secret && !x.value ? "needs" : ""}">
+        <td><code>${esc(x.name)}</code>${x.required ? " *" : ""}${x.description ? `<div class="muted small">${esc(x.description)}</div>` : ""}</td>
+        <td>${x.secret ? (x.value ? "••••" : `<span class="muted">${state.launch ? "asked for when needed" : "not stored"}</span>`) : x.value ? `<code>${esc(x.value)}</code>` : x.def ? `<span class="muted">default</span>` : `<span class="muted">—</span>`}</td>
+        <td>${x.def ? `<code>${esc(x.def)}</code>` : ""}</td>
+        <td class="muted small">${[x.secret && "secret", x.choices.length && `one of ${x.choices.join(", ")}`].filter(Boolean).map(esc).join(" · ")}</td></tr>`).join("")}
+    </table>${state.launch ? `<p class="muted small">Fill them in in the pane below.</p>` : ""}` : `<p class="muted">This runbook takes no inputs.</p>`;
+}
+
 async function cxStartEdit(state, i) {
+  const target = cxEditTarget(state, i);
   try {
-    const def = await api("GET", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`);
-    state.editing = { i, yaml: def.yaml, orig: def.yaml, error: "" };
+    const def = target === "run"
+      ? await api("GET", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`)
+      : await api("GET", `/api/runbooks/${enc(state.run.runbook)}/steps/${i + 1}`);
+    state.editing = { i, target, yaml: def.yaml, orig: def.yaml, version: def.version, error: "" };
     state.follow = false;
     cxRenderDetails(state);
     main.querySelector(".cx-details textarea")?.focus();
@@ -408,35 +465,68 @@ async function cxStartEdit(state, i) {
 function cxRenderEditor(state, head, body) {
   const ed = state.editing, i = ed.i;
   const waiting = state.question?.step === i;
-  head.innerHTML = `<b>Edit step ${i + 1}</b><span class="muted small">for this run</span><span class="spacer"></span>
-    <button class="primary" data-apply>${waiting ? "Apply and run it again" : "Apply"}</button><button data-cancel>Cancel</button>`;
-  body.innerHTML = `<p class="muted small">${waiting ? "The run is waiting on this step: applying starts it again with the new version."
-    : state.steps[i].status === "running" ? "This step is running now; the change applies if it runs again (retry)." : "The run uses the new version when it gets here."}
-    Save to the runbook afterwards (the banner above), or the change is only in this run.</p>
+  const run = ed.target === "run";
+  head.innerHTML = `<b>Step ${i + 1}</b><span class="muted small">${run ? "editing it for this run" : `editing it in the runbook (version ${ed.version})`}</span><span class="spacer"></span>
+    <button class="primary" data-apply>${run ? (waiting ? "Apply and run it again" : "Apply") : "Save to runbook"}</button>
+    <button data-view title="Back to the step's definition">👁 View</button>`;
+  const note = run
+    ? `${waiting ? "The run is waiting on this step: applying starts it again with the new version."
+        : state.steps[i].status === "running" ? "This step is running now; the change applies if it runs again (retry)." : "The run uses the new version when it gets here."}
+       Save it to the runbook afterwards (the banner above), or the change is only in this run.`
+    : state.launch ? "Saving makes a new version of the runbook; the rest of its YAML (comments included) stays as it is. The run uses it when you start."
+    : `Saving makes a new version of the runbook; this run isn't changed.${state.run.runbook_version && state.plan?.latest && state.plan.latest !== state.run.runbook_version ? ` This run was on version ${state.run.runbook_version}: check step ${i + 1} is the same step in version ${state.plan.latest}.` : ""}`;
+  body.innerHTML = `<p class="muted small">${note}</p>
     <textarea class="editor cx-yaml" spellcheck="false">${esc(ed.yaml)}</textarea><div class="error-text">${esc(ed.error)}</div>`;
   const ta = body.querySelector("textarea");
   ta.oninput = () => (ed.yaml = ta.value);
   ta.onkeydown = (e) => {
     if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("  ", ta.selectionStart, ta.selectionEnd, "end"); ed.yaml = ta.value; }
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) head.querySelector("[data-apply]").click();
-    if (e.key === "Escape") head.querySelector("[data-cancel]").click();
+    if (e.key === "Escape") head.querySelector("[data-view]").click();
   };
-  head.querySelector("[data-cancel]").onclick = () => {
-    if (ed.yaml !== ed.orig && !confirm("Discard your edit?")) return;
+  head.querySelector("[data-view]").onclick = () => {
+    if (ed.yaml !== ed.orig && !confirm("Discard your change?")) return;
     state.editing = null;
     cxRenderDetails(state);
   };
   head.querySelector("[data-apply]").onclick = async () => {
     try {
-      const res = await api("PUT", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`, ed.yaml, true);
-      state.run.edits = res.edits;
-      state.run.edits_saved = 0;
-      Object.assign(state.steps[i], { edited: true, name: res.view.name, kind: res.view.kind });
+      if (run) {
+        const res = await api("PUT", `/api/runs/${enc(state.run.id)}/steps/${i + 1}`, ed.yaml, true);
+        state.run.edits = res.edits;
+        state.run.edits_saved = 0;
+        Object.assign(state.steps[i], { edited: true, name: res.view.name, kind: res.view.kind });
+        toast(res.restarted ? "Step changed; running it again" : "Step changed for this run");
+      } else {
+        const res = await api("PUT", `/api/runbooks/${enc(state.run.runbook)}/steps/${i + 1}`, ed.yaml, true, { "If-Match": String(ed.version) });
+        toast(`Saved to the runbook as version ${res.version}`);
+        if (state.launch) {
+          state.rb = res.runbook;
+          state.version = res.version;
+          Object.assign(state.steps[i], { name: res.runbook.steps[i].name, section: res.runbook.steps[i].section });
+        }
+      }
       state.editing = null;
-      toast(res.restarted ? "Step changed; running it again" : "Step changed for this run");
-      state.onState();
+      if (state.launch) { state.refresh(); return cxLaunchRender(state); }
+      state.onState?.();
       cxRender(state);
     } catch (e) { ed.error = e.message; body.querySelector(".error-text").textContent = e.message; }
+  };
+}
+
+// cxBindSplit: the text | code divider in the details pane.
+function cxBindSplit(state, el) {
+  const g = el.querySelector("[data-split]");
+  g.onpointerdown = (e) => {
+    e.preventDefault();
+    g.setPointerCapture(e.pointerId);
+    const box = el.getBoundingClientRect();
+    document.body.classList.add("cx-dragging");
+    g.onpointermove = (ev) => {
+      state.sizes.split = Math.max(0.15, Math.min(0.85, (ev.clientX - box.left) / box.width));
+      el.style.setProperty("--cx-split", state.sizes.split);
+    };
+    g.onpointerup = () => { g.onpointermove = g.onpointerup = null; document.body.classList.remove("cx-dragging"); cxSaveSizes(state.sizes); };
   };
 }
 
@@ -445,6 +535,7 @@ function cxRenderEditor(state, head, body) {
 function cxRenderAction(state) {
   const pane = main.querySelector(".cx-action");
   const i = cxSelected(state), s = state.steps[i], q = state.question;
+  if (i === -1) return cxRenderInputsAction(state, pane);
   const v = state.plan?.steps?.[i] || {};
   const head = pane.querySelector(".cx-pane-head"), body = pane.querySelector(".cx-action-body");
   const scroll = body.querySelector("pre.log");
@@ -484,6 +575,23 @@ function cxRenderAction(state) {
   const showFg = state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
   fg.hidden = !showFg;
   if (showFg) cxShowSession(state.fg, fg.querySelector(".cx-term"));
+}
+
+// In a run, the inputs' action: the question asking for one, or the values
+// it started with.
+function cxRenderInputsAction(state, pane) {
+  const q = state.question;
+  const head = pane.querySelector(".cx-pane-head"), body = pane.querySelector(".cx-action-body");
+  const cur = cxCurrent(state);
+  head.innerHTML = `<b>${q?.step === -1 ? "Now" : "What happened"}</b>${q?.step === -1 ? `<span class="badge waiting">⏸ waiting for you</span>` : ""}<span class="spacer"></span>
+    ${cur >= 0 ? `<button class="link" data-goto="${cur}">→ step ${cur + 1}, where the run is</button>` : ""}`;
+  const ins = cxInputs(state);
+  body.innerHTML = (q?.step === -1 ? renderQuestion(q, state.run.id) : "")
+    + (ins.length ? `<p class="muted">${q?.step === -1 ? "Asked for as the run starts; the others:" : "The run started with:"}</p>
+      <table class="kv">${ins.map((x) => `<tr><td><code>${esc(x.name)}</code></td><td>${x.secret ? "••••" : `<code>${esc(x.value || "")}</code>`}</td></tr>`).join("")}</table>` : `<p class="muted">No inputs.</p>`);
+  body.querySelectorAll(".question").forEach((el) => bindQuestion(el, q, state.run.id));
+  head.querySelector("[data-goto]")?.addEventListener("click", () => cxSelect(state, cur, true));
+  main.querySelector(".cx-fg").hidden = true;
 }
 
 // ---------- terminals in the panes ----------
@@ -610,7 +718,7 @@ async function viewConsoleLaunch(name, query) {
     run: { runbook: name, status: "pending", window: rb.maintenance_window ? { target: rb.maintenance_window.target } : null },
     steps: rb.steps.map((s) => ({ name: s.name, section: s.section, status: "pending", kind: s.ways ? "ways" : s.checks ? "checks" : s.manual ? "manual" : "run", optional: s.optional, log: [] })),
     include: rb.steps.map((s, i) => mode !== "resume" || !!s.always || !CX_DONE.includes(prev?.steps[i]?.status)),
-    before: new Set(), after: new Set(), selected: 0, follow: false, sizes: cxSizes(),
+    before: new Set(), after: new Set(), selected: -1, follow: false, sizes: cxSizes(),
     opts: { unattended: false, step: false, yes: false, dry: false }, vars: {},
   };
   // Prefill: the run being resumed or rerun has the inputs (secrets aside).
@@ -649,7 +757,6 @@ async function viewConsoleLaunch(name, query) {
     }, 300);
   };
   cxLaunchRender(state);
-  cxLaunchRenderAction(state, true);
   state.refresh();
 }
 
@@ -666,7 +773,7 @@ function cxLaunchRender(state) {
   cxLaunchRenderTop(state);
   cxRenderList(state);
   cxRenderDetails(state);
-  cxLaunchRenderAction(state, false);
+  cxLaunchRenderAction(state);
   cxLayout(state);
 }
 
@@ -696,26 +803,24 @@ function cxLaunchRenderTop(state) {
       ${tog("step", "⏯ Step through", "Pause before every step", opts.unattended)}
       ${tog("yes", "Auto-approve", "Approve confirm-gated steps (unattended runs)", !opts.unattended)}
       ${tog("dry", "Dry run", "Show what each step would run, without running it")}
-      <span class="spacer"></span>
-      <a class="button" href="#/runbooks/${enc(rb.name)}/edit">Edit the runbook</a>
     </div>`;
   el.querySelectorAll("[data-opt]").forEach((b) => (b.onclick = () => { opts[b.dataset.opt] = !opts[b.dataset.opt]; cxLaunchRenderTop(state); }));
   el.querySelector("[data-start]").onclick = () => cxLaunchStart(state);
 }
 
-// The action pane, before the run: the inputs, and the selected step's
-// include and pause settings. The inputs form is kept as typed (rebuilt
-// only when asked), so re-rendering doesn't lose focus.
-function cxLaunchRenderAction(state, rebuild) {
+// The action pane, before the run: under Inputs, the form to fill them in;
+// under a step, whether it's included and where to pause.
+function cxLaunchRenderAction(state) {
   const pane = main.querySelector(".cx-action");
   const head = pane.querySelector(".cx-pane-head"), body = pane.querySelector(".cx-action-body");
   const i = state.selected, s = state.steps[i];
-  head.innerHTML = `<b>Before the run</b><span class="spacer"></span><span class="muted small">nothing runs until ${esc({ run: "Start run", rerun: "Run again", resume: "Resume" }[state.mode])}</span>`;
-  if (rebuild || !body.querySelector(".cx-inputs")) {
+  const what = { run: "Start run", rerun: "Run again", resume: "Resume" }[state.mode];
+  head.innerHTML = `<b>${i === -1 ? "Fill in the inputs" : `Step ${i + 1} in this run`}</b><span class="spacer"></span><span class="muted small">nothing runs until ${esc(what)}</span>`;
+  if (i === -1) {
+    // Kept while it's showing, so re-rendering doesn't take the focus away.
+    if (body.querySelector(".cx-inputs")) return;
     const inputs = state.rb.inputs || [];
-    body.innerHTML = `
-      <div class="card cx-inputs">
-        <h4>Inputs</h4>
+    body.innerHTML = `<div class="card cx-inputs">
         ${inputs.length ? `<div class="form-grid">${inputs.map((inp) => {
           const v = state.vars[inp.name] || "";
           const ctl = inp.choices?.length
@@ -724,27 +829,33 @@ function cxLaunchRenderAction(state, rebuild) {
           const hint = [inp.description, inp.secret && "secret: not stored; leave blank to be asked when it's needed"].filter(Boolean).join(" · ");
           return `<label>${esc(inp.name)}${inp.required ? " *" : ""}</label>${ctl}${hint ? `<div class="hint">${esc(hint)}</div>` : ""}`;
         }).join("")}</div>` : `<p class="muted">This runbook takes no inputs.</p>`}
-      </div>
-      <div class="card cx-stepopts"></div>`;
-    body.querySelectorAll(".cx-inputs [name]").forEach((f) => (f.oninput = f.onchange = () => { state.vars[f.name] = f.value; state.refresh(); }));
+      </div>`;
+    body.querySelectorAll(".cx-inputs [name]").forEach((f) => (f.oninput = f.onchange = () => {
+      state.vars[f.name] = f.value;
+      state.refresh();
+      cxRenderInputsDetails(state, main.querySelector(".cx-details .cx-pane-head"), main.querySelector(".cx-details .cx-pane-body"));
+      cxRenderList(state);
+    }));
+    return;
   }
-  const so = body.querySelector(".cx-stepopts");
-  so.innerHTML = s ? `<h4>Step ${i + 1}: ${esc(s.name)}</h4>
+  if (!s) return;
+  body.innerHTML = `<div class="card cx-stepopts">
     <label class="check"><input type="checkbox" data-o="include" ${state.include[i] ? "checked" : ""}> Include it in the run</label>
     <label class="check"><input type="checkbox" data-o="before" ${state.before.has(i) ? "checked" : ""}> Pause before it</label>
     <label class="check"><input type="checkbox" data-o="after" ${state.after.has(i) ? "checked" : ""}> Pause after it, to check the result</label>
-    <div class="row small"><button data-all>Include all</button>${state.prev ? `<button data-unfinished>Only what didn't finish last time</button>` : ""}<button data-nopause>Clear pauses</button></div>
-    ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<p class="muted small">In ${esc(state.prev.id)}: ${ICONS[state.prev.steps[i].status] || ""} ${esc(state.prev.steps[i].status)}</p>` : ""}` : "";
-  so.querySelectorAll("[data-o]").forEach((c) => (c.onchange = () => {
+    <div class="row small"><button data-all>Include all steps</button>${state.prev ? `<button data-unfinished>Only what didn't finish last time</button>` : ""}<button data-nopause>Clear all pauses</button></div>
+    ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<p class="muted small">In ${esc(state.prev.id)}: ${ICONS[state.prev.steps[i].status] || ""} ${esc(state.prev.steps[i].status)}</p>` : ""}
+    </div>`;
+  body.querySelectorAll("[data-o]").forEach((c) => (c.onchange = () => {
     const k = c.dataset.o;
     if (k === "include") state.include[i] = c.checked;
     else c.checked ? state[k].add(i) : state[k].delete(i);
     cxRenderList(state);
     cxLaunchRenderTop(state);
   }));
-  so.querySelector("[data-all]").onclick = () => { state.include = state.steps.map(() => true); cxLaunchRender(state); };
-  so.querySelector("[data-nopause]").onclick = () => { state.before.clear(); state.after.clear(); cxLaunchRender(state); };
-  so.querySelector("[data-unfinished]")?.addEventListener("click", () => {
+  body.querySelector("[data-all]").onclick = () => { state.include = state.steps.map(() => true); cxLaunchRender(state); };
+  body.querySelector("[data-nopause]").onclick = () => { state.before.clear(); state.after.clear(); cxLaunchRender(state); };
+  body.querySelector("[data-unfinished]")?.addEventListener("click", () => {
     state.include = state.rb.steps.map((st, k) => !!st.always || !CX_DONE.includes(state.prev.steps[k]?.status));
     cxLaunchRender(state);
   });
@@ -755,6 +866,7 @@ async function cxLaunchStart(state) {
   const missing = (rb.inputs || []).filter((i) => i.required && !i.default && !i.secret && !(state.vars[i.name] || "").trim());
   if (missing.length) {
     toast(`Fill in ${missing.map((i) => i.name).join(", ")} first`);
+    if (state.selected !== -1) { state.selected = -1; cxLaunchRender(state); }
     return main.querySelector(`.cx-inputs [name="${missing[0].name}"]`)?.focus();
   }
   const nums = (pred) => rb.steps.map((_, i) => i).filter(pred).map((i) => i + 1);

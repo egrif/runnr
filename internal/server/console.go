@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strconv"
+	"strings"
 
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/runbook"
@@ -158,4 +160,78 @@ func (s *Server) adoptVersion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"changed": n, "restarted": restarted, "version": req.Version})
+}
+
+// getRunbookStep is step n of the saved runbook as YAML, for editing one
+// step (the console's "Edit this step" outside a live run).
+func (s *Server) getRunbookStep(w http.ResponseWriter, r *http.Request) {
+	i, err := stepNumber(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	d, err := s.st.Load(r.PathValue("name"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if d.ParseErr != nil {
+		writeErr(w, d.ParseErr)
+		return
+	}
+	if i >= len(d.Runbook.Steps) {
+		writeErr(w, fmt.Errorf("no step %d: %w", i+1, store.ErrNotFound))
+		return
+	}
+	raw, err := runbook.FormatStep(d.Runbook.Steps[i])
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"yaml": string(raw), "version": d.Version})
+}
+
+// putRunbookStep replaces step n of the saved runbook (body: the step as
+// YAML; If-Match: the version it was read from) and saves it as a new
+// version. The rest of the runbook's YAML is left as it was.
+func (s *Server) putRunbookStep(w http.ResponseWriter, r *http.Request) {
+	i, err := stepNumber(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	name := r.PathValue("name")
+	d, err := s.st.Load(name)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	o := store.SaveOpts{OldName: name}
+	if m := strings.Trim(r.Header.Get("If-Match"), `" `); m != "" {
+		if o.BaseVersion, err = strconv.Atoi(m); err != nil {
+			writeErr(w, fmt.Errorf("If-Match must be a version number"))
+			return
+		}
+	}
+	body, err := readBody(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	step, err := runbook.ParseStep(body)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	raw, err := runbook.ReplaceStep(d.Raw, i, step)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	rb, ver, err := s.st.Save(raw, o)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"version": ver, "runbook": rb})
 }

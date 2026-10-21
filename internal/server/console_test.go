@@ -79,3 +79,31 @@ func TestRunPlanAndAdoptVersion(t *testing.T) {
 		t.Fatalf("finished plan: %+v", p)
 	}
 }
+
+func TestEditRunbookStepOverHTTP(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+	rb := "name: demo\n# keep me\nsteps:\n  - {name: a, run: 'echo a'}\n  # and me\n  - {name: b, run: 'echo b'}\n"
+	do(t, "POST", ts.URL+"/api/runbooks", rb, nil)
+	var got struct {
+		YAML    string `json:"yaml"`
+		Version int    `json:"version"`
+	}
+	json.NewDecoder(do(t, "GET", ts.URL+"/api/runbooks/demo/steps/2", "", nil).Body).Decode(&got)
+	if !strings.Contains(got.YAML, "echo b") || got.Version != 1 {
+		t.Fatalf("%+v", got)
+	}
+	res := do(t, "PUT", ts.URL+"/api/runbooks/demo/steps/2", strings.Replace(got.YAML, "echo b", "echo B", 1), map[string]string{"If-Match": "1", "Content-Type": "application/yaml"})
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("put: %d", res.StatusCode)
+	}
+	d, _ := st.Load("demo")
+	if d.Version != 2 || !strings.Contains(string(d.Raw), "echo B") || !strings.Contains(string(d.Raw), "# keep me") || !strings.Contains(string(d.Raw), "# and me") {
+		t.Fatalf("v%d:\n%s", d.Version, d.Raw)
+	}
+	// Edited from an old version: a conflict, not a silent overwrite.
+	if res := do(t, "PUT", ts.URL+"/api/runbooks/demo/steps/2", got.YAML, map[string]string{"If-Match": "1"}); res.StatusCode != http.StatusConflict {
+		t.Fatalf("stale edit: %d", res.StatusCode)
+	}
+}
