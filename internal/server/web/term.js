@@ -193,6 +193,8 @@ function startTerm(runId, t, step, base) {
     term.timer = setTimeout(() => { const q = term.queue; term.queue = ""; if (q) sendTerm(s, { data: q }); }, 12);
   });
   xt.onResize(({ rows, cols }) => sendTerm(s, { rows, cols }));
+  // Copy on select: once the mouse lets go of a selection.
+  el.addEventListener("mouseup", () => setTimeout(() => { if (xt.hasSelection()) copySelected(xt.getSelection()); }, 0));
   term.sessions.set(s.id, s);
   if (!s.background) term.active = s.id;
   if (term.host) return term.host.started(s);
