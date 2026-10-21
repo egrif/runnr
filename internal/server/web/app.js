@@ -129,6 +129,7 @@ function renderSidebar() {
   $("#libs-link").classList.toggle("active", location.hash.startsWith("#/libraries"));
   $("#cols-link").classList.toggle("active", location.hash.startsWith("#/collections"));
   $("#sched-link").classList.toggle("active", location.hash.startsWith("#/schedule"));
+  $("#manage-link").classList.toggle("active", location.hash === "#/manage");
 }
 
 $("#filter").addEventListener("input", renderSidebar);
@@ -158,6 +159,7 @@ async function route() {
     if (h.startsWith("#/history")) return await viewHistory();
     if (h === "#/help") return viewHelp();
     if (h === "#/libraries") return await viewLibraries();
+    if (h === "#/manage") return await viewManage();
     if (h === "#/collections") return await viewCollections();
     if (h === "#/schedule") return await viewSchedule();
     if ((m = h.match(/^#\/collections\/([^/]+)$/))) return await viewCollection(decodeURIComponent(m[1]));
@@ -379,7 +381,7 @@ function renderRun(state) {
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
       <a class="button" href="#/runs/${enc(run.id)}/console" title="One screen: the steps, the selected step's definition, what it's doing, and the background steps">▣ Console</a>
-      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
+      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="delete-run" class="danger" title="Delete this run's record">Delete run</button><button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${editsBanner(run, state)}
@@ -465,6 +467,11 @@ function renderRun(state) {
   $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
   $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
   $("#change-inputs") && ($("#change-inputs").onclick = () => changeInputs(state));
+  $("#delete-run") && ($("#delete-run").onclick = async () => {
+    if (!confirm(`Delete run ${run.id}? Its record, output and notes are removed for good.`)) return;
+    try { await api("DELETE", `/api/runs/${enc(run.id)}`); toast("Run deleted"); location.hash = `#/runbooks/${enc(run.runbook)}`; }
+    catch (e) { toast(e.message); }
+  });
   $("#raw-log") && ($("#raw-log").onclick = async () => {
     state.raw = !state.raw;
     if (state.raw && state.rawText == null) {

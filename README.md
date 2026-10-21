@@ -57,7 +57,9 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
 | `runnr import <file\|folder>...` | Add runbooks, libraries, fakes and test suites: files, or a project folder (its subfolders too). Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along. A taken name is refused unless `-f` (saved as its next version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do. In the GUI: **⇪ Import…** in the sidebar does the same for a folder |
-| `runnr delete <name>` | Delete (`-f` to skip the prompt) |
+| `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
+| `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
+| `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
 | `runnr test <suite\|runbook\|file>` | Test a runbook: run it with its commands faked and a simulated operator, against each scenario's expectations (`-s`, `-v`, `--log`); see [Testing runbooks](docs/TESTING.md) |
 | `runnr tests import/list/show/delete` · `runnr fakes import/list/show/delete/check` | Manage test suites and fake libraries; `fakes check` compares AWS CLI fakes with the CLI's real response shapes |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |

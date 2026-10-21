@@ -118,6 +118,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs", s.listRuns)
 	mux.HandleFunc("POST /api/runs", s.startRun)
 	mux.HandleFunc("GET /api/runs/{id}", s.getRun)
+	mux.HandleFunc("DELETE /api/runs/{id}", s.deleteRun)
+	mux.HandleFunc("GET /api/manage", s.getManage)
+	mux.HandleFunc("POST /api/manage/delete", s.manageDelete)
+	mux.HandleFunc("POST /api/manage/restore", s.manageRestore)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 	mux.HandleFunc("GET /api/runs/{id}/log", s.runLog)
 	mux.HandleFunc("GET /api/runbooks/{name}/tests", s.getTests)
@@ -357,7 +361,7 @@ func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteRunbook(w http.ResponseWriter, r *http.Request) {
-	if err := s.st.Delete(r.PathValue("name")); err != nil {
+	if _, err := s.st.DeleteRunbook(r.PathValue("name")); err != nil {
 		writeErr(w, err)
 		return
 	}

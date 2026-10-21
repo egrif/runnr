@@ -96,7 +96,7 @@ func newRoot() *cobra.Command {
 	s := func() *store.Store { return st }
 
 	root.AddCommand(
-		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s),
+		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s), restoreCmd(s),
 		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 		attachCmd(), watchCmd(s), waitRunCmd(s), doctorCmd(s),
 	)
@@ -497,10 +497,14 @@ func deleteCmd(s func() *store.Store) *cobra.Command {
 					return err
 				}
 			}
-			if err := s().Delete(args[0]); err != nil {
+			also, err := s().DeleteRunbook(args[0])
+			if err != nil {
 				return err
 			}
-			fmt.Println("deleted", args[0])
+			fmt.Println("deleted", args[0], "(its versions are kept: runnr restore runbook "+args[0]+")")
+			for _, a := range also {
+				fmt.Println("  " + a)
+			}
 			return nil
 		},
 	}
@@ -1320,12 +1324,23 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		limit  int
 		asJSON bool
 		raw    bool
+		del    bool
 	)
 	cmd := &cobra.Command{
 		Use:   "history [run-id]",
-		Short: "List past runs, or show one in detail",
+		Short: "List past runs, or show one in detail (--delete removes it)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if del {
+				if len(args) != 1 {
+					return errors.New("--delete takes a run id")
+				}
+				if err := s().DeleteRun(args[0]); err != nil {
+					return err
+				}
+				fmt.Println("deleted run", args[0])
+				return nil
+			}
 			if len(args) == 1 {
 				r, err := s().LoadRun(args[0])
 				if err != nil {
@@ -1369,6 +1384,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "max runs to list")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	cmd.AddCommand(pruneCmd(s))
+	cmd.Flags().BoolVar(&del, "delete", false, "delete the run's record (not a running one)")
 	return cmd
 }
 
@@ -1995,5 +2011,49 @@ func importReport(file, name string, ver, prev int) string {
 		return fmt.Sprintf("unchanged %s → %s (version %d)", file, name, ver)
 	default:
 		return fmt.Sprintf("replaced %s with %s (version %d → %d)", name, file, prev, ver)
+	}
+}
+
+func restoreCmd(s func() *store.Store) *cobra.Command {
+	return &cobra.Command{
+		Use:   "restore [kind name]",
+		Short: "List what was deleted, or restore it (runbook, library, fakes, suite, collection)",
+		Long: `Deleting keeps a runbook's (library's, fake library's, test suite's,
+collection's) versions. Without arguments, restore lists what was deleted;
+with a kind and a name, it saves the last version again.`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) != 0 && len(args) != 2 {
+				return errors.New("give a kind and a name, or nothing to list what's deleted")
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "KIND\tNAME\tLAST VERSION\tSAVED")
+				n := 0
+				for _, k := range []string{store.KindRunbook, store.KindLibrary, store.KindFakes, store.KindSuite, store.KindCollection} {
+					ds, err := s().ListDeleted(k)
+					if err != nil {
+						return err
+					}
+					for _, d := range ds {
+						fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", d.Kind, d.Name, d.Version, d.SavedAt.Local().Format("2006-01-02 15:04"))
+						n++
+					}
+				}
+				if n == 0 {
+					fmt.Println("nothing deleted")
+					return nil
+				}
+				return w.Flush()
+			}
+			v, err := s().Restore(args[0], args[1])
+			if err != nil {
+				return err
+			}
+			fmt.Printf("restored %s %s (version %d)\n", args[0], args[1], v)
+			return nil
+		},
 	}
 }

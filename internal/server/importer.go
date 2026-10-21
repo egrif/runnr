@@ -37,7 +37,7 @@ type importCheck struct {
 	// Placeholders (@NAME@) in the file; Unset, those without a value.
 	Placeholders []string `json:"placeholders,omitempty"`
 	Unset        []string `json:"unset,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Error        string   `json:"error,omitempty"`
 }
 
 func (s *Server) checkImport(raw []byte) importCheck {
