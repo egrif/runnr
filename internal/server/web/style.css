@@ -798,3 +798,16 @@ dialog.inputs-dialog table.kv input, dialog.inputs-dialog table.kv select { widt
 .manage-filter { width: 18em; }
 .chip { display: inline-block; border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; margin: 1px 0; }
 .chip.warn { border-color: var(--warn); color: var(--warn); }
+dialog.path-picker { width: min(640px, calc(100vw - 32px)); }
+.path-picker .row { gap: 6px; margin: 6px 0; }
+.path-picker .pp-path, .path-picker .pp-name { flex: 1; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.pp-list { list-style: none; margin: 0; padding: 0; height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.pp-list li { padding: 4px 10px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pp-list li:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pp-list li.on { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.pp-list li.dim { opacity: .45; cursor: default; }
+.path-field { display: flex; gap: 6px; align-items: center; }
+.path-field > input { flex: 1; min-width: 0; }
+.path-pick { white-space: nowrap; }
+.exp-opts { gap: 12px; flex-wrap: wrap; margin: 8px 0; }
+.exp-opts label.check { display: inline-flex; gap: 4px; align-items: center; font-weight: 400; }

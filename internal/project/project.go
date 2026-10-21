@@ -13,6 +13,7 @@ package project
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -37,9 +38,12 @@ const (
 	Fakes   = "fakes"
 	Runbook = "runbook"
 	Suite   = "suite"
+	// Run is a run's record (JSON, from runnr history --json or an
+	// export): imported into the history.
+	Run = "run"
 )
 
-var kindOrder = map[string]int{Library: 0, Fakes: 1, Runbook: 2, Suite: 3}
+var kindOrder = map[string]int{Library: 0, Fakes: 1, Runbook: 2, Suite: 3, Run: 4}
 
 // Stored is what's stored under a name.
 type Stored struct {
@@ -185,7 +189,19 @@ func Scan(o Options) (*Plan, error) {
 	}
 	included := map[string]bool{}
 	for _, f := range o.Include {
-		abs, _ := filepath.Abs(f)
+		abs, _ := filepath.Abs(expand(f))
+		// A folder included: its files.
+		if st, err := os.Stat(abs); err == nil && st.IsDir() {
+			found, err := yamlFiles(abs)
+			if err != nil {
+				return nil, err
+			}
+			for _, x := range found {
+				included[x] = true
+				paths = append(paths, x)
+			}
+			continue
+		}
 		included[abs] = true
 		paths = append(paths, abs)
 	}
@@ -209,6 +225,22 @@ func Scan(o Options) (*Plan, error) {
 		if err != nil {
 			d.Error = err.Error()
 			p.Docs = append(p.Docs, d)
+			continue
+		}
+		if runs, ok := runRecords(orig); ok {
+			// Run records: one each (a file can hold a list of them).
+			for i, r := range runs {
+				rd := d
+				rd.Kind, rd.Raw, rd.Name, rd.Original = Run, r.raw, r.id, r.id
+				if len(runs) > 1 {
+					rd.Rel = fmt.Sprintf("%s [%d]", d.Rel, i+1)
+					rd.Path = fmt.Sprintf("%s#%d", d.Path, i)
+				}
+				if r.err != "" {
+					rd.Error = r.err
+				}
+				p.Docs = append(p.Docs, rd)
+			}
 			continue
 		}
 		raw, used, missing := fill(orig, p.Values)
@@ -321,6 +353,15 @@ func (p *Plan) check(lookup Lookup) {
 		if d.Error != "" {
 			continue
 		}
+		if d.Kind == Run {
+			if lookup != nil {
+				if s, ok := lookup(Run, d.Name); ok {
+					d.Exists, d.Same = true, true // a run's record is its own: never replaced
+					d.UpdatedAt = s.UpdatedAt
+				}
+			}
+			continue
+		}
 		if lookup != nil {
 			if s, ok := lookup(d.Kind, d.Name); ok {
 				if s.Builtin {
@@ -384,7 +425,7 @@ func yamlFiles(dir string) ([]string, error) {
 			}
 			return nil
 		}
-		if ext := filepath.Ext(path); ext == ".yaml" || ext == ".yml" {
+		if ext := filepath.Ext(path); ext == ".yaml" || ext == ".yml" || ext == ".json" {
 			out = append(out, path)
 		}
 		if len(out) > 5000 {
@@ -640,4 +681,42 @@ func replaceScalars(raw []byte, edits []edit) ([]byte, error) {
 		out = append(out[:s.at], append([]byte(s.text), out[s.end:]...)...)
 	}
 	return out, nil
+}
+
+type runRecord struct {
+	id, err string
+	raw     []byte
+}
+
+// runRecords reads run records from a file: a run's JSON, or a list of
+// them. ok is false if the file isn't run records.
+func runRecords(raw []byte) ([]runRecord, bool) {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 || (t[0] != '{' && t[0] != '[') {
+		return nil, false
+	}
+	var list []json.RawMessage
+	if t[0] == '[' {
+		if json.Unmarshal(t, &list) != nil {
+			return nil, false
+		}
+	} else {
+		list = []json.RawMessage{t}
+	}
+	var out []runRecord
+	for _, m := range list {
+		var r struct {
+			ID, Runbook, Status string
+			Started             time.Time
+		}
+		if json.Unmarshal(m, &r) != nil || r.ID == "" || r.Runbook == "" || r.Status == "" {
+			return nil, false
+		}
+		rr := runRecord{id: r.ID, raw: m}
+		if r.Status == "running" {
+			rr.err = "it was still running when exported: import it once it's finished"
+		}
+		out = append(out, rr)
+	}
+	return out, len(out) > 0
 }

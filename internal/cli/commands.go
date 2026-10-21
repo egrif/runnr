@@ -1085,8 +1085,9 @@ Set up a model with environment variables:
 }
 
 func exportCmd(s func() *store.Store) *cobra.Command {
-	var vars []string
+	var vars, libs []string
 	var out, format string
+	var noLibs, force bool
 	cmd := &cobra.Command{
 		Use:   "export <runbook|file>",
 		Short: "Write a runbook as Markdown to follow by hand, or as an HTML page to read",
@@ -1102,9 +1103,17 @@ your shell. --var fills in inputs.
 --format html (or -o file.html) writes one self-contained page instead:
 sections and steps that expand and collapse, ways as tabs, and each step's
 code as written or exactly as runnr would run it (templates filled in, the
-files it sources, how it captures published values).`,
+files it sources, how it captures published values).
+
+--format yaml (or -o file.yaml) writes the runbook as written, with the
+libraries it uses beside it as <name>.yaml (runnr's built-in ones left
+out), so the folder imports again: --lib NAME chooses which (repeat),
+--no-libs leaves them out, -f writes over files already there.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if format == "yaml" || (format == "" && (strings.HasSuffix(out, ".yaml") || strings.HasSuffix(out, ".yml"))) {
+				return exportYAML(s(), args[0], out, libs, noLibs, force)
+			}
 			rb, _, err := s().Resolve(args[0])
 			if err != nil {
 				return err
@@ -1155,7 +1164,10 @@ files it sources, how it captures published values).`,
 	}
 	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "fill in an input (key=value)")
 	cmd.Flags().StringVarP(&out, "output", "o", "", "write to this file (default: standard output)")
-	cmd.Flags().StringVarP(&format, "format", "f", "", "md, or html for a page to read: sections and steps that expand, code as written or as runnr runs it (default: from -o's extension, else md)")
+	cmd.Flags().StringVarP(&format, "format", "f", "", "md, html for a page to read (sections and steps that expand, code as written or as runnr runs it), or yaml: the runbook and its libraries as files (default: from -o's extension, else md)")
+	cmd.Flags().StringArrayVar(&libs, "lib", nil, "yaml: a library to write beside it (repeat; default: all it uses but runnr's own)")
+	cmd.Flags().BoolVar(&noLibs, "no-libs", false, "yaml: leave the libraries out")
+	cmd.Flags().BoolVar(&force, "force", false, "yaml: write over files already there")
 	return cmd
 }
 
@@ -1325,12 +1337,40 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		asJSON bool
 		raw    bool
 		del    bool
+		export string
+		as     string
+		single bool
+		only   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "history [run-id]",
 		Short: "List past runs, or show one in detail (--delete removes it)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if export != "" {
+				if len(args) != 1 {
+					return errors.New("--export takes a run id")
+				}
+				runs, err := project.Chain(s(), args[0])
+				if err != nil {
+					return err
+				}
+				if only {
+					runs = slices.DeleteFunc(runs, func(r *engine.Run) bool { return r.ID != args[0] })
+				}
+				files, err := project.LogFiles(runs, as, single, "")
+				if err != nil {
+					return err
+				}
+				paths, err := project.WriteLogFiles(files, export, false)
+				if err != nil {
+					return err
+				}
+				for _, p := range paths {
+					fmt.Println("wrote", p)
+				}
+				return nil
+			}
 			if del {
 				if len(args) != 1 {
 					return errors.New("--delete takes a run id")
@@ -1384,6 +1424,10 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "max runs to list")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	cmd.AddCommand(pruneCmd(s))
+	cmd.Flags().StringVar(&export, "export", "", "write the run's logs into this folder, with the runs linked to it by resuming")
+	cmd.Flags().StringVar(&as, "as", "raw", "--export: raw (logs to read), json (records to import) or both")
+	cmd.Flags().BoolVar(&single, "one-file", false, "--export: all the runs in one file (per format)")
+	cmd.Flags().BoolVar(&only, "only", false, "--export: just this run, not those linked by resuming")
 	cmd.Flags().BoolVar(&del, "delete", false, "delete the run's record (not a running one)")
 	return cmd
 }
@@ -2056,4 +2100,43 @@ with a kind and a name, it saves the last version again.`,
 			return nil
 		},
 	}
+}
+
+// exportYAML writes runbook name to file with the libraries chosen.
+func exportYAML(st *store.Store, name, file string, libs []string, noLibs, force bool) error {
+	if file == "" || file == "-" {
+		d, err := st.Load(name)
+		if err != nil {
+			return err
+		}
+		os.Stdout.Write(d.Raw)
+		return nil
+	}
+	plan, err := project.ExportPlan(st, name, file)
+	if err != nil {
+		return err
+	}
+	if libs == nil && !noLibs {
+		for _, f := range plan {
+			if f.Kind == project.Library && !f.Builtin {
+				libs = append(libs, f.Name)
+			}
+		}
+	}
+	if noLibs {
+		libs = nil
+	}
+	written, err := project.Export(st, name, file, libs, force)
+	if err != nil {
+		return err
+	}
+	for _, f := range written {
+		fmt.Fprintf(os.Stderr, "wrote %s %s → %s\n", f.Kind, f.Name, f.Path)
+	}
+	for _, f := range plan {
+		if f.Kind == project.Library && !slices.Contains(libs, f.Name) {
+			fmt.Fprintf(os.Stderr, "left out library %s%s\n", f.Name, map[bool]string{true: " (built into runnr)"}[f.Builtin])
+		}
+	}
+	return nil
 }

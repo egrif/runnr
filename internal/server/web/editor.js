@@ -587,7 +587,7 @@ function testValuesCard(ed, d) {
   return `<details class="card test-values" ${ed.testOpen ? "open" : ""}><summary><b>Test values</b> <span class="muted small">used by “Run this”${ed.name ? "" : " (save the runbook to keep them)"}</span>${helpIcon("Inputs and extra variables for trying steps out while editing. Saved with this runbook, except secret inputs, which are kept only in this browser tab.")}</summary>
     <div class="fgroup-rows">
       ${(d.inputs || []).filter((x) => x.name).map((x) => row(x.name + (x.secret ? " (secret)" : ""), x.description || "",
-        `<input data-test-var="${esc(x.name)}" ${x.secret ? 'type="password"' : ""} value="${esc((x.secret ? ed.secretVars : t.vars)[x.name] ?? "")}" placeholder="${esc(x.default || "")}">`)).join("")}
+        withPathPick(x, `<input data-test-var="${esc(x.name)}" ${x.secret ? 'type="password"' : ""} value="${esc((x.secret ? ed.secretVars : t.vars)[x.name] ?? "")}" placeholder="${esc(x.default || "")}">`))).join("")}
       ${row("Extra variables", "Variables an earlier step would normally publish (KEY=value per line), so a step can run on its own.",
         `<textarea data-test-extra rows="3" spellcheck="false" placeholder="region=use1">${esc(Object.entries(t.extra || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`)}
       ${row("Run setup first", "Run the steps marked “always” before the step, to build its environment.", `<input type="checkbox" data-test-setup ${t.setup ? "checked" : ""}>`)}
@@ -741,11 +741,12 @@ function renderStruct(ed) {
       <h3>Inputs${helpIcon(H.runbook.inputs)}</h3>
       <table class="inputs"><thead><tr>
         <th>Name${helpIcon(H.input.name)}</th><th>Description${helpIcon(H.input.description)}</th><th>Default${helpIcon(H.input.default)}</th>
-        <th>Choices${helpIcon(H.input.choices)}</th><th>Required${helpIcon(H.input.required)}</th><th>Secret${helpIcon(H.input.secret)}</th><th></th></tr></thead><tbody>
+        <th>Type${helpIcon(H.input.type)}</th><th>Choices${helpIcon(H.input.choices)}</th><th>Required${helpIcon(H.input.required)}</th><th>Secret${helpIcon(H.input.secret)}</th><th></th></tr></thead><tbody>
       ${d.inputs.map((inp, i) => `<tr>
         <td>${control(`inputs.${i}.name`, "text", inp.name)}</td>
         <td>${control(`inputs.${i}.description`, "text", inp.description)}</td>
-        <td>${control(`inputs.${i}.default`, "text", inp.default)}</td>
+        <td>${withPathPick(inp, control(`inputs.${i}.default`, "text", inp.default))}</td>
+        <td>${control(`inputs.${i}.type`, "select", inp.type, { choices: [["", "text"], ["dir", "folder"], ["file", "file"]] })}</td>
         <td>${control(`inputs.${i}.choices`, "list", inp.choices, { placeholder: "a, b" })}</td>
         <td>${control(`inputs.${i}.required`, "bool", inp.required)}</td>
         <td>${control(`inputs.${i}.secret`, "bool", inp.secret)}</td>

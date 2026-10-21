@@ -41,7 +41,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
     if (i.choices?.length) {
       ctl = `<select id="${id}" name="${esc(i.name)}">${i.required && !i.default ? `<option value=""></option>` : ""}${i.choices.map((c) => `<option ${c === (v || i.default) ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
     } else {
-      ctl = `<input id="${id}" name="${esc(i.name)}" type="${i.secret ? "password" : "text"}" value="${esc(v)}" placeholder="${esc(i.default || "")}" ${i.required && !i.default && !i.secret ? "required" : ""}>`;
+      ctl = withPathPick(i, `<input id="${id}" name="${esc(i.name)}" type="${i.secret ? "password" : "text"}" value="${esc(v)}" placeholder="${esc(i.default || "")}" ${i.required && !i.default && !i.secret ? "required" : ""}>`);
     }
     const hint = [i.description, i.secret && mode !== "run" && "secret: not stored, enter it again (or leave blank to be asked)"].filter(Boolean).join(" · ");
     return `<label for="${id}">${esc(i.name)}${i.required ? " *" : ""}</label>${ctl}${hint ? `<div class="hint">${esc(hint)}</div>` : ""}`;

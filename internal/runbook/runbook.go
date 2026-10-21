@@ -96,6 +96,9 @@ type Input struct {
 	Required    bool     `yaml:"required,omitempty" json:"required,omitempty"`
 	Choices     []string `yaml:"choices,omitempty" json:"choices,omitempty"`
 	Secret      bool     `yaml:"secret,omitempty" json:"secret,omitempty"`
+	// Type is "dir" or "file" for a path on this machine (the GUI offers to
+	// browse for it), else text.
+	Type string `yaml:"type,omitempty" json:"type,omitempty"`
 }
 
 // Step is either an automated command (Run) or a manual instruction (Manual).
@@ -661,6 +664,9 @@ func (rb *Runbook) Validate() error {
 			add("inputs[%d]: duplicate name %q", i, in.Name)
 		}
 		seen[in.Name] = true
+		if in.Type != "" && in.Type != "dir" && in.Type != "file" && in.Type != "text" {
+			add("inputs[%d] (%s): type %q must be dir, file or text", i, in.Name, in.Type)
+		}
 		if in.Default != "" && len(in.Choices) > 0 && !contains(in.Choices, in.Default) {
 			add("inputs[%d]: default %q not in choices", i, in.Default)
 		}

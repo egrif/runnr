@@ -26,10 +26,16 @@ type Result struct {
 func (r Result) String() string {
 	switch r.Status {
 	case "imported":
+		if r.Kind == Run {
+			return fmt.Sprintf("imported %s → run %s", r.Rel, r.Name)
+		}
 		return fmt.Sprintf("imported %s → %s %s (version %d)", r.Rel, r.Kind, r.Name, r.Version)
 	case "replaced":
 		return fmt.Sprintf("replaced %s %s with %s (version %d → %d)", r.Kind, r.Name, r.Rel, r.Replaced, r.Version)
 	case "unchanged":
+		if r.Kind == Run {
+			return fmt.Sprintf("already there %s → run %s", r.Rel, r.Name)
+		}
 		return fmt.Sprintf("unchanged %s → %s %s (version %d)", r.Rel, r.Kind, r.Name, r.Version)
 	case "skipped":
 		return fmt.Sprintf("skipped %s", r.Rel)

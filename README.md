@@ -53,13 +53,14 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr collection add <col> <runbook>...` / `remove <col> <runbook>...` | Put runbooks in a collection (`--create` to make it) or take them out (they stay in runnr) |
 | `runnr schedule add/list/rm` | Plan runs ahead; `list` prints the agenda |
 | `runnr explain <runbook> [step] [-q question] [--fresh]` | Ask a model about a step, or review the whole runbook (see "Ask Claude" for setup) |
-| `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**) |
+| `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**); `-f yaml` (or `-o file.yaml`) writes the runbook as written with the libraries it uses beside it (`--lib`, `--no-libs`), so the folder imports again (**⇩ Export…** on the runbook's page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
 | `runnr import <file\|folder>...` | Add runbooks, libraries, fakes and test suites: files, or a project folder (its subfolders too). Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along. A taken name is refused unless `-f` (saved as its next version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do. In the GUI: **⇪ Import…** in the sidebar does the same for a folder |
 | `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
 | `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
 | `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
+| `runnr history <run-id> --export <folder>` | Export the run's logs with the runs linked to it by resuming (`--only` for just it): `--as raw` (logs to read), `json` (records to import: `runnr import` takes them, or **Also import** in the GUI's import) or `both`; `--one-file` puts them in one file. The GUI: **⇩ Export logs…** on a finished run (to a folder, or a download) |
 | `runnr test <suite\|runbook\|file>` | Test a runbook: run it with its commands faked and a simulated operator, against each scenario's expectations (`-s`, `-v`, `--log`); see [Testing runbooks](docs/TESTING.md) |
 | `runnr tests import/list/show/delete` · `runnr fakes import/list/show/delete/check` | Manage test suites and fake libraries; `fakes check` compares AWS CLI fakes with the CLI's real response shapes |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
@@ -277,6 +278,9 @@ inputs:
   - name: token
     secret: true                # masked as **** in output and history
     required: true
+  - name: infra_dir
+    type: dir                   # a folder (or file) on this machine: the GUI's field gets Browse…
+    default: ~/code/infrastructure
 steps:
   - name: Derive environment
     section: Setup              # heading for this and the following steps

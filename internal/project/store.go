@@ -1,7 +1,10 @@
 package project
 
 import (
+	"encoding/json"
 	"fmt"
+
+	"github.com/egrif/runnr/internal/engine"
 
 	"github.com/egrif/runnr/internal/store"
 )
@@ -26,6 +29,10 @@ func StoreLookup(st *store.Store) Lookup {
 			if d, err := st.LoadSuite(name); err == nil {
 				return Stored{Version: d.Version, UpdatedAt: d.UpdatedAt, Raw: d.Raw}, true
 			}
+		case Run:
+			if r, err := st.LoadRun(name); err == nil {
+				return Stored{UpdatedAt: r.Started}, true
+			}
 		}
 		return Stored{}, false
 	}
@@ -46,6 +53,11 @@ func StoreSaver(st *store.Store) Saver {
 			_, v, err = st.SaveFakes(raw, o)
 		case Suite:
 			_, v, err = st.SaveSuite(raw, o)
+		case Run:
+			var r engine.Run
+			if err = json.Unmarshal(raw, &r); err == nil {
+				err = st.SaveRun(&r)
+			}
 		default:
 			err = fmt.Errorf("unknown kind %q", kind)
 		}

@@ -176,6 +176,7 @@ function cxToolbar(state, live) {
       ["failed", "aborted"].includes(r.status) && stop >= 0 ? btn("resume", "▶ Resume…", "primary", `Continue from step ${stop + 1}`) : "",
       btn("rerun", "↻ Run again…"),
       btn("raw", "Raw log", "", "The whole run as a plain log"),
+      btn("export-logs", "⇩ Export logs…", "", "Its logs, with the runs linked to it by resuming: to files, or a download"),
     ].join("");
   }
   const QA = {
@@ -233,6 +234,7 @@ function cxBindTop(state, el, live) {
         case "resume": location.hash = `#/runbooks/${enc(r.runbook)}/console?resume=${enc(r.id)}`; return;
         case "rerun": location.hash = `#/runbooks/${enc(r.runbook)}/console?rerun=${enc(r.id)}`; return;
         case "raw": return cxRawLog(state);
+        case "export-logs": return exportLogs(state.run.id);
         case "save-edits": {
           if (!confirm(`Save this run's step edits as a new version of “${r.runbook}”?\nThe YAML is reformatted, so comments in it are dropped.`)) return;
           const { version } = await api("POST", `/api/runs/${enc(r.id)}/save-edits`);
@@ -1053,7 +1055,7 @@ function cxLaunchRenderAction(state) {
           const v = state.vars[inp.name] || "";
           const ctl = inp.choices?.length
             ? `<select name="${esc(inp.name)}">${!inp.default ? `<option value=""></option>` : ""}${inp.choices.map((c) => `<option ${c === (v || inp.default) ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`
-            : `<input name="${esc(inp.name)}" type="${inp.secret ? "password" : "text"}" value="${esc(v)}" placeholder="${esc(inp.default || "")}" autocomplete="off">`;
+            : withPathPick(inp, `<input name="${esc(inp.name)}" type="${inp.secret ? "password" : "text"}" value="${esc(v)}" placeholder="${esc(inp.default || "")}" autocomplete="off" ${inp.type === "dir" || inp.type === "file" ? 'spellcheck="false"' : ""}>`);
           const hint = [inp.description, inp.secret && "secret: not stored; leave blank to be asked when it's needed"].filter(Boolean).join(" · ");
           return `<label>${esc(inp.name)}${inp.required ? " *" : ""}</label>${ctl}${hint ? `<div class="hint">${esc(hint)}</div>` : ""}`;
         }).join("")}</div>` : `<p class="muted">This runbook takes no inputs.</p>`}
