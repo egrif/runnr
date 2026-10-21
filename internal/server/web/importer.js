@@ -35,10 +35,16 @@ async function openImport(files, opts = {}) {
     it.choice = c.error ? "skip" : c.same ? "skip" : c.exists ? "rename" : "add";
   }
 
+  // Placeholders (@NAME@) the files use: each needs a value (remembered).
+  const phs = [...new Set(items.flatMap((it) => it.check.placeholders || []))].sort();
+  const values = impLoad("runnr.importUploadValues", {});
+  const unsetIn = (it) => (it.check.placeholders || []).filter((k) => !(values[k] ?? "").trim());
   const dlg = document.createElement("dialog");
   dlg.className = "edit-step import-dialog";
   const anyRunbook = items.some((it) => it.check.kind === "runbook" && !it.check.error);
   dlg.innerHTML = `<h3>Import ${items.length === 1 ? "a file" : `${items.length} files`}</h3>
+    ${phs.length ? `<div class="imp-ph-banner warn-text small"></div>
+      <table class="kv imp-vals">${phs.map((k) => `<tr><td><code>@${esc(k)}@</code></td><td><input data-ph="${esc(k)}" value="${esc(values[k] ?? "")}" placeholder="needs a value" spellcheck="false"></td></tr>`).join("")}</table>` : ""}
     <div class="import-items"></div>
     ${anyRunbook ? `<label class="row small">Add runbooks to collection ${colPicker("imp-col", "None")}</label>` : ""}
     <div class="error-text imp-error"></div>
@@ -51,8 +57,16 @@ async function openImport(files, opts = {}) {
   }
   const when = (t) => (t ? new Date(t).toLocaleString() : "");
   const draw = () => {
+    const banner = dlg.querySelector(".imp-ph-banner");
+    if (banner) {
+      const missing = phs.filter((k) => !(values[k] ?? "").trim());
+      const files = items.filter((it) => !it.check.error && unsetIn(it).length).length;
+      banner.hidden = !missing.length;
+      banner.textContent = missing.length ? `⚠ ${missing.map((k) => `@${k}@`).join(", ")} ${missing.length === 1 ? "has" : "have"} no value: ${files} file${files === 1 ? "" : "s"} using ${missing.length === 1 ? "it" : "them"} won't be imported until you give ${missing.length === 1 ? "one" : "them"} below.` : "";
+    }
     dlg.querySelector(".import-items").innerHTML = items.map((it, k) => {
       const c = it.check, noun = c.kind || "file";
+      const unset = unsetIn(it);
       let body;
       if (c.error) body = `<div class="error-text">${esc(c.error)}</div><div class="muted small">Skipped.</div>`;
       else if (c.same) body = `<div class="muted small">Same as ${noun} <b>${esc(c.name)}</b> version ${c.version}: nothing to import.</div>`;
@@ -63,6 +77,7 @@ async function openImport(files, opts = {}) {
         <label class="check small"><input type="radio" name="ch${k}" value="replace" ${it.choice === "replace" ? "checked" : ""}> Save as version ${c.version + 1} of <b>${esc(c.name)}</b> (its earlier versions are kept)</label>
         <label class="check small"><input type="radio" name="ch${k}" value="rename" ${it.choice === "rename" ? "checked" : ""}> Import as <input data-as="${k}" value="${esc(it.as)}" spellcheck="false"></label>
         <label class="check small"><input type="radio" name="ch${k}" value="skip" ${it.choice === "skip" ? "checked" : ""}> Skip</label>`;
+      if (unset.length && !c.error) body += `<div class="error-text small">Uses ${unset.map((k) => `@${esc(k)}@`).join(", ")}, which ${unset.length === 1 ? "has" : "have"} no value (above): not imported until ${unset.length === 1 ? "it has" : "they have"} one.</div>`;
       return `<div class="import-item card"><div class="row"><b>${esc(it.file)}</b><span class="muted small">${esc(c.kind || "")}</span>${it.result ? `<span class="spacer"></span><span class="small ${it.result.ok ? "ok-text" : "error-text"}">${esc(it.result.text)}</span>` : ""}</div>${body}</div>`;
     }).join("");
     dlg.querySelectorAll("input[type=radio]").forEach((r) => (r.onchange = () => { items[+r.name.slice(2)].choice = r.value; }));
@@ -76,6 +91,7 @@ async function openImport(files, opts = {}) {
     });
   };
   draw();
+  dlg.querySelectorAll("[data-ph]").forEach((i) => (i.oninput = () => { values[i.dataset.ph] = i.value; impSave("runnr.importUploadValues", values); draw(); }));
   dlg.querySelector("[data-close]").onclick = () => dlg.close();
   dlg.onclose = () => dlg.remove();
   dlg.querySelector("[data-ok]").onclick = async (e) => {
@@ -85,7 +101,10 @@ async function openImport(files, opts = {}) {
     const done = [];
     for (const it of items) {
       if (it.choice === "skip" || it.result?.ok) continue;
+      const unset = unsetIn(it);
+      if (unset.length) { it.result = { ok: false, text: `${unset.map((k) => `@${k}@`).join(", ")} ${unset.length === 1 ? "needs a value" : "need values"}` }; continue; }
       const q = new URLSearchParams();
+      for (const k of it.check.placeholders || []) q.append("set", `${k}=${values[k]}`);
       if (it.choice === "rename" || it.choice === "add") {
         if (!it.as) { it.result = { ok: false, text: "give it a name" }; continue; }
         if (it.as !== it.check.name) q.set("as", it.as);
@@ -200,7 +219,9 @@ function openFolderImport(dir = "") {
           <div class="muted small">${esc(d.rel)}${d.included ? ` · from the repository, needed by ${esc((neededBy[`${d.kind}:${d.name}`] || []).join(", "))}` : ""}</div>${refs}</td>
         <td class="small">${r ? `<b class="${["failed", "exists"].includes(r.status) ? "error-text" : "ok-text"}">${esc(r.status)}${r.version ? ` · v${r.version}` : ""}</b>${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}${r.status === "exists" ? `<div>${replaceBox}</div>` : ""}` : state}</td></tr>`;
     };
+    const blocked = p.docs.filter((d) => !d.error && !st.skip.includes(d.path) && (d.placeholders || []).some((k) => p.unset?.includes(k)));
     $d(".imp-plan").innerHTML = `
+      ${p.unset?.length ? `<p class="warn-text small imp-ph-banner">⚠ ${p.unset.map((k) => `@${esc(k)}@`).join(", ")} ${p.unset.length === 1 ? "has" : "have"} no value: ${blocked.length} file${blocked.length === 1 ? "" : "s"} using ${p.unset.length === 1 ? "it" : "them"} (${blocked.map((d) => esc(d.name)).join(", ")}) won't be imported until you give ${p.unset.length === 1 ? "one" : "them"} under Placeholders.</p>` : ""}
       <div class="muted small">Folder <code>${esc(p.dir)}</code>${p.repo_root ? ` in repository <code>${esc(p.repo_root)}</code>` : ""}</div>
       ${used.length ? `<h4>Placeholders</h4><table class="kv imp-vals">${used.map((k) => `<tr class="${p.unset?.includes(k) ? "needs" : ""}"><td><code>@${esc(k)}@</code></td><td><input data-val="${esc(k)}" value="${esc(st.values[k] ?? p.values[k] ?? "")}" placeholder="${p.unset?.includes(k) ? "needs a value" : ""}" spellcheck="false"></td></tr>`).join("")}</table>` : ""}
       <h4>Files</h4>
@@ -211,8 +232,8 @@ function openFolderImport(dir = "") {
     dlg.querySelectorAll("[data-take]").forEach((c) => (c.onchange = () => { st.skip = c.checked ? st.skip.filter((x) => x !== c.dataset.take) : [...st.skip, c.dataset.take]; scan(false); }));
     dlg.querySelectorAll("[data-include]").forEach((c) => (c.onchange = () => { st.include = c.checked ? [...st.include, c.dataset.include] : st.include.filter((x) => x !== c.dataset.include); scan(false); }));
     dlg.querySelectorAll("[data-replace]").forEach((c) => (c.onchange = () => { c.checked ? st.replace.add(c.dataset.replace) : st.replace.delete(c.dataset.replace); }));
-    const todo = p.docs.filter((d) => !d.error && !d.same && !st.skip.includes(d.path));
-    $d("[data-ok]").textContent = st.results ? "Import again" : `Import${todo.length ? ` ${todo.length} file${todo.length === 1 ? "" : "s"}` : ""}`;
+    const todo = p.docs.filter((d) => !d.error && !d.same && !st.skip.includes(d.path) && !blocked.includes(d));
+    $d("[data-ok]").textContent = st.results ? "Import again" : `Import${todo.length ? ` ${todo.length} file${todo.length === 1 ? "" : "s"}` : ""}${blocked.length ? ` (${blocked.length} waiting on a placeholder)` : ""}`;
   }
 
   $d("[data-ok]").onclick = async (e) => {

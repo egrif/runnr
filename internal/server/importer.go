@@ -33,7 +33,10 @@ type importCheck struct {
 	Same      bool      `json:"same,omitempty"`
 	// Builtin: a library runnr ships with that name (the import would
 	// take its place).
-	Builtin bool   `json:"builtin,omitempty"`
+	Builtin bool `json:"builtin,omitempty"`
+	// Placeholders (@NAME@) in the file; Unset, those without a value.
+	Placeholders []string `json:"placeholders,omitempty"`
+	Unset        []string `json:"unset,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
 
@@ -76,13 +79,35 @@ func (s *Server) importCheck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.checkImport(raw))
+	_, used, _ := project.Fill(raw, nil)
+	raw, unset := fillFromQuery(raw, r)
+	c := s.checkImport(raw)
+	c.Placeholders, c.Unset = used, unset
+	writeJSON(w, http.StatusOK, c)
+}
+
+// fillFromQuery fills in a file's placeholders from set=NAME=VALUE
+// parameters, returning those left without a value.
+func fillFromQuery(raw []byte, r *http.Request) ([]byte, []string) {
+	values := map[string]string{}
+	for _, kv := range r.URL.Query()["set"] {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			values[strings.Trim(k, "@")] = v
+		}
+	}
+	out, _, unset := project.Fill(raw, values)
+	return out, unset
 }
 
 func (s *Server) importDoc(w http.ResponseWriter, r *http.Request) {
 	raw, err := readBody(r)
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+	raw, unset := fillFromQuery(raw, r)
+	if len(unset) > 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "placeholders without a value: " + strings.Join(unset, ", ") + " (give them with set=NAME=VALUE)", "unset": unset})
 		return
 	}
 	if as := r.URL.Query().Get("as"); as != "" {

@@ -309,9 +309,6 @@ fakes, runbooks and suites; one that can't go in (an error, a placeholder
 without a value, a missing reference) is reported and left out.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 && args[0] == "-" {
-				return importStdin(s(), force, collection)
-			}
 			o := project.Options{Values: map[string]string{}, Renames: map[string]string{}, Lookup: project.StoreLookup(s())}
 			for _, a := range args {
 				if st, err := os.Stat(a); err == nil && st.IsDir() {
@@ -329,6 +326,9 @@ without a value, a missing reference) is reported and left out.`,
 					return fmt.Errorf("--set %s: want NAME=VALUE", kv)
 				}
 				o.Values[strings.Trim(k, "@")] = v
+			}
+			if len(args) == 1 && args[0] == "-" {
+				return importStdin(s(), force, collection, o.Values)
 			}
 			rn := map[string]string{}
 			for _, kv := range renames {
@@ -446,10 +446,14 @@ func printPlan(p *project.Plan) error {
 }
 
 // importStdin imports one runbook from standard input.
-func importStdin(st *store.Store, force bool, collection string) error {
+func importStdin(st *store.Store, force bool, collection string, values map[string]string) error {
 	raw, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
+	}
+	raw, _, unset := project.Fill(raw, values)
+	if len(unset) > 0 {
+		return fmt.Errorf("placeholders without a value (--set NAME=VALUE): %s", strings.Join(unset, ", "))
 	}
 	var prev int
 	if rb, err := runbook.Parse(raw); err == nil {
@@ -1622,6 +1626,9 @@ shells opened from runnr. To use them in any other terminal:
 				}
 				if err != nil {
 					return err
+				}
+				if _, _, unset := project.Fill(raw, nil); len(unset) > 0 {
+					return fmt.Errorf("%s: placeholders without a value: %s (runnr import fills them in: --set NAME=VALUE)", f, strings.Join(unset, ", "))
 				}
 				if libAs != "" {
 					if raw, err = runbook.SetName(raw, libAs); err != nil {

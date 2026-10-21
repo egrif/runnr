@@ -406,6 +406,12 @@ func repoRoot(dir string) string {
 	}
 }
 
+// Fill replaces the placeholders (@NAME@) in raw that values has; it
+// returns the ones used and the ones without a value.
+func Fill(raw []byte, values map[string]string) ([]byte, []string, []string) {
+	return fill(raw, values)
+}
+
 // fill replaces the placeholders that have values; it returns the ones
 // used and the ones without a value.
 func fill(raw []byte, values map[string]string) ([]byte, []string, []string) {

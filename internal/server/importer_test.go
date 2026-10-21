@@ -110,3 +110,29 @@ func statusList(out map[string]any) string {
 	}
 	return strings.Join(s, ",")
 }
+
+// A file with a placeholder isn't imported without a value for it.
+func TestImportPlaceholders(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+	rb := "name: p\nsteps:\n  - {name: one, run: 'echo @TEAM@'}\n"
+	post := func(path string) (int, map[string]any) {
+		res := do(t, "POST", ts.URL+path, rb, map[string]string{"Content-Type": "application/yaml"})
+		var m map[string]any
+		json.NewDecoder(res.Body).Decode(&m)
+		return res.StatusCode, m
+	}
+	if _, m := post("/api/import/check"); fmt.Sprint(m["unset"]) != "[TEAM]" {
+		t.Fatalf("check %v", m)
+	}
+	if code, _ := post("/api/import"); code != http.StatusBadRequest {
+		t.Fatalf("unset: %d", code)
+	}
+	if code, m := post("/api/import?set=TEAM=dbre"); code != http.StatusCreated {
+		t.Fatalf("set: %d %v", code, m)
+	}
+	if d, _ := st.Load("p"); !strings.Contains(string(d.Raw), "echo dbre") {
+		t.Fatalf("%s", d.Raw)
+	}
+}
