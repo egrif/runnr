@@ -454,12 +454,9 @@ type executor struct {
 	windowOpenedBy int
 	// typed: steps whose confirm_typing was answered (this time through).
 	typed map[int]bool
-	// ctx is the run's; vmu guards vars against shells opened alongside
-	// the run (they read them; only the run writes them); aside holds what
-	// those shells left.
-	ctx         context.Context
-	endAsideCtx context.CancelFunc
-	vmu         sync.RWMutex
+	// vmu guards vars against shells opened alongside the run (they read
+	// them; only the run writes them); aside holds what those shells left.
+	vmu   sync.RWMutex
 	aside asideState
 }
 
@@ -477,8 +474,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	own := *rb
 	own.Steps = slices.Clone(rb.Steps)
 	rb = &own
-	actx, endAsideCtx := context.WithCancel(ctx)
-	x := &executor{ctx: actx, endAsideCtx: endAsideCtx, rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
+	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
@@ -563,8 +559,7 @@ func (x *executor) finish(ctx context.Context, err error) {
 	if err != nil {
 		x.leaveDetached()
 	}
-	// Shells alongside the run end with it (hung up); what they left is taken.
-	x.endAsideCtx()
+	// What shells alongside the run left is taken; any still open carry on.
 	x.endAside()
 	x.tendBackground(-1, true)
 	if x.funcFile != "" {

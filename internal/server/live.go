@@ -58,6 +58,10 @@ type liveRun struct {
 	ctl     *engine.Controls
 	terms   map[string]*engine.PipeConn
 	tseq    int
+	// A shell outside a run (no session) has these instead.
+	mask  func(string) string
+	funcs []engine.FuncInfo
+	view  func(idx int) engine.StepView
 
 	mu      sync.Mutex
 	events  []WireEvent
@@ -293,6 +297,8 @@ func (l *liveRun) startTerm(idx int, title string, background bool) *engine.Pipe
 		text := string(b)
 		if l.session != nil {
 			text = l.session.Mask(text)
+		} else if l.mask != nil {
+			text = l.mask(text)
 		}
 		l.publish(WireEvent{Event: engine.Event{Kind: "term", Step: idx}, Term: &TermEvent{ID: id, Data: base64.StdEncoding.EncodeToString([]byte(text))}})
 	}, 30, 120)
@@ -307,8 +313,14 @@ func (l *liveRun) startTerm(idx int, title string, background bool) *engine.Pipe
 		v := l.session.View(idx)
 		start.Command, start.Expect, start.CloseOnExit = v.Command, v.Expect, v.CloseOnExit && background
 	}
+	if idx >= 0 && l.session == nil && l.view != nil {
+		v := l.view(idx)
+		start.Command, start.Expect = v.Command, v.Expect
+	}
 	if start.Shell && l.session != nil {
 		start.Functions = l.session.Functions()
+	} else if start.Shell {
+		start.Functions = l.funcs
 	}
 	l.publish(WireEvent{Event: engine.Event{Kind: "term_start", Step: idx}, Term: start})
 	go func() {

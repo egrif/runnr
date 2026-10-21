@@ -397,8 +397,13 @@ Step list, Step definition, Step activity, Step edit (else the editor is a
 tab in Step activity), Terminal target (where a terminal step or a step's
 shell opens; else a tab in Step activity), Background target (several take
 background jobs in turn, each to the one with the fewest running) or Shell
-(a shell at the step the run is on, alongside the run: values it publishes
-reach the run when the next step starts; there can be several) or Run log
+(there can be several). A shell opens any time: before the run, with the
+runbook's environment and the inputs as filled in; while the steps run, at
+the step the run is on, alongside it (values it publishes reach the run
+when the next step starts, and it's recorded with the step); or after the
+run, with what it published. It stays open into the run's console and
+after the run ends, until you exit it, close its pane or leave the
+console; ↻ Reopen starts it again at the step the run is on now or Run log
 (every step's output, in order). The layout
 is kept in your browser; Reset layout puts it back.
 

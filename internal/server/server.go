@@ -32,7 +32,9 @@ type Server struct {
 	cfg  Config
 	mu   sync.Mutex
 	live map[string]*liveRun
-	wg   sync.WaitGroup
+	// shells opened from the console (see shells.go).
+	shells map[string]*liveRun
+	wg     sync.WaitGroup
 	// tests holds each runbook's latest test results (since the server started).
 	tests map[string]*testRun
 }
@@ -129,7 +131,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runbooks/{name}/steps/{n}", s.getRunbookStep)
 	mux.HandleFunc("PUT /api/runbooks/{name}/steps/{n}", s.putRunbookStep)
 	mux.HandleFunc("POST /api/runs/{id}/adopt-version", s.adoptVersion)
-	mux.HandleFunc("POST /api/runs/{id}/shell", s.openAsideShell)
+	mux.HandleFunc("POST /api/shells", s.openShell)
+	mux.HandleFunc("GET /api/shells/{id}/events", s.shellEvents)
+	mux.HandleFunc("POST /api/shells/{id}/term", s.shellInput)
 	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
 	mux.HandleFunc("POST /api/runs/{id}/notes", s.addNote)
@@ -722,6 +726,11 @@ func (s *Server) termInput(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
 		return
 	}
+	termTo(w, r, l)
+}
+
+// termTo delivers keystrokes, a size or a hang-up to one of l's terminals.
+func termTo(w http.ResponseWriter, r *http.Request, l *liveRun) {
 	var req struct {
 		ID   string `json:"id"`
 		Data string `json:"data"`
@@ -856,6 +865,12 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("run %q is not live: %w", r.PathValue("id"), store.ErrNotFound))
 		return
 	}
+	streamEvents(w, r, l)
+}
+
+// streamEvents sends l's events (those so far, then as they come) as
+// server-sent events.
+func streamEvents(w http.ResponseWriter, r *http.Request, l *liveRun) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)

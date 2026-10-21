@@ -753,6 +753,7 @@ body.cx-dragging-pane .xterm { pointer-events: none; }
 .cx-logpane pre.cx-runlog { margin: 0; max-height: none; height: 100%; }
 .cx-shellpane .cx-pane-head { background: #15171c; color: #e4e6eb; border-bottom-color: #2c2e35; }
 .cx-shellpane .cx-pane-head .link { color: #8fb4ff; }
+.cx-shellpane [data-sh-reopen] { background: transparent; color: #e4e6eb; border-color: #3a3d46; }
 .cx-shellpane .cx-pane-body.cx-term { padding: 4px; }
 .cx-shell-title { overflow: hidden; text-overflow: ellipsis; min-width: 0; color: #9a9ba3 !important; }
 .cx-shell-empty { padding: 12px; color: #9a9ba3 !important; white-space: normal; }

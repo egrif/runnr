@@ -138,6 +138,7 @@ $("#new-btn").addEventListener("click", () => (location.hash = "#/new"));
 
 async function route() {
   if (stream) { stream.close(); stream = null; }
+  cxLeaveShells(/\/console(\?|$)/.test(location.hash));
   resetTerm();
   resetSide();
   document.body.classList.remove("console-mode");

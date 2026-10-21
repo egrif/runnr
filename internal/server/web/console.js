@@ -28,6 +28,7 @@ async function viewConsole(id) {
   };
   cxMountConsole(state);
   cxHostTerms(state);
+  cxAttachShells(state);
 
   const loadPlan = async () => {
     try { state.plan = await api("GET", `/api/runs/${enc(id)}/plan`); cxRender(state, { details: !state.editing }); } catch {}
@@ -690,7 +691,6 @@ function cxRenderInputsAction(state, pane) {
 // ---------- terminals in the panes ----------
 
 function cxHostTerms(state) {
-  const aside = (s) => s.shell && /^shell alongside the run/.test(s.title);
   term.host = {
     started(s) {
       if (s.background) {
@@ -698,12 +698,13 @@ function cxHostTerms(state) {
         (state.bgActiveBy ||= {})[s.bgPane] = s.id;
         return cxRenderBg(state);
       }
-      if (aside(s)) {
-        // The Shell pane that asked for it (or another; with none on screen, it's the step's terminal).
+      const sh = cxShells.get(s.runId);
+      if (sh) {
+        // The Shell pane that opened it (or another free one; with none, it's the step's terminal).
         const panes = cxLeafIds(state, "shell");
-        let id = (state.shellQueue || []).shift();
-        if (!panes.includes(id)) id = panes.find((p) => ![...term.sessions.values()].some((x) => x.shellPane === p && !x.ended && !x.gone));
-        if (id) { s.shellPane = id; cxRenderShells(state); s.xt.focus(); return; }
+        const busy = (p) => [...term.sessions.values()].some((x) => x !== s && x.shellPane === p && !x.ended && !x.gone);
+        const id = panes.includes(sh.pane) ? sh.pane : panes.find((p) => !busy(p));
+        if (id) { s.shellPane = sh.pane = id; cxRenderShells(state); s.xt.focus(); return; }
       }
       state.fg = s; state.actionTab = "term"; cxRenderAction(state); cxLayout(state); s.xt.focus();
     },
@@ -799,35 +800,108 @@ function cxRenderBg(state) {
 
 // ---------- shells on demand ----------
 
-// cxRenderShells draws each Shell pane: its shell (opened alongside the
-// run, at the step it's on), or the button to open one.
+// cxRenderShells draws each Shell pane: its shell, or the button to open
+// one. A shell can open any time: before the run (the runbook's
+// environment, with the inputs as filled in), alongside it (at the step
+// it's on), or after it (with what the run published).
 function cxRenderShells(state) {
-  // Once the steps are done, the run is only finishing: no more shells.
-  const live = state.live && !state.launch && !CX_ENDED.includes(state.run.status) && (cxCurrent(state) >= 0 || state.steps.every((s) => s.status === "pending"));
+  const phase = cxShellPhase(state);
+  const cur = phase === "alongside" ? cxCurrent(state) : state.launch ? state.selected : -1;
+  const at = cur >= 0 ? ` at step ${cur + 1}` : "";
   for (const id of cxLeafIds(state, "shell")) {
     const pane = state.frames[id]?.querySelector(".cx-shellpane");
     if (!pane) continue;
-    const s = [...term.sessions.values()].find((x) => x.shellPane === id && !x.gone);
-    const open = pane.querySelector("[data-sh-open]"), end = pane.querySelector("[data-sh-end]");
-    const cur = cxCurrent(state);
-    open.hidden = !!s && !s.ended;
-    open.disabled = !live;
-    open.textContent = cur >= 0 ? `⌨ Open shell at step ${cur + 1}` : "⌨ Open shell";
-    open.title = live ? "A shell in the step's shell, with the run's variables and functions, alongside the run" : "Shells open once the run has started";
-    end.hidden = !s || s.ended;
-    pane.querySelector(".cx-shell-title").textContent = s ? `${s.title.replace(/^shell alongside the run · /, "")}${s.ended ? " · ended" : ""}` : "";
+    const mine = [...term.sessions.values()].filter((x) => x.shellPane === id && !x.gone);
+    const s = mine.find((x) => !x.ended) || mine[mine.length - 1];
+    const open = pane.querySelector("[data-sh-open]"), reopen = pane.querySelector("[data-sh-reopen]"), end = pane.querySelector("[data-sh-end]");
+    const running = !!s && !s.ended;
+    open.hidden = running;
+    open.disabled = false;
+    open.textContent = `⌨ Open shell${at}`;
+    open.title = CX_SHELL_NOTE[phase];
+    reopen.hidden = !running;
+    reopen.textContent = `↻ Reopen${at}`;
+    reopen.title = `End this shell and open a new one${at}, with the ${phase === "before" ? "inputs as they are now" : "run's values as they are now"}`;
+    end.hidden = !running;
+    const outside = s && !/^shell alongside/.test(s.title);
+    pane.querySelector(".cx-shell-title").textContent = s ? `${s.title.replace(/^shell (alongside the run · )?/, "")}${outside ? " · not recorded" : ""}${s.ended ? " · ended" : ""}` : "";
     pane.querySelector(".cx-shell-empty").hidden = !!s;
-    pane.querySelector(".cx-shell-empty").textContent = live
-      ? "Open a shell at the step the run is on: its shell, with the run's variables and functions. It runs alongside the run; values it publishes reach the run when the next step starts."
-      : state.launch ? "Shells open here once the run has started." : CX_ENDED.includes(state.run.status) ? "The run has ended." : "The run's steps are done.";
-    open.onclick = async () => {
-      open.disabled = true;
-      (state.shellQueue ||= []).push(id);
-      try { await api("POST", `/api/runs/${enc(state.run.id)}/shell`, {}); }
-      catch (e) { state.shellQueue = state.shellQueue.filter((x) => x !== id); toast(e.message); open.disabled = false; }
-    };
+    pane.querySelector(".cx-shell-empty").textContent = CX_SHELL_NOTE[phase];
+    open.onclick = () => cxOpenShell(state, id, cur);
+    reopen.onclick = () => { if (s) sendTerm(s, { end: true }); cxOpenShell(state, id, cur); };
     end.onclick = () => { if (s && confirm(`End “${s.title}”?`)) sendTerm(s, { end: true }); };
     if (s) cxShowSession(s, pane.querySelector(".cx-term"));
+  }
+}
+
+const CX_SHELL_NOTE = {
+  before: "Open a shell with the runbook's environment: the inputs as filled in (else their defaults), its env and functions. It isn't part of the run (what it publishes goes nowhere, and it isn't recorded), and it stays open when the run starts.",
+  alongside: "Open a shell at the step the run is on: its shell, with the run's variables and functions. It runs alongside the run; values it publishes reach the run when the next step starts, and it's recorded with the step. It stays open after the run ends.",
+  after: "Open a shell with the run's inputs and the values it published, and the runbook's env and functions. The run has ended: what the shell publishes goes nowhere, and it isn't recorded.",
+};
+
+// cxShellPhase is where a shell opened now stands to the run.
+function cxShellPhase(state) {
+  if (state.launch) return "before";
+  if (CX_ENDED.includes(state.run.status) || !state.live) return "after";
+  return state.run.begun && !state.run.begun.startsWith("0001") && cxCurrent(state) >= 0 ? "alongside" : "before";
+}
+
+async function cxOpenShell(state, pane, cur) {
+  const body = state.launch
+    ? { runbook: state.run.runbook, vars: cxLaunchVars(state), step: cur + 1 }
+    : { run: state.run.id, step: 0 };
+  try {
+    const sh = await api("POST", "/api/shells", body);
+    cxShellStream(state, sh.id, pane);
+  } catch (e) { toast(e.message); }
+}
+
+// Shells opened from Shell panes are sessions of their own on the server
+// (/api/shells/{id}): they carry over from the console before a run to the
+// run's console, and end when you leave the console.
+const cxShells = new Map(); // id → { es, pane, term, runbook, seq }
+
+function cxShellStream(state, id, pane) {
+  const sh = cxShells.get(id) || { seq: -1 };
+  Object.assign(sh, { pane, runbook: state.run.runbook });
+  cxShells.set(id, sh);
+  const base = `/api/shells/${enc(id)}`;
+  const es = (sh.es = new EventSource(`${base}/events`));
+  es.onmessage = (msg) => {
+    const e = JSON.parse(msg.data);
+    if (e.kind.startsWith("term")) {
+      if (e.kind === "term_start") sh.term = e.term.id;
+      termEvent(id, e, base);
+    } else if (e.kind === "output" && e.text && e.seq > sh.seq) toast(e.text);
+    sh.seq = Math.max(sh.seq, e.seq ?? -1);
+    if (e.kind === "term_end") { es.close(); cxShells.delete(id); }
+  };
+  es.onerror = () => { es.close(); if (sh.es === es) cxShells.delete(id); };
+}
+
+// cxAttachShells takes up the shells still open for this runbook (opened
+// in the console before the run); others are ended.
+function cxAttachShells(state) {
+  for (const [id, sh] of [...cxShells]) {
+    if (sh.runbook === state.run.runbook) cxShellStream(state, id, sh.pane);
+    else cxEndShell(id, sh);
+  }
+}
+
+function cxEndShell(id, sh) {
+  sh.es?.close();
+  cxShells.delete(id);
+  // keepalive: it may be the page going away.
+  if (sh.term) fetch(`/api/shells/${enc(id)}/term`, { method: "POST", keepalive: true, headers: { "Content-Type": "application/json", "X-Runnr": "1" }, body: JSON.stringify({ id: sh.term, end: true }) }).catch(() => {});
+}
+window.addEventListener("pagehide", () => cxLeaveShells(false));
+
+// cxLeaveShells is called on leaving a page: shells stay open only into
+// another console.
+function cxLeaveShells(toConsole) {
+  for (const [id, sh] of [...cxShells]) {
+    if (toConsole) { sh.es?.close(); sh.es = null; } else cxEndShell(id, sh);
   }
 }
 
@@ -887,6 +961,8 @@ async function viewConsoleLaunch(name, query) {
   }
   state.render = cxLaunchRender;
   cxMountConsole(state);
+  cxHostTerms(state);
+  cxAttachShells(state);
   let t;
   state.refresh = () => {
     clearTimeout(t);
