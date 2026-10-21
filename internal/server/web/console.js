@@ -26,24 +26,7 @@ async function viewConsole(id) {
     question: null, open: new Set(), selected: null, follow: true, editing: null, sizes: cxSizes(),
     plan: null, versionDismissed: 0, fg: null, bgActive: null,
   };
-  document.body.classList.add("console-mode");
-  main.innerHTML = `
-    <div class="cx">
-      <header class="cx-top"></header>
-      <div class="cx-body" style="--cx-left:${state.sizes.left}px">
-        <nav class="cx-list"></nav>
-        <div class="cx-gutter-v" data-gutter="left" title="Drag to resize"></div>
-        <div class="cx-right">
-          <section class="cx-pane cx-details"><div class="cx-pane-head"></div><div class="cx-pane-body"></div></section>
-          <div class="cx-gutter-h" data-gutter="details-action"></div>
-          <section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-tabs"></div><div class="cx-term"></div></div></div></section>
-          <div class="cx-gutter-h" data-gutter="action-bg" hidden></div>
-          <section class="cx-pane cx-bg" hidden><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div><span class="cx-bg-status small"></span></div><div class="cx-pane-body cx-term"></div></section>
-        </div>
-      </div>
-    </div>`;
-  cxLayout(state);
-  cxBindGutters(state);
+  cxMountConsole(state);
   cxHostTerms(state);
 
   const loadPlan = async () => {
@@ -105,6 +88,7 @@ function cxRender(state, { details = true } = {}) {
   cxRenderList(state);
   if (details) cxRenderDetails(state);
   cxRenderAction(state);
+  cxRenderLog(state);
   cxLayout(state);
 }
 
@@ -140,6 +124,7 @@ function cxRenderTop(state) {
       <h1><a href="#/runbooks/${enc(r.runbook)}">${esc(r.runbook)}</a></h1>
       <span class="muted">${r.runbook_version ? `v${r.runbook_version} · ` : ""}${esc(r.id)} · ${esc(r.mode)}${r.dry_run ? " · dry run" : ""}</span>
       <span class="spacer"></span>
+      <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>
       <span class="badge ${esc(ph.cls)}">${ICONS[r.status] || ""} ${esc(ph.label)}</span>
       <span class="muted" title="Since the run started"><span class="cx-clock" data-since="${esc(r.started)}" ${!live ? `data-until="${esc(r.ended || "")}"` : ""}></span></span>
     </div>
@@ -267,6 +252,7 @@ function cxBindTop(state, el, live) {
     } catch (e) { toast(e.message); }
   }));
   el.querySelector("[data-classic]").onclick = () => runView("classic");
+  el.querySelector("[data-reset-layout]").onclick = () => cxResetLayout(state);
   el.querySelectorAll("[data-pick]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); cxSelect(state, +a.dataset.pick); }));
 }
 
@@ -558,7 +544,7 @@ function cxRenderAction(state) {
   const atEnd = !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 8;
   const cur = cxCurrent(state);
   // A step's terminal (a tty step, or a shell opened at it) is a tab beside Now.
-  const showFg = state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
+  const showFg = !cxPlaced(state, "terminal") && state.fg && !state.fg.ended && (state.fg.step === i || state.fg.step === cur);
   const onTerm = showFg && state.actionTab === "term";
   head.innerHTML = `<b>${s?.status === "pending" ? "Will do" : s?.status === "running" || q?.step === i ? "Now" : "What happened"}</b>
     ${q?.step === i ? `<span class="badge waiting">⏸ waiting for you</span>` : s ? `<span class="badge s-${esc(s.status)}">${ICONS[s.status] || ""} ${esc(s.status)}</span>` : ""}
@@ -610,6 +596,21 @@ function cxRenderAction(state) {
     }
     cxShowSession(s, fg.querySelector(".cx-term"));
   }
+  cxRenderTermPane(state);
+}
+
+// cxRenderTermPane shows the terminal a step has open (a tty step, or a
+// shell) in the Terminal pane, when one is on screen.
+function cxRenderTermPane(state) {
+  if (!cxPlaced(state, "terminal")) return;
+  const pane = main.querySelector(".cx-termpane");
+  const s = state.fg && !state.fg.ended ? state.fg : null;
+  pane.querySelector(".cx-termpane-empty").hidden = !!s;
+  pane.querySelector(".cx-termpane-title").textContent = s ? `⌨ ${s.title}` : "";
+  const end = pane.querySelector("[data-tp-end]");
+  end.hidden = !s;
+  end.onclick = () => { if (s && confirm(`End “${s.title}”? Whatever's running in it is hung up.`)) sendTerm(s, { end: true }); };
+  if (s) cxShowSession(s, pane.querySelector(".cx-term"));
 }
 
 // In a run, the inputs' action: the question asking for one, or the values
@@ -716,48 +717,10 @@ function cxRemoveBg(state, s) {
 // ---------- layout: resizable panes ----------
 
 function cxLayout(state) {
-  const z = state.sizes;
-  const body = main.querySelector(".cx-body");
-  if (!body) return;
-  body.style.setProperty("--cx-left", `${z.left}px`);
-  const hasBg = [...term.sessions.values()].some((s) => s.background);
-  main.querySelector(".cx-bg").hidden = !hasBg;
-  main.querySelector('[data-gutter="action-bg"]').hidden = !hasBg;
-  // Editing a step needs room: the details pane takes most of the height meanwhile.
-  main.querySelector(".cx-details").style.flexGrow = state.editing ? Math.max(z.details, (z.action + z.bg) * 2.5) : z.details;
-  main.querySelector(".cx-action").style.flexGrow = z.action;
-  main.querySelector(".cx-bg").style.flexGrow = z.bg;
-}
-
-function cxBindGutters(state) {
-  main.querySelectorAll("[data-gutter]").forEach((g) => (g.onpointerdown = (e) => {
-    e.preventDefault();
-    g.setPointerCapture(e.pointerId);
-    const z = state.sizes, which = g.dataset.gutter;
-    const startX = e.clientX, startY = e.clientY, start = { ...z };
-    const right = main.querySelector(".cx-right");
-    const total = right.clientHeight;
-    const panes = ["details", "action", "bg"].filter((k) => !main.querySelector(`.cx-${k}`).hidden);
-    const sum = panes.reduce((a, k) => a + start[k], 0);
-    document.body.classList.add("cx-dragging");
-    g.onpointermove = (ev) => {
-      if (which === "left") {
-        z.left = Math.max(180, Math.min(window.innerWidth - 360, start.left + ev.clientX - startX));
-      } else {
-        const [a, b] = which === "details-action" ? ["details", "action"] : ["action", "bg"];
-        const d = ((ev.clientY - startY) / total) * sum;
-        const min = sum * 0.08;
-        z[a] = Math.max(min, Math.min(start[a] + start[b] - min, start[a] + d));
-        z[b] = start[a] + start[b] - z[a];
-      }
-      cxLayout(state);
-    };
-    g.onpointerup = () => {
-      g.onpointermove = g.onpointerup = null;
-      document.body.classList.remove("cx-dragging");
-      cxSaveSizes(z);
-    };
-  }));
+  cxApplySizes(state);
+  const anyBg = [...term.sessions.values()].some((t) => t.background);
+  const empty = main.querySelector(".cx-bg-empty");
+  if (empty) empty.hidden = anyBg;
 }
 
 // The section and run clocks tick with the window's (app.js has one for .mw-clock).
@@ -796,23 +759,7 @@ async function viewConsoleLaunch(name, query) {
     state.vars[i.name] = v && v !== "****" ? v : "";
   }
   state.render = cxLaunchRender;
-  document.body.classList.add("console-mode");
-  main.innerHTML = `
-    <div class="cx">
-      <header class="cx-top"></header>
-      <div class="cx-body" style="--cx-left:${state.sizes.left}px">
-        <nav class="cx-list"></nav>
-        <div class="cx-gutter-v" data-gutter="left" title="Drag to resize"></div>
-        <div class="cx-right">
-          <section class="cx-pane cx-details"><div class="cx-pane-head"></div><div class="cx-pane-body"></div></section>
-          <div class="cx-gutter-h" data-gutter="details-action"></div>
-          <section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-term"></div></div></div></section>
-          <div class="cx-gutter-h" data-gutter="action-bg" hidden></div>
-          <section class="cx-pane cx-bg" hidden><div class="cx-pane-head"><div class="cx-tabs"></div></div><div class="cx-pane-body cx-term"></div></section>
-        </div>
-      </div>
-    </div>`;
-  cxBindGutters(state);
+  cxMountConsole(state);
   let t;
   state.refresh = () => {
     clearTimeout(t);
@@ -843,6 +790,7 @@ function cxLaunchRender(state) {
   cxRenderList(state);
   cxRenderDetails(state);
   cxLaunchRenderAction(state);
+  cxRenderLog(state);
   cxLayout(state);
 }
 
@@ -858,6 +806,7 @@ function cxLaunchRenderTop(state) {
       <h1><a href="#/runbooks/${enc(rb.name)}">${esc(rb.name)}</a></h1>
       <span class="muted">v${state.version} · ${esc((rb.description || "").split("\n")[0])}</span>
       <span class="spacer"></span>
+      <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>
       <span class="badge">○ not started</span>
     </div>
     <div class="cx-status">
@@ -874,6 +823,7 @@ function cxLaunchRenderTop(state) {
       ${tog("dry", "Dry run", "Show what each step would run, without running it")}
     </div>`;
   el.querySelectorAll("[data-opt]").forEach((b) => (b.onclick = () => { opts[b.dataset.opt] = !opts[b.dataset.opt]; cxLaunchRenderTop(state); }));
+  el.querySelector("[data-reset-layout]").onclick = () => cxResetLayout(state);
   el.querySelector("[data-start]").onclick = () => cxLaunchStart(state);
 }
 
