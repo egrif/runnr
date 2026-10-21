@@ -271,3 +271,37 @@ func (s *Server) formatStep(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "raw": string(out)})
 }
+
+// setRunInputs changes a live run's inputs ({"values": {name: value},
+// "by": who}). They take effect before the run's next command; a step
+// waiting to run its command starts again with them.
+func (s *Server) setRunInputs(w http.ResponseWriter, r *http.Request) {
+	l := s.getLive(r.PathValue("id"))
+	if l == nil || l.session == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	is, ok := l.session.(engine.InputSetter)
+	if !ok {
+		writeErr(w, errors.New("this run's inputs can't be changed"))
+		return
+	}
+	var req struct {
+		Values map[string]string `json:"values"`
+		By     string            `json:"by"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	res, err := is.SetInputs(req.Values, req.By)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	restarted := false
+	if ed, ok := l.session.(engine.Editor); ok && len(res.Changed) > 0 {
+		restarted = l.restartForInputs(ed.Current())
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changed": res.Changed, "stale": res.Stale, "replaces": res.Replaces, "restarted": restarted})
+}

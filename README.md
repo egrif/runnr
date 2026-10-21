@@ -161,6 +161,14 @@ At any step prompt you can also:
   with the step. `echo name=value >> "$RUNNR_OUTPUT"`
   in that shell publishes a value to later steps. Ctrl-C in the shell doesn't
   touch the run.
+- **`i`**: change the run's inputs. The new values are checked as at the
+  start and take effect before the run's next command: a step waiting to
+  run its command starts again with them; a command already running keeps
+  what it has. It says which steps already ran with the old value, and
+  replaces a value a step published under the same name. Each change is
+  recorded with the run (who, when, old → new), and a resume uses the new
+  values. In the GUI: **✎ Change inputs** on a live run (the run page, or
+  the console's Inputs), or `PUT /api/runs/{id}/inputs`.
 - **`f`** (failed steps): force the step to count as success. A reason is
   required; the step is recorded as `forced` with it, and whatever it
   published is kept.

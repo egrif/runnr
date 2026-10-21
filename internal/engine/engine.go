@@ -90,6 +90,9 @@ type Run struct {
 	// runbook version they were saved as (0: not saved yet).
 	Edits      []StepEdit `json:"edits,omitempty"`
 	EditsSaved int        `json:"edits_saved,omitempty"`
+	// InputChanges are changes to the inputs during the run (Inputs has
+	// the values now).
+	InputChanges []InputChange `json:"input_changes,omitempty"`
 	// Previous is the run this one was compared against ("last time").
 	Previous string            `json:"previous,omitempty"`
 	Status   Status            `json:"status"`
@@ -157,6 +160,8 @@ const (
 	EventStepProgress EventKind = "step_progress"
 	// EventWindow: the maintenance window opened or closed (Run is set).
 	EventWindow EventKind = "window"
+	// EventInputs: the run's inputs changed (Run has them).
+	EventInputs EventKind = "inputs"
 )
 
 type Event struct {
@@ -458,6 +463,8 @@ type executor struct {
 	// them; only the run writes them); aside holds what those shells left.
 	vmu   sync.RWMutex
 	aside asideState
+	// inputs are changes to the inputs waiting to take effect.
+	inputs inputState
 }
 
 // Execute runs rb to completion and returns the final record.
@@ -656,6 +663,7 @@ func (x *executor) steps(ctx context.Context) error {
 		x.cur = i
 		x.em.Unlock()
 		x.takeAside()
+		x.takeInputs()
 		step := x.def(i)
 		if err := ctx.Err(); err != nil {
 			return err
@@ -767,11 +775,13 @@ func (x *executor) apply(step runbook.Step, out cmdResult) {
 	for k, v := range out.outputs {
 		x.vars[k] = v
 		delete(x.secretVars, k)
+		x.markPublished(k)
 	}
 	for k, v := range out.secrets {
 		x.vars[k] = v
 		x.secretVars[k] = true
 		x.addSecret(v, false)
+		x.markPublished(k)
 	}
 }
 

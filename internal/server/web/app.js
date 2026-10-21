@@ -264,7 +264,7 @@ async function viewRun(id) {
   state.history = [];
   api("GET", `/api/runs?runbook=${enc(run.runbook)}&limit=30`).then((rs) => { state.history = rs.filter((r) => r.id !== run.id); renderRun(state); }).catch(() => {});
   api("GET", `/api/runbooks/${enc(run.runbook)}`).then(async (d) => {
-    state.cfg = d.runbook?.steps; state.rbSections = d.runbook?.sections;
+    state.cfg = d.runbook?.steps; state.rbSections = d.runbook?.sections; state.inputDefs = d.runbook?.inputs;
     await loadLibs(d.runbook?.libraries);
     state.fns = fnsOf(d.runbook);
     renderRun(state);
@@ -345,6 +345,10 @@ function applyEvent(state, e) {
     case "window":
       state.run.window = e.run.window;
       break;
+    case "inputs":
+      Object.assign(state.run, { inputs: e.run.inputs, input_changes: e.run.input_changes, state: e.run.state, window: e.run.window });
+      state.onState?.();
+      break;
     case "step_progress":
       // A re-opened step (and the one after it) starts afresh.
       if (e.result.status === "pending") state.steps[e.step] = { ...e.result, notes: state.steps[e.step].notes, log: [] };
@@ -380,7 +384,8 @@ function renderRun(state) {
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${editsBanner(run, state)}
     ${windowBanner(run)}
-    ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}</p>` : ""}
+    ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}${canChangeInputs(state) ? ` <button class="link" id="change-inputs" title="Change them for the rest of the run">✎ Change inputs</button>` : ""}</p>` : ""}
+    ${inputChangesHTML(run)}
     ${(state.messages || []).map((m) => `<p class="muted">ℹ ${esc(m)}</p>`).join("")}
     ${runningBackground().length ? `<div class="bg-list">${runningBackground().map((s) => `<span class="bg-item">◐ ${esc(s.title.replace(/^background · /, ""))} <button class="link" data-show-bg="${esc(s.id)}" title="Go to its terminal, in its step">Show</button></span>`).join("")}</div>` : ""}
     <div class="notes">${renderNotes(run.notes)}<button class="link" data-note="0">✎ Add run note</button></div>
@@ -459,6 +464,7 @@ function renderRun(state) {
   main.querySelectorAll("[data-edit-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); editRunStep(state, +b.dataset.editStep); }));
   $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
   $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
+  $("#change-inputs") && ($("#change-inputs").onclick = () => changeInputs(state));
   $("#raw-log") && ($("#raw-log").onclick = async () => {
     state.raw = !state.raw;
     if (state.raw && state.rawText == null) {
@@ -590,6 +596,73 @@ async function editRunStep(state, i) {
   };
   dlg.showModal();
   ta.focus();
+}
+
+// canChangeInputs: a live run's inputs can change once its steps have
+// started, until they're done.
+function canChangeInputs(state) {
+  const r = state.run;
+  return !!state.live && !["succeeded", "failed", "aborted"].includes(r.status) && !!r.begun && !r.begun.startsWith("0001")
+    && (state.inputDefs || []).length > 0 && state.steps.some((s) => ["pending", "running"].includes(s.status));
+}
+
+// inputChangesHTML lists the changes to a run's inputs.
+function inputChangesHTML(run) {
+  const cs = run.input_changes || [];
+  if (!cs.length) return "";
+  const at = (c) => (c.step < 0 ? "before the first step" : c.step >= run.steps.length ? "after the last step" : `from step ${c.step + 1}`);
+  return `<details class="input-changes small"><summary>Inputs changed during the run (${cs.length})</summary><ul>${cs.map((c) =>
+    `<li><code>${esc(c.name)}</code>: <code>${esc(c.old || "—")}</code> → <code>${esc(c.new || "—")}</code> <span class="muted">${at(c)} · ${new Date(c.at).toLocaleTimeString()}${c.by ? ` · ${esc(c.by)}` : ""}</span></li>`).join("")}</ul></details>`;
+}
+
+// changeInputs changes a live run's inputs: they take effect before its
+// next command (a step waiting to run its command starts again).
+function changeInputs(state) {
+  const run = state.run, defs = state.inputDefs || [];
+  let saved = "";
+  try { saved = localStorage.getItem("runnr.author") || ""; } catch {}
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step abort-dialog inputs-dialog";
+  const field = (d) => {
+    const v = run.inputs?.[d.name] ?? "";
+    if (d.choices?.length) return `<select name="${esc(d.name)}">${(d.required ? [] : [""]).concat(d.choices).map((c) => `<option ${c === v ? "selected" : ""} value="${esc(c)}">${esc(c || "(default)")}</option>`).join("")}</select>`;
+    if (d.secret) return `<input name="${esc(d.name)}" type="password" placeholder="unchanged" autocomplete="off">`;
+    return `<input name="${esc(d.name)}" value="${esc(v)}" placeholder="${esc(d.default || "")}" spellcheck="false" autocomplete="off">`;
+  };
+  dlg.innerHTML = `<h3>Change inputs</h3>
+    <p class="muted small">New values take effect before the run's next command: the next step, or the one waiting now if it hasn't run its command yet (it starts again). A command that's running keeps the values it has. The change is recorded with the run, and a resume uses the new values.</p>
+    <table class="kv">${defs.map((d) => `<tr><td><code>${esc(d.name)}</code>${d.required ? " *" : ""}${d.description ? `<div class="muted small">${esc(d.description)}</div>` : ""}</td><td>${field(d)}</td></tr>`).join("")}</table>
+    <label>Your name <input name="__by" value="${esc(saved)}" autocomplete="name"></label>
+    <div class="inputs-result small"></div>
+    <div class="error-text"></div>
+    <div class="row"><button class="primary" data-ok>Change</button><button data-close>Cancel</button></div>`;
+  document.body.append(dlg);
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  dlg.querySelector("[data-ok]").onclick = async (e) => {
+    const values = {};
+    for (const d of defs) {
+      const f = dlg.querySelector(`[name="${CSS.escape(d.name)}"]`);
+      if (d.secret ? f.value !== "" : f.value !== (run.inputs?.[d.name] ?? "")) values[d.name] = f.value;
+    }
+    if (!Object.keys(values).length) return dlg.close();
+    const by = dlg.querySelector("[name=__by]").value.trim();
+    if (by) try { localStorage.setItem("runnr.author", by); } catch {}
+    e.currentTarget.disabled = true;
+    try {
+      const res = await api("PUT", `/api/runs/${enc(run.id)}/inputs`, { values, by });
+      const stale = Object.entries(res.stale || {}).map(([k, steps]) => `<li><code>${esc(k)}</code>: step${steps.length === 1 ? "" : "s"} ${steps.join(", ")} already ran with the old value</li>`);
+      const repl = (res.replaces || []).map((k) => `<li><code>${esc(k)}</code>: a step had published a value for it; the new one takes its place</li>`);
+      const msg = !res.changed?.length ? "Nothing changed." : res.restarted ? "Changed: the step waiting now starts again with the new values." : "Changed: they take effect before the next command.";
+      if (stale.length || repl.length) {
+        dlg.querySelector(".inputs-result").innerHTML = `<p><b>${esc(msg)}</b></p><ul>${[...stale, ...repl].join("")}</ul>`;
+        dlg.querySelector("[data-ok]").hidden = true;
+        dlg.querySelector("[data-close]").textContent = "OK";
+      } else { dlg.close(); toast(msg); }
+    } catch (x) { dlg.querySelector(".error-text").textContent = x.message; e.currentTarget.disabled = false; }
+  };
+  dlg.showModal();
+  dlg.querySelector("input, select")?.focus();
 }
 
 // abortRun asks first, with an optional reason. A run this server isn't

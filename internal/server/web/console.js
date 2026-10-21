@@ -441,7 +441,10 @@ function cxRenderDetails(state) {
 // The details of the inputs: each one's definition, and its value.
 function cxRenderInputsDetails(state, head, body) {
   const ins = cxInputs(state);
-  head.innerHTML = `<b>Inputs</b><span class="muted small">${state.launch ? "the values this run will start with" : "the values this run started with"}</span>`;
+  const changed = !state.launch && state.run.input_changes?.length;
+  head.innerHTML = `<b>Inputs</b><span class="muted small">${state.launch ? "the values this run will start with" : changed ? "the values the run has now" : "the values this run started with"}</span><span class="spacer"></span>
+    ${!state.launch && canChangeInputs(state) ? `<button data-change-inputs title="Change them for the rest of the run">✎ Change inputs</button>` : ""}`;
+  head.querySelector("[data-change-inputs]")?.addEventListener("click", () => changeInputs(state));
   body.innerHTML = ins.length ? `<table class="cx-inputs-table">
       <tr><th>Input</th><th>Value</th><th>Default</th><th></th></tr>
       ${ins.map((x) => `<tr class="${x.required && !x.def && !x.secret && !x.value ? "needs" : ""}">
@@ -449,7 +452,7 @@ function cxRenderInputsDetails(state, head, body) {
         <td>${x.secret ? (x.value ? "••••" : `<span class="muted">${state.launch ? "asked for when needed" : "not stored"}</span>`) : x.value ? `<code>${esc(x.value)}</code>` : x.def ? `<span class="muted">default</span>` : `<span class="muted">—</span>`}</td>
         <td>${x.def ? `<code>${esc(x.def)}</code>` : ""}</td>
         <td class="muted small">${[x.secret && "secret", x.choices.length && `one of ${x.choices.join(", ")}`].filter(Boolean).map(esc).join(" · ")}</td></tr>`).join("")}
-    </table>${state.launch ? `<p class="muted small">Fill them in in the pane below.</p>` : ""}` : `<p class="muted">This runbook takes no inputs.</p>`;
+    </table>${state.launch ? `<p class="muted small">Fill them in in the pane below.</p>` : inputChangesHTML(state.run)}` : `<p class="muted">This runbook takes no inputs.</p>`;
 }
 
 // cxStartEdit opens the editor's own form for step i: the runbook as saved
@@ -681,7 +684,7 @@ function cxRenderInputsAction(state, pane) {
     ${cur >= 0 ? `<button class="link" data-goto="${cur}">→ step ${cur + 1}, where the run is</button>` : ""}`;
   const ins = cxInputs(state);
   body.innerHTML = (q?.step === -1 ? renderQuestion(q, state.run.id) : "")
-    + (ins.length ? `<p class="muted">${q?.step === -1 ? "Asked for as the run starts; the others:" : "The run started with:"}</p>
+    + (ins.length ? `<p class="muted">${q?.step === -1 ? "Asked for as the run starts; the others:" : state.run.input_changes?.length ? "The run has now:" : "The run started with:"}</p>
       <table class="kv">${ins.map((x) => `<tr><td><code>${esc(x.name)}</code></td><td>${x.secret ? "••••" : `<code>${esc(x.value || "")}</code>`}</td></tr>`).join("")}</table>` : `<p class="muted">No inputs.</p>`);
   body.querySelectorAll(".question").forEach((el) => bindQuestion(el, q, state.run.id));
   head.querySelector("[data-goto]")?.addEventListener("click", () => cxSelect(state, cur, true));

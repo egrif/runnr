@@ -785,3 +785,6 @@ dialog.folder-import { width: min(920px, calc(100vw - 32px)); }
 .imp-vals input { width: 100%; min-width: 28em; }
 .imp-vals tr.needs code { color: var(--warn); font-weight: 700; }
 .imp-recent { flex-wrap: wrap; margin-top: 4px; }
+.input-changes ul { margin: 4px 0 0; padding-left: 18px; }
+dialog.inputs-dialog table.kv { width: 100%; }
+dialog.inputs-dialog table.kv input, dialog.inputs-dialog table.kv select { width: 100%; }
