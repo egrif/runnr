@@ -398,7 +398,8 @@ tab in Step activity), Terminal target (where a terminal step or a step's
 shell opens; else a tab in Step activity), Background target (several take
 background jobs in turn, each to the one with the fewest running) or Shell
 (a shell at the step the run is on, alongside the run: values it publishes
-reach the run when the next step starts; there can be several). The layout
+reach the run when the next step starts; there can be several) or Run log
+(every step's output, in order). The layout
 is kept in your browser; Reset layout puts it back.
 
 **Running in tmux.** `runnr run --tmux` (or `resume --tmux`) runs in a

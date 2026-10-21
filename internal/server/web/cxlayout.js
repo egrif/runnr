@@ -22,6 +22,7 @@ const CX_KINDS = {
   action: { label: "Step activity", html: `<section class="cx-pane cx-action"><div class="cx-pane-head"></div><div class="cx-pane-body"><div class="cx-action-body"></div><div class="cx-fg" hidden><div class="cx-tabs"></div><div class="cx-term"></div></div>${CX_EDIT_HOST}</div></section>` },
   terminal: { label: "Terminal target", html: `<section class="cx-pane cx-termpane"><div class="cx-pane-head"><b>Terminal</b><span class="muted small cx-termpane-title"></span><span class="spacer"></span><button class="link" data-tp-end hidden>End session</button></div><div class="cx-pane-body cx-term"><p class="muted cx-termpane-empty">A terminal step's terminal, or a shell opened from a step's question, shows here.</p></div></section>` },
   background: { label: "Background target", multi: true, html: `<section class="cx-pane cx-bg"><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div><span class="cx-bg-status small"></span></div><div class="cx-pane-body cx-term"><p class="muted cx-bg-empty">Background steps' terminals show here while they run.</p></div></section>` },
+  log: { label: "Run log", html: `<section class="cx-pane cx-logpane"><div class="cx-pane-head"><b>Run log</b><span class="muted small">every step's output, in order</span></div><div class="cx-pane-body"><pre class="log cx-runlog"></pre></div></section>` },
   shell: { label: "Shell", multi: true, html: `<section class="cx-pane cx-shellpane"><div class="cx-pane-head"><b>Shell</b><span class="muted small cx-shell-title"></span><span class="spacer"></span><button class="primary" data-sh-open>⌨ Open shell</button><button class="link" data-sh-end hidden>End session</button></div><div class="cx-pane-body cx-term"><p class="muted cx-shell-empty"></p></div></section>` },
 };
 
@@ -347,4 +348,18 @@ function cxResetLayout(state) {
   for (const [id, el] of Object.entries(state.frames)) if (/^e|~/.test(id)) { el.remove(); delete state.frames[id]; }
   state.layout = structuredClone(CX_DEFAULT_LAYOUT);
   cxLayoutChanged(state);
+}
+
+// cxRenderLog fills the Run log pane: each step's output, in order.
+function cxRenderLog(state) {
+  if (!cxPlaced(state, "log")) return;
+  const pre = main.querySelector(".cx-runlog");
+  if (!pre) return;
+  const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 8;
+  pre.innerHTML = state.steps.map((s, i) => {
+    if (s.status === "pending" && !s.log?.length) return "";
+    const head = `<span class="info">── ${i + 1}. ${esc(s.name)}: ${ICONS[s.status] || ""} ${esc(s.status)}${s.note ? ` (${esc(s.note)})` : ""} ──</span>`;
+    return [head, ...(s.log || []).map((l) => `<span class="${esc(l.stream)}">${esc(l.text)}</span>`)].join("\n");
+  }).filter(Boolean).join("\n") || `<span class="info">Nothing has run yet.</span>`;
+  if (atEnd) pre.scrollTop = pre.scrollHeight;
 }

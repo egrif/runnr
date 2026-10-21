@@ -750,6 +750,7 @@ body.cx-dragging-pane .xterm { pointer-events: none; }
 .cx-termpane .cx-term, .cx-bg .cx-term { position: relative; }
 .cx-termpane-empty, .cx-bg-empty { padding: 12px; color: #9a9ba3 !important; }
 .cx-termpane .cx-pane-body { background: #15171c; padding: 4px; }
+.cx-logpane pre.cx-runlog { margin: 0; max-height: none; height: 100%; }
 .cx-shellpane .cx-pane-head { background: #15171c; color: #e4e6eb; border-bottom-color: #2c2e35; }
 .cx-shellpane .cx-pane-head .link { color: #8fb4ff; }
 .cx-shellpane .cx-pane-body.cx-term { padding: 4px; }

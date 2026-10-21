@@ -63,6 +63,15 @@ async function viewConsole(id) {
   stream.onerror = () => { if (CX_ENDED.includes(state.run.status)) stream.close(); };
 }
 
+// cxWhere says what the run is doing when it isn't on a step: starting,
+// stopping its background jobs once the steps are done, or finished.
+function cxWhere(state) {
+  if (CX_ENDED.includes(state.run.status)) return "Finished";
+  if (state.steps.every((s) => s.status === "pending")) return "Starting…";
+  const bg = state.steps.filter((s) => s.status === "background").length;
+  return bg ? `All steps done · stopping ${bg} background job${bg === 1 ? "" : "s"}…` : "All steps done · finishing…";
+}
+
 // cxCurrent is the step the run is on: the one a question is about, else
 // the one running, else the first not done (-1 when it's all done).
 function cxCurrent(state) {
@@ -88,6 +97,7 @@ function cxRender(state, { details = true } = {}) {
   cxRenderList(state);
   if (details) cxRenderDetails(state);
   cxRenderAction(state);
+  cxRenderLog(state);
   cxLayout(state);
 }
 
@@ -128,7 +138,7 @@ function cxRenderTop(state) {
       <span class="muted" title="Since the run started"><span class="cx-clock" data-since="${esc(r.started)}" ${!live ? `data-until="${esc(r.ended || "")}"` : ""}></span></span>
     </div>
     <div class="cx-status">
-      ${cur >= 0 ? `<span class="cx-at"><b>Step ${cur + 1}</b> of ${state.steps.length}: ${esc(st.name)}</span>` : `<span class="cx-at muted">${CX_ENDED.includes(r.status) ? "Finished" : "Starting…"}</span>`}
+      ${cur >= 0 ? `<span class="cx-at"><b>Step ${cur + 1}</b> of ${state.steps.length}: ${esc(st.name)}</span>` : `<span class="cx-at muted">${cxWhere(state)}</span>`}
       ${section ? `<span class="cx-chip" title="The section the run is in, and how long since its first step started">§ ${esc(section)} ${inSection}</span>` : ""}
       ${cxWindowChip(r)}
       ${(state.messages || []).slice(-1).map((m) => `<span class="muted small">ℹ ${esc(m)}</span>`).join("")}
@@ -792,7 +802,8 @@ function cxRenderBg(state) {
 // cxRenderShells draws each Shell pane: its shell (opened alongside the
 // run, at the step it's on), or the button to open one.
 function cxRenderShells(state) {
-  const live = state.live && !state.launch && !CX_ENDED.includes(state.run.status);
+  // Once the steps are done, the run is only finishing: no more shells.
+  const live = state.live && !state.launch && !CX_ENDED.includes(state.run.status) && (cxCurrent(state) >= 0 || state.steps.every((s) => s.status === "pending"));
   for (const id of cxLeafIds(state, "shell")) {
     const pane = state.frames[id]?.querySelector(".cx-shellpane");
     if (!pane) continue;
@@ -808,7 +819,7 @@ function cxRenderShells(state) {
     pane.querySelector(".cx-shell-empty").hidden = !!s;
     pane.querySelector(".cx-shell-empty").textContent = live
       ? "Open a shell at the step the run is on: its shell, with the run's variables and functions. It runs alongside the run; values it publishes reach the run when the next step starts."
-      : state.launch ? "Shells open here once the run has started." : "The run has ended.";
+      : state.launch ? "Shells open here once the run has started." : CX_ENDED.includes(state.run.status) ? "The run has ended." : "The run's steps are done.";
     open.onclick = async () => {
       open.disabled = true;
       (state.shellQueue ||= []).push(id);
@@ -906,6 +917,7 @@ function cxLaunchRender(state) {
   cxRenderList(state);
   cxRenderDetails(state);
   cxLaunchRenderAction(state);
+  cxRenderLog(state);
   cxLayout(state);
 }
 

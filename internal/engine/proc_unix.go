@@ -5,9 +5,25 @@ package engine
 import (
 	"os"
 	"os/exec"
+	"os/signal"
 	"syscall"
 	"time"
 )
+
+// Started with SIGHUP ignored (under nohup, say), runnr's commands would
+// inherit that, and hanging up a background step or a shell wouldn't end
+// it (it'd be killed 5 seconds later instead). Catching SIGHUP keeps runnr
+// ignoring it while its commands get the default.
+func init() {
+	if signal.Ignored(syscall.SIGHUP) {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGHUP)
+		go func() {
+			for range c {
+			}
+		}()
+	}
+}
 
 // setProcessGroup makes cancellation (an abort, a timeout) stop the whole
 // command tree, the way an operator would: Ctrl-C first, so a tool like
