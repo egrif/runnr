@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.2.3 — 2026-10-22
+
+### Fixed
+
+- The release workflow tags as github-actions (an annotated tag needs a
+  name): v0.2.2's release failed at tagging, and was published by hand.
+
 ## v0.2.2 — 2026-10-22
 
 Every merge to main is now a release.
