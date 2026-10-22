@@ -135,6 +135,8 @@ function renderSidebar() {
 $("#filter").addEventListener("input", renderSidebar);
 $("#new-btn").addEventListener("click", () => (location.hash = "#/new"));
 $("#import-btn").addEventListener("click", () => openFolderImport());
+$("#copy-on-select").checked = copySel.on;
+$("#copy-on-select").addEventListener("change", (e) => setCopyOnSelect(e.target.checked));
 
 // ---------- router ----------
 

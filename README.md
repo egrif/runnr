@@ -398,6 +398,11 @@ status, ■ stopped) until you close it, or closes at once with
 `close_on_exit: true`. They're visible as a tab in the GUI or with `w` in the CLI, and their
 output is recorded with the step. They can't publish outputs.
 
+**Copy on select.** In the GUI, selecting text copies it: in the browser
+terminals, code fields and inputs, and run output. **Copy on select** at
+the bottom of the sidebar turns it off (selecting text to paste over it
+copies it first).
+
 **The run console** (▣ Console on a run, or a runbook's Console tab) puts the
 run on one screen, in panes you arrange: drag a pane by its bar onto
 another pane's left, right, top or bottom edge to split it there, or onto
