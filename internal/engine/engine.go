@@ -454,6 +454,8 @@ type executor struct {
 	// reopenTo is the step asked to re-open; pauseAt the re-opened step
 	// that pauses before running (-1: none).
 	reopenTo, pauseAt int
+	// stop stops the step whose command is running (nil: none).
+	stop *stepStop
 	// windowOpenedBy is the step that opened the maintenance window in
 	// this run (-1: none, or it was open already when resuming).
 	windowOpenedBy int
@@ -687,8 +689,12 @@ func (x *executor) steps(ctx context.Context) error {
 			continue
 		}
 		if err := x.step(ctx, i, step); err != nil {
-			if j := x.takeReopen(); errors.Is(err, ErrReopen) && j >= 0 && j < i {
-				x.reopen(i, j)
+			if j := x.takeReopen(); errors.Is(err, ErrReopen) && j >= 0 {
+				if j <= i {
+					x.reopen(i, j) // back (or this step again)
+				} else {
+					x.jumpTo(i, j)
+				}
 				i = j - 1
 				continue
 			}

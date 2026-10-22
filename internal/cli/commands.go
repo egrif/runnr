@@ -759,6 +759,9 @@ func interruptible() (context.Context, func(), *interruptHolds) {
 				holds.ignored()
 				continue
 			}
+			if sig == os.Interrupt && holds.stepFirst() {
+				continue
+			}
 			cancel()
 		}
 	}()

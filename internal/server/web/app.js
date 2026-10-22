@@ -409,6 +409,7 @@ function renderRun(state) {
           <span class="meta">${[s.way && `way: ${s.way}`, s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean).map(esc).join(" · ")}${stepTiming(state, i)}</span>
           ${state.preview?.[i]?.confirm ? `<span class="badge-k warn" title="Asks before running">confirms on its own</span>` : ""}
           ${state.prev?.steps[i] && state.prev.steps[i].status !== "pending" ? `<span class="last s-${esc(state.prev.steps[i].status)}" title="Last time: ${esc(state.prev.steps[i].status)}">${ICONS[state.prev.steps[i].status]}</span>` : ""}
+          ${live && s.status === "running" && s.kind !== "background" && state.question?.step !== i ? `<button class="pill danger" data-stop-step="${i}" title="Interrupt its command: the step fails and you choose what's next (the run goes on)">■ Stop step</button>` : ""}
           ${live && state.question?.reopenable === i + 1 ? `<button class="pill" data-reopen="${i}" title="Go back to this step: it waits for you before running again, then the run carries on from there">↺ re-open</button>` : ""}
           ${live && editable(state, i) ? `<button class="pill" data-edit-step="${i}" title="Change this step for this run${state.question?.step === i ? " and run it again" : ""}">✎ edit</button>` : ""}
           ${live && s.status === "pending" && state.controls ? `
@@ -457,6 +458,7 @@ function renderRun(state) {
     openExplain({ runbook: run.runbook }, n, n ? `${n}. ${state.steps[n - 1].name}` : run.runbook);
   }));
   main.querySelectorAll("[data-show-bg]").forEach((b) => (b.onclick = () => showTerm(b.dataset.showBg)));
+  main.querySelectorAll("[data-stop-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); stopRunningStep(run.id, +b.dataset.stopStep, state.steps[+b.dataset.stopStep]?.name); }));
   main.querySelectorAll("[data-reopen]").forEach((b) => (b.onclick = async (ev) => {
     ev.stopPropagation();
     b.disabled = true;
@@ -798,10 +800,42 @@ function renderQuestion(q, runId) {
   if (q.expect) text += `<div class="expect"><b>Expect:</b> ${esc(q.expect)}</div>`;
   if (q.optional) text = `<p class="optional-note">◇ <b>Optional:</b> this step isn't required. Run it, or skip it and carry on.</p>` + text;
   if (q.options?.includes("shell")) text += `<div class="muted">“Open shell” opens a terminal below, with this run's variables loaded and this step's commands beside it. The question stays here for when you're back.</div>`;
-  return `<div class="question ${q.type === "danger" || q.type === "typed" ? "q-danger" : ""}"><h3>${esc(q.title)}</h3>${text}<div class="actions">${body}</div></div>`;
+  // Going elsewhere: back a step, or to any step by number (it waits there before running).
+  const nav = q.goto ? `<div class="q-goto small">${q.step > 0 ? `<button class="link" data-goto="${q.step}" title="Go back to step ${q.step}: it and the steps after it run again (it waits for you first)">↺ Back to step ${q.step}</button> · ` : ""}
+    <label>Go to step <input type="number" min="1" name="goto" size="4" placeholder="${q.step + 1}"></label><button class="link" data-goto-n>Go</button>
+    <span class="muted">back runs the steps from there again; ahead skips the ones between; it waits for you before running</span></div>` : "";
+  return `<div class="question ${q.type === "danger" || q.type === "typed" ? "q-danger" : ""}"><h3>${esc(q.title)}</h3>${text}<div class="actions">${body}</div>${nav}</div>`;
+}
+
+// gotoStep goes to step n (1-based) while the run waits on the operator.
+async function gotoStep(runId, n, force = false) {
+  try {
+    await api("POST", `/api/runs/${enc(runId)}/goto`, { step: n, force });
+    toast(`Going to step ${n}: it waits for you before running`);
+  } catch (e) {
+    if (!force && /point of no return/.test(e.message) && confirm(`${e.message}.\n\nGo back anyway?`)) return gotoStep(runId, n, true);
+    toast(e.message);
+  }
+}
+
+// stopRunningStep interrupts the step whose command is running; it fails,
+// and the run asks what to do.
+async function stopRunningStep(runId, i, name) {
+  if (!confirm(`Stop step ${i + 1}${name ? ` (${name})` : ""}? Its command is interrupted (Ctrl-C, then terminated if it won't stop). The step fails and you choose what's next: retry, skip, or go to another step. The run goes on.`)) return;
+  let by = "";
+  try { by = localStorage.getItem("runnr.author") || ""; } catch {}
+  try { await api("POST", `/api/runs/${enc(runId)}/stop`, { step: i + 1, by }); toast(`Stopping step ${i + 1}…`); }
+  catch (e) { toast(e.message); }
 }
 
 function bindQuestion(el, q, runId) {
+  el.querySelector("[data-goto]")?.addEventListener("click", (e) => gotoStep(runId, +e.currentTarget.dataset.goto));
+  const gn = el.querySelector("[name=goto]");
+  if (gn) {
+    const go = () => { const n = parseInt(gn.value, 10); if (n > 0) gotoStep(runId, n); };
+    el.querySelector("[data-goto-n]").onclick = go;
+    gn.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } };
+  }
   el.querySelectorAll("button[data-v]").forEach((b) => (b.onclick = async () => {
     let value = b.dataset.v;
     if (value === "submit") value = el.querySelector("[name=value]").value;

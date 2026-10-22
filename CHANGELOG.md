@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.3.0 — 2026-10-22
+
+Move about a run, and stop a step without stopping the run.
+
+### Added
+
+- **Go to a step** while the run waits for you (before a step, after it
+  failed, or pausing after it): back to any step that ran (it and the steps
+  after it run again), this step again, or ahead (the steps between are
+  skipped). The step waits for you before running. ↺ Back to step N and Go
+  to step under every question in the GUI; `g` at the CLI's prompts.
+  Going back past a point of no return asks first; a background job still
+  running in the way has to be ended first.
+- **Stop a running step**: ■ Stop step in the GUI (the run page and the
+  console), or Ctrl-C in the CLI (Ctrl-C again to abort the run). Its
+  command is interrupted as abort would; the step fails, "stopped by …",
+  and the run asks what to do: retry, skip, or go to a step.
+
 ## v0.2.3 — 2026-10-22
 
 ### Fixed

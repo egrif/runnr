@@ -114,7 +114,25 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 
 	for {
 		x.takeInputs() // before each try: a change made while it was failing counts for the retry
-		a := x.attempt(ctx, i, step, res, confirmed)
+		// The try can be stopped on its own (StopStep): it fails, and the
+		// run asks what to do as for any failure.
+		sctx, cancel := context.WithCancelCause(ctx)
+		x.em.Lock()
+		x.stop = &stepStop{idx: i, cancel: cancel}
+		x.em.Unlock()
+		a := x.attempt(sctx, i, step, res, confirmed)
+		x.em.Lock()
+		by := x.stop.by
+		x.stop = nil
+		x.em.Unlock()
+		if ctx.Err() == nil && errors.Is(context.Cause(sctx), errStepStopped) {
+			why := stoppedNote(by)
+			x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "■ " + why})
+			if a.kind != outDone || a.hard != nil {
+				a = attemptResult{kind: outFailed, err: why, out: a.out}
+			}
+		}
+		cancel(nil)
 		confirmed = true // retries don't ask again
 		if a.hard != nil {
 			return x.fail(i, a.hard)

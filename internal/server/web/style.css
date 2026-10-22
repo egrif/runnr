@@ -811,3 +811,5 @@ dialog.path-picker { width: min(640px, calc(100vw - 32px)); }
 .path-pick { white-space: nowrap; }
 .exp-opts { gap: 12px; flex-wrap: wrap; margin: 8px 0; }
 .exp-opts label.check { display: inline-flex; gap: 4px; align-items: center; font-weight: 400; }
+.q-goto { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.q-goto input[name=goto] { width: 4.5em; }

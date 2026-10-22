@@ -164,6 +164,17 @@ At any step prompt you can also:
   with the step. `echo name=value >> "$RUNNR_OUTPUT"`
   in that shell publishes a value to later steps. Ctrl-C in the shell doesn't
   touch the run.
+- **`g`**: go to a step: back (Enter: the step before; it and the steps
+  after it run again), this step again, or ahead (the steps between are
+  skipped, "jumped over"). The step gone to waits for you before it runs.
+  Going back past a point of no return asks you to type yes; a background
+  job still running in the way has to be ended first. In the GUI: **↺ Back
+  to step N** and **Go to step** under every question.
+- **Ctrl-C** while a step's command runs stops that step, not the run (as
+  abort does: Ctrl-C, then terminated if it won't stop). It fails as
+  "stopped by you", and you choose what's next: retry, skip, or go to a
+  step. Ctrl-C again within 3 seconds aborts the run. In the GUI: **■ Stop
+  step** on the running step (the run page and the console).
 - **`i`**: change the run's inputs. The new values are checked as at the
   start and take effect before the run's next command: a step waiting to
   run its command starts again with them; a command already running keeps
