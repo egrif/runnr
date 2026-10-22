@@ -27,7 +27,7 @@ func TestStdLibrary(t *testing.T) {
   *list-profiles*) printf 'good\nother\n';;
 esac`)
 	fake("kubectl", `case "$*" in
-  *get-contexts*) echo prod-use1-0;;
+  *get-contexts*) echo demo-cluster;;
   *auth\ can-i*) echo yes;;
 esac`)
 	fake("terraform", `case "$1" in
@@ -64,7 +64,7 @@ steps:
   - {name: sso wrong role, run: 'is_aws_sso good ReadOnly', continue_on_error: true}
   - {name: sso expired, run: 'require_aws_sso stale', continue_on_error: true}
   - {name: profiles, run: 'has_aws_profile good && ! has_aws_profile nope 2>/dev/null && echo ok'}
-  - {name: kube, run: 'require_kube_access prod-use1-0 greenhouse && ! has_kube_context nope 2>/dev/null && echo ok'}
+  - {name: kube, run: 'require_kube_access demo-cluster orders && ! has_kube_context nope 2>/dev/null && echo ok'}
   - {name: branch, run: 'git_fresh_branch `+repo+` staging-prep'}
   - {name: plan, run: 'tf_init `+repo+` -backend-config=./state.conf && tf_plan `+repo+` plan.out'}
   - {name: apply, run: 'tf_apply `+repo+` plan.out'}

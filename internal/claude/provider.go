@@ -33,12 +33,11 @@ type Cache interface {
 //	           RUNNR_AI_API_KEY_CMD (a command that prints one);
 //	           RUNNR_AI_HEADERS ("Name: value; Name: value");
 //	           RUNNR_AI_CACHE_HINTS=1 (mark the runbook for Claude's cache)
-//	bifrost:   Greenhouse's AI gateway (OpenAI-compatible, behind SSO):
-//	           RUNNR_AI_VIRTUAL_KEY (x-bf-vk), RUNNR_AI_BIFROST_ENV (dev,
-//	           staging, prod, prod-eu, prod-apac; default dev), the key from
-//	           sso-token-cli -e <env>-bifrost (or RUNNR_AI_API_KEY_CMD), model
-//	           as <provider>/<model> (default DefaultBifrostModel; a bare
-//	           gpt-…/o… or claude-… name gets openai/ or anthropic/)
+//	bifrost:   a Bifrost AI gateway (OpenAI-compatible): RUNNR_AI_BASE_URL
+//	           (its /v1 URL), RUNNR_AI_API_KEY or RUNNR_AI_API_KEY_CMD,
+//	           RUNNR_AI_VIRTUAL_KEY (sent as x-bf-vk), RUNNR_AI_HEADERS; the
+//	           model as <provider>/<model> (default DefaultBifrostModel; a
+//	           bare gpt-…/o… or claude-… name gets openai/ or anthropic/)
 func FromEnv() Provider {
 	model := firstEnv("RUNNR_AI_MODEL", "RUNNR_CLAUDE_MODEL")
 	prov := strings.ToLower(os.Getenv("RUNNR_AI_PROVIDER"))
@@ -75,10 +74,9 @@ func FromEnv() Provider {
 			Model:      or(model, DefaultOpenAIModel),
 		}
 	case "bifrost":
-		env := or(os.Getenv("RUNNR_AI_BIFROST_ENV"), "dev")
-		host, ok := bifrostHosts[env]
-		if !ok {
-			host = env // a host name
+		base := os.Getenv("RUNNR_AI_BASE_URL")
+		if base == "" {
+			return nil // the gateway is wherever you run it: no default
 		}
 		model = bifrostModel(or(model, DefaultBifrostModel))
 		h := parseHeaders(os.Getenv("RUNNR_AI_HEADERS"))
@@ -87,9 +85,9 @@ func FromEnv() Provider {
 		}
 		return &OpenAI{
 			Label:   "bifrost",
-			BaseURL: or(os.Getenv("RUNNR_AI_BASE_URL"), "https://"+host+"/v1"),
+			BaseURL: base,
 			Key:     os.Getenv("RUNNR_AI_API_KEY"),
-			KeyCmd:  or(os.Getenv("RUNNR_AI_API_KEY_CMD"), "sso-token-cli -e "+env+"-bifrost"),
+			KeyCmd:  os.Getenv("RUNNR_AI_API_KEY_CMD"),
 			Headers: h,
 			// Claude's cache markers, for Claude models only.
 			CacheHints: os.Getenv("RUNNR_AI_CACHE_HINTS") != "0" && strings.Contains(strings.ToLower(model), "claude"),
@@ -99,8 +97,9 @@ func FromEnv() Provider {
 	return nil
 }
 
-// DefaultBifrostModel is the model Greenhouse's agents use through the
-// gateway; it serves the models (and providers) it's configured for.
+// DefaultBifrostModel is the model used through a Bifrost gateway unless
+// RUNNR_AI_MODEL says otherwise; a gateway serves the models (and
+// providers) it's configured for.
 const DefaultBifrostModel = "openai/gpt-5.4"
 
 // bifrostModel names the provider, which the gateway needs
@@ -116,15 +115,6 @@ func bifrostModel(m string) string {
 		return "anthropic/" + m
 	}
 	return m
-}
-
-// bifrostHosts are the gateway's environments.
-var bifrostHosts = map[string]string{
-	"dev":       "dev-bifrost.dev-use1-0.gh.team",
-	"staging":   "staging-bifrost.prod-use1-0.gh.team",
-	"prod":      "bifrost.prod-use1-0.gh.team",
-	"prod-eu":   "bifrost.prod-euc1-0.gh.team",
-	"prod-apac": "bifrost.prod-apse2-0.gh.team",
 }
 
 // parseHeaders reads "Name: value; Name: value".

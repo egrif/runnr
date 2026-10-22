@@ -167,3 +167,20 @@ func TestBifrostModelNamesProvider(t *testing.T) {
 		}
 	}
 }
+
+// A Bifrost gateway is wherever you run it: no URL, no provider; and no
+// key command but the one given.
+func TestBifrostFromEnv(t *testing.T) {
+	t.Setenv("RUNNR_AI_PROVIDER", "bifrost")
+	t.Setenv("RUNNR_AI_BASE_URL", "")
+	t.Setenv("RUNNR_AI_API_KEY_CMD", "")
+	if p := FromEnv(); p != nil {
+		t.Fatalf("configured without a URL: %#v", p)
+	}
+	t.Setenv("RUNNR_AI_BASE_URL", "https://gateway.example/v1")
+	t.Setenv("RUNNR_AI_VIRTUAL_KEY", "sk-bf-1")
+	o, ok := FromEnv().(*OpenAI)
+	if !ok || o.BaseURL != "https://gateway.example/v1" || o.KeyCmd != "" || o.Headers["x-bf-vk"] != "sk-bf-1" || o.Name() != "bifrost" {
+		t.Fatalf("%#v", o)
+	}
+}
