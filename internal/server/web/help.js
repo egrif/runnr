@@ -30,6 +30,7 @@ const FIELD_HELP = {
     choices: "If set, the value must be one of these (comma-separated). Shown as a dropdown.",
     required: "The run can't start without a value.",
     secret: "Hidden as you type, masked in output and history, and never stored: asked again on resume.",
+    type: "A folder or a file on this machine: its field gets a Browse… button. Otherwise text.",
   },
   step: {
     kind: "Scripted: a shell script. Manual: instructions for a person. Checks: several commands that must all pass. Add another way to offer several (e.g. Scripted and Manual).",

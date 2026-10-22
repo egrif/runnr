@@ -200,7 +200,7 @@ async function scheduleDialog(sc) {
       const hint = [i.description, overrides(i.name)].filter(Boolean).join(" · ");
       const ctl = i.choices?.length
         ? `<select data-in="${esc(i.name)}"><option value=""></option>${i.choices.map((c) => `<option ${c === v ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`
-        : `<input data-in="${esc(i.name)}" value="${esc(v)}" placeholder="${esc(i.default || "")}">`;
+        : withPathPick(i, `<input data-in="${esc(i.name)}" value="${esc(v)}" placeholder="${esc(i.default || "")}">`);
       return row(i.name, hint, ctl);
     };
     dlg.innerHTML = `<h3>${editing ? "Scheduled run" : "Schedule a run"}</h3>

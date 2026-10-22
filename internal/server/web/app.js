@@ -195,7 +195,7 @@ async function viewRunbook(name, tab, query) {
       ${rb ? membership(name) : ""}
       ${rb ? `<div class="claude-only">${explainBtn(0, "✨ Review this runbook with Claude")}</div>` : ""}
       <div>${(rb?.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>
-    </div></div>
+    </div><span class="spacer"></span>${rb ? `<button id="export-rb" title="Write the runbook, and the libraries it uses, to files">⇩ Export…</button>` : ""}</div>
     <nav class="tabs">
       <a href="${href}" class="${tab === "run" ? "active" : ""}">Run</a>
       <a href="${href}/edit" class="${tab === "edit" ? "active" : ""}">Edit</a>
@@ -205,6 +205,7 @@ async function viewRunbook(name, tab, query) {
     </nav>
     <section id="tab"></section>`;
   bindMembership(main, name, () => route());
+  $("#export-rb") && ($("#export-rb").onclick = () => exportRunbook(name));
   main.querySelector('.claude-only [data-explain="0"]')?.addEventListener("click", () => openExplain({ runbook: name }, 0, `Review: ${name}`));
   if (tab === "tests" && rb) return viewTests($("#tab"), name);
   if (tab === "edit" || !rb) return renderEditor($("#tab"), data.raw, name, data.error, data.version, data.updated_at);
@@ -383,7 +384,7 @@ function renderRun(state) {
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
       <a class="button" href="#/runs/${enc(run.id)}/console" title="One screen: the steps, the selected step's definition, what it's doing, and the background steps">▣ Console</a>
-      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="delete-run" class="danger" title="Delete this run's record">Delete run</button><button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
+      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="delete-run" class="danger" title="Delete this run's record">Delete run</button><button id="export-logs" title="Its logs, with the runs linked to it by resuming: to files, or a download">⇩ Export logs…</button><button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
     ${editsBanner(run, state)}
@@ -469,6 +470,7 @@ function renderRun(state) {
   $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
   $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
   $("#change-inputs") && ($("#change-inputs").onclick = () => changeInputs(state));
+  $("#export-logs") && ($("#export-logs").onclick = () => exportLogs(run.id));
   $("#delete-run") && ($("#delete-run").onclick = async () => {
     if (!confirm(`Delete run ${run.id}? Its record, output and notes are removed for good.`)) return;
     try { await api("DELETE", `/api/runs/${enc(run.id)}`); toast("Run deleted"); location.hash = `#/runbooks/${enc(run.runbook)}`; }
@@ -636,7 +638,7 @@ function changeInputs(state) {
     const v = run.inputs?.[d.name] ?? "";
     if (d.choices?.length) return `<select name="${esc(d.name)}">${(d.required ? [] : [""]).concat(d.choices).map((c) => `<option ${c === v ? "selected" : ""} value="${esc(c)}">${esc(c || "(default)")}</option>`).join("")}</select>`;
     if (d.secret) return `<input name="${esc(d.name)}" type="password" placeholder="unchanged" autocomplete="off">`;
-    return `<input name="${esc(d.name)}" value="${esc(v)}" placeholder="${esc(d.default || "")}" spellcheck="false" autocomplete="off">`;
+    return withPathPick(d, `<input name="${esc(d.name)}" value="${esc(v)}" placeholder="${esc(d.default || "")}" spellcheck="false" autocomplete="off">`);
   };
   dlg.innerHTML = `<h3>Change inputs</h3>
     <p class="muted small">New values take effect before the run's next command: the next step, or the one waiting now if it hasn't run its command yet (it starts again). A command that's running keeps the values it has. The change is recorded with the run, and a resume uses the new values.</p>
@@ -782,7 +784,7 @@ function renderQuestion(q, runId) {
     const i = q.input;
     body = i.choices?.length
       ? `<select name="value">${i.choices.map((c) => `<option ${c === i.default ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`
-      : `<input type="${i.secret ? "password" : "text"}" name="value" placeholder="${esc(i.default || "")}" autofocus>`;
+      : withPathPick(i, `<input type="${i.secret ? "password" : "text"}" name="value" placeholder="${esc(i.default || "")}" autofocus>`);
     body += `<button class="primary" data-v="submit">Submit</button>`;
   } else {
     if (q.type === "manual") body += `<input type="text" name="note" placeholder="Note (optional)">`;

@@ -1,6 +1,23 @@
 # Changelog
 
-## v0.2.0 — unreleased
+## v0.2.1 — unreleased
+
+### Added
+
+- **Export a runbook** to a file (⇩ Export… on its page, or
+  `runnr export <runbook> -o file.yaml`), as written, with the libraries it
+  uses beside it: each listed, and each can be left out.
+- **Export logs** of a run and the runs linked to it by resuming (⇩ Export
+  logs…, or `runnr history <id> --export <folder>`): raw logs to read,
+  records (JSON) to import, or both; in one file or a file per run; to a
+  folder, or a download.
+- **Import runs**: run records (JSON) import with the rest (`runnr import`,
+  or the import dialog, which can also add files and folders from
+  elsewhere).
+- **Inputs that are paths**: `type: dir` or `type: file`; their fields in
+  the GUI get a Browse… button that browses this machine.
+
+## v0.2.0 — 2026-10-22
 
 Shells you can open any time, importing a whole project folder, changing a
 run's inputs while it runs, and a page to delete and restore what's stored.

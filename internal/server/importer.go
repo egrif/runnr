@@ -170,8 +170,8 @@ type projectReq struct {
 }
 
 func (s *Server) scanProject(req projectReq) (*project.Plan, error) {
-	if req.Dir == "" {
-		return nil, errors.New("give a folder")
+	if req.Dir == "" && len(req.Include) == 0 {
+		return nil, errors.New("give a folder, or files to import")
 	}
 	return project.Scan(project.Options{Dir: expandHome(req.Dir), Values: req.Values, Renames: req.Renames, Include: req.Include, Skip: req.Skip, Lookup: project.StoreLookup(s.st)})
 }

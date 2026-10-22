@@ -139,7 +139,7 @@ async function openImport(files, opts = {}) {
 const IMP_DIRS = "runnr.importDirs";
 const impLoad = (k, d) => { try { return JSON.parse(localStorage.getItem(k) || "null") ?? d; } catch { return d; } };
 const impSave = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
-const KIND_LABEL = { runbook: "runbook", library: "library", fakes: "fake library", suite: "test suite" };
+const KIND_LABEL = { runbook: "runbook", library: "library", fakes: "fake library", suite: "test suite", run: "run" };
 
 function openFolderImport(dir = "") {
   const recent = impLoad(IMP_DIRS, []);
@@ -152,6 +152,9 @@ function openFolderImport(dir = "") {
     <div class="row imp-recent small">${recent.map((d) => `<button class="link" data-recent="${esc(d)}" title="${esc(d)}">${esc(d.split("/").slice(-2).join("/"))}</button>`).join(" · ")}</div>
     <div class="imp-plan"></div>
     <div class="error-text imp-error"></div>
+    <div class="imp-extra"><h4>Also import <span class="muted small">run records or other files from elsewhere (e.g. logs exported as records)</span></h4>
+      <ul class="imp-extra-list small"></ul>
+      <div class="row"><button type="button" data-add-file>📄 Add a file…</button><button type="button" data-add-dir>📁 Add a folder…</button></div></div>
     <div class="row imp-actions" hidden>${colPicker("imp-col2", "No collection")}<span class="spacer"></span><button class="primary" data-ok>Import</button><button data-close>Cancel</button></div>`;
   document.body.append(dlg);
   const $d = (s) => dlg.querySelector(s);
@@ -169,9 +172,11 @@ function openFolderImport(dir = "") {
   async function scan(fresh) {
     if (fresh) {
       st.dir = $d(".imp-dir").value.trim();
-      Object.assign(st, { values: impLoad(`runnr.importValues:${st.dir}`, {}), renames: {}, include: [], skip: [], replace: new Set(), results: null, autoIncluded: false });
+      // Files added from elsewhere stay; libraries found for the last folder go.
+      const extra = st.include.filter((p) => !st.autoFound?.has(p));
+      Object.assign(st, { values: impLoad(`runnr.importValues:${st.dir}`, {}), renames: {}, include: extra, autoFound: new Set(), skip: [], replace: new Set(), results: null, autoIncluded: false });
     }
-    if (!st.dir) return err("Give a folder");
+    if (!st.dir && !st.include.length) return err("Give a folder");
     const mine = ++seq;
     err("");
     try {
@@ -184,13 +189,30 @@ function openFolderImport(dir = "") {
         st.autoIncluded = true;
         const found = plan.docs.flatMap((d) => d.refs || []).filter((r) => !r.found && r.candidates?.length === 1).map((r) => r.candidates[0]);
         const add = [...new Set(found)].filter((c) => !st.include.includes(c));
-        if (add.length) { st.include.push(...add); return scan(false); }
+        if (add.length) { st.include.push(...add); (st.autoFound ||= new Set()); add.forEach((a) => st.autoFound.add(a)); return scan(false); }
       }
       draw();
     } catch (e) { if (mine === seq) { st.plan = null; draw(); err(e.message); } }
   }
   let t;
   const rescan = () => { clearTimeout(t); t = setTimeout(() => scan(false), 350); };
+
+  const drawExtra = () => {
+    const extra = st.include.filter((p) => !st.autoFound?.has(p));
+    $d(".imp-extra-list").innerHTML = extra.map((p) => `<li><code>${esc(p)}</code> <button class="link" data-unadd="${esc(p)}">✕</button></li>`).join("") || `<li class="muted">Nothing yet</li>`;
+    dlg.querySelectorAll("[data-unadd]").forEach((b) => (b.onclick = () => { st.include = st.include.filter((x) => x !== b.dataset.unadd); drawExtra(); scan(false); }));
+  };
+  const addExtra = async (kind) => {
+    const p = await pickPath({ kind, start: impLoad("runnr.importExtraDir", st.dir || "~"), title: kind === "dir" ? "Add a folder to import" : "Add a file to import" });
+    if (!p) return;
+    impSave("runnr.importExtraDir", kind === "dir" ? p : p.replace(/\/[^/]*$/, ""));
+    if (!st.include.includes(p)) st.include.push(p);
+    drawExtra();
+    scan(false);
+  };
+  $d("[data-add-file]").onclick = () => addExtra("file");
+  $d("[data-add-dir]").onclick = () => addExtra("dir");
+  drawExtra();
 
   function draw() {
     const p = st.plan;
@@ -205,7 +227,7 @@ function openFolderImport(dir = "") {
       const replaceBox = `<label class="check"><input type="checkbox" data-replace="${esc(d.path)}" ${st.replace.has(d.path) ? "checked" : ""}> save as version ${d.version + 1} (earlier versions are kept)</label>`;
       let state;
       if (d.error) state = `<span class="error-text">${esc(d.error)}</span>`;
-      else if (d.same) state = `<span class="muted">unchanged (version ${d.version})</span>`;
+      else if (d.same) state = `<span class="muted">${d.kind === "run" ? "already in the history" : `unchanged (version ${d.version})`}</span>`;
       else if (d.exists) state = `<span class="warn-text">⚠ name taken: version ${d.version}, saved ${esc(new Date(d.updated_at).toLocaleString())}</span> ${replaceBox}`;
       else state = `<span class="ok-text">new</span>${d.builtin ? ` <span class="warn-text">(takes the place of runnr's built-in library)</span>` : ""}`;
       const unset = (d.placeholders || []).filter((k) => p.unset?.includes(k));
@@ -215,8 +237,8 @@ function openFolderImport(dir = "") {
       return `<tr class="${skipped ? "skipped" : ""}">
         <td><input type="checkbox" data-take="${esc(d.path)}" ${skipped ? "" : "checked"} ${d.error ? "disabled" : ""} title="Import it"></td>
         <td class="small">${esc(KIND_LABEL[d.kind] || "")}</td>
-        <td>${d.error && !d.name ? "" : `<input class="imp-name" data-rename="${esc(key)}" value="${esc(st.renames[key] ?? d.name)}" spellcheck="false" ${d.kind === "suite" && !d.original ? "" : ""}>`}
-          <div class="muted small">${esc(d.rel)}${d.included ? ` · from the repository, needed by ${esc((neededBy[`${d.kind}:${d.name}`] || []).join(", "))}` : ""}</div>${refs}</td>
+        <td>${d.kind === "run" ? `<code>${esc(d.name)}</code>` : d.error && !d.name ? "" : `<input class="imp-name" data-rename="${esc(key)}" value="${esc(st.renames[key] ?? d.name)}" spellcheck="false" ${d.kind === "suite" && !d.original ? "" : ""}>`}
+          <div class="muted small">${esc(d.rel)}${d.included ? (neededBy[`${d.kind}:${d.name}`] ? ` · from the repository, needed by ${esc(neededBy[`${d.kind}:${d.name}`].join(", "))}` : " · added from elsewhere") : ""}</div>${refs}</td>
         <td class="small">${r ? `<b class="${["failed", "exists"].includes(r.status) ? "error-text" : "ok-text"}">${esc(r.status)}${r.version ? ` · v${r.version}` : ""}</b>${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}${r.status === "exists" ? `<div>${replaceBox}</div>` : ""}` : state}</td></tr>`;
     };
     const blocked = p.docs.filter((d) => !d.error && !st.skip.includes(d.path) && (d.placeholders || []).some((k) => p.unset?.includes(k)));
