@@ -73,6 +73,12 @@ type StepResult struct {
 	Detached string `json:"detached,omitempty"`
 	// Edited: the step was changed during the run.
 	Edited bool `json:"edited,omitempty"`
+	// Carried: the step finished before the run was resumed, and this is
+	// how it went then.
+	Carried bool `json:"carried,omitempty"`
+	// Before are its earlier tries, before the run was resumed (oldest
+	// first).
+	Before []StepResult `json:"before,omitempty"`
 	// Optional: the step isn't required.
 	Optional bool      `json:"optional,omitempty"`
 	Started  time.Time `json:"started,omitzero"`
@@ -87,6 +93,12 @@ type Run struct {
 	StartAt        int    `json:"start_at,omitempty"`
 	RunbookVersion int    `json:"runbook_version,omitempty"`
 	Resumes        string `json:"resumes,omitempty"`
+	// Resumptions are the times this run was resumed (it carries on in
+	// the same record).
+	Resumptions []Resumption `json:"resumptions,omitempty"`
+	// Removed are steps it ran that the runbook no longer has (it was
+	// resumed with a version without them).
+	Removed []StepResult `json:"removed,omitempty"`
 	// Window is the maintenance window, if the runbook has one.
 	Window *WindowRecord `json:"window,omitempty"`
 	// Edits are changes made to steps during the run; EditsSaved is the
@@ -263,6 +275,10 @@ type Options struct {
 	// Resumed is the run this one continues; steps that finished there
 	// count as in sequence here.
 	Resumed *Run
+	// Continue resumes Resumed in place: the same run (pass its ID), its
+	// finished steps as they were, earlier tries of the steps it does
+	// again kept with them. Else a resume is a new run.
+	Continue bool
 	// CarryDone (with Resumed) also leaves out the steps from StartAt on
 	// that succeeded or were forced in the resumed run: they're carried
 	// over as done, like those before StartAt, and the review can put one
@@ -684,6 +700,10 @@ func (x *executor) steps(ctx context.Context) error {
 			continue // followed again from the resumed run
 		}
 		if skip, _, _ := x.ctl.Get(i); skip {
+			if x.run.Steps[i].Carried {
+				x.tendBackground(i, false) // finished before the run was resumed: as it was
+				continue
+			}
 			if x.run.Steps[i].Note == NoteCarried {
 				x.stepDone(i)
 				x.tendBackground(i, false)

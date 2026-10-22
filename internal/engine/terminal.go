@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -65,6 +66,13 @@ type termSession struct {
 	code       *int
 	err        error
 	transcript string
+	rec        transcriber
+}
+
+// transcriber records a terminal's output and gives it as a transcript.
+type transcriber interface {
+	io.Writer
+	text() string
 }
 
 // startTerm starts command (or, if "", an interactive shell: shell if
@@ -90,7 +98,12 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 		cleanup()
 		return nil, err
 	}
-	s := &termSession{cmd: cmd, done: make(chan struct{})}
+	// An interactive shell's lines are stamped with the time each ended.
+	var rec transcriber = &ringBuffer{}
+	if command == "" {
+		rec = &lineRecorder{}
+	}
+	s := &termSession{cmd: cmd, done: make(chan struct{}), rec: rec}
 
 	// Keystrokes in. When the operator ends the session, hang up.
 	var exited atomic.Bool
@@ -130,7 +143,6 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 
 	go func() {
 		defer close(s.done)
-		rec := &ringBuffer{}
 		_, _ = io.Copy(io.MultiWriter(conn, rec), f) // ends when the terminal closes (EIO)
 		err := cmd.Wait()
 		exited.Store(true)
@@ -145,7 +157,7 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 		}
 		conn.Close()
 		cleanup()
-		s.transcript = CleanTranscript(rec.String())
+		s.transcript = rec.text()
 		if cmd.ProcessState == nil {
 			s.err = err
 			return
@@ -158,6 +170,9 @@ func (x *executor) startTerm(ctx context.Context, shell, command string, extra [
 	}()
 	return s, nil
 }
+
+// snapshot is the transcript so far.
+func (s *termSession) snapshot() string { return s.rec.text() }
 
 func (s *termSession) wait() (*int, string, error) {
 	<-s.done
@@ -412,4 +427,78 @@ func RunOnTerm(ctx context.Context, conn TermConn, name string, args ...string) 
 	f.Close()
 	conn.Close()
 	return err
+}
+
+// lineRecorder keeps a terminal's output line by line, each with the time
+// it ended (a prompt's line: when the command was entered), up to
+// maxOutput bytes (the oldest lines go first).
+type lineRecorder struct {
+	mu    sync.Mutex
+	lines []stampedLine
+	cur   []byte
+	curAt time.Time
+	size  int
+	cut   bool
+}
+
+type stampedLine struct {
+	at  time.Time
+	raw string
+}
+
+func (r *lineRecorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	for rest := p; len(rest) > 0; {
+		j := bytes.IndexByte(rest, '\n')
+		if j < 0 {
+			r.cur = append(r.cur, rest...)
+			r.curAt = now
+			break
+		}
+		r.cur = append(r.cur, rest[:j]...)
+		r.lines = append(r.lines, stampedLine{now, string(r.cur)})
+		r.size += len(r.cur) + 1
+		r.cur = r.cur[:0]
+		rest = rest[j+1:]
+	}
+	for r.size > maxOutput && len(r.lines) > 0 {
+		r.size -= len(r.lines[0].raw) + 1
+		r.lines = r.lines[1:]
+		r.cut = true
+	}
+	return len(p), nil
+}
+
+// text is the transcript, each line stamped; "" until a line has ended
+// (a shell nobody entered anything in, just its prompt, isn't kept).
+func (r *lineRecorder) text() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.lines) == 0 && !r.cut {
+		return ""
+	}
+	var b strings.Builder
+	if r.cut {
+		b.WriteString("…[truncated]\n")
+	}
+	line := func(at time.Time, raw string) {
+		if l := CleanTranscript(raw); strings.TrimSpace(l) != "" {
+			b.WriteString("[" + at.Format("15:04:05") + "] " + l)
+		}
+	}
+	for i, l := range r.lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		line(l.at, l.raw)
+	}
+	if len(r.cur) > 0 {
+		if len(r.lines) > 0 {
+			b.WriteByte('\n')
+		}
+		line(r.curAt, string(r.cur))
+	}
+	return b.String()
 }

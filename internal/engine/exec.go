@@ -46,6 +46,12 @@ func (r *ringBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func (r *ringBuffer) text() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return CleanTranscript(r.String())
+}
+
 func (r *ringBuffer) String() string {
 	if r.cut {
 		return "…[truncated]\n" + string(r.buf)

@@ -551,6 +551,7 @@ type runFlags struct {
 	skip, before, after                    string
 	tmux                                   bool
 	runID                                  string
+	newRun                                 bool // resume: a new run, not this one continued
 }
 
 func (f *runFlags) register(cmd *cobra.Command) {
@@ -612,7 +613,11 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		if f.js || f.noHistory {
 			return errors.New("--tmux can't be used with --json or --no-history")
 		}
-		return startTmuxRun(os.Args[1:], rb.Name, engine.NewRunID())
+		id := engine.NewRunID()
+		if l.resumed != nil && !f.newRun {
+			id = l.resumed.ID // the run carries on
+		}
+		return startTmuxRun(os.Args[1:], rb.Name, id)
 	}
 	cv := engine.ControlsView{StepAll: f.stepMode}
 	for flag, dst := range map[string]*[]int{f.skip: &cv.Skip, f.before: &cv.PauseBefore, f.after: &cv.PauseAfter} {
@@ -626,9 +631,15 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		*dst = idxs
 	}
 	if l.previous == nil {
-		// Compare with the latest run of this runbook, if there is one.
-		if runs, err := st.ListRuns(rb.Name, 1); err == nil && len(runs) == 1 {
-			l.previous, _ = st.LoadRun(runs[0].ID)
+		// Compare with the latest run of this runbook, if there is one (not
+		// the run being carried on).
+		if runs, err := st.ListRuns(rb.Name, 2); err == nil {
+			for _, r := range runs {
+				if l.resumed == nil || r.ID != l.resumed.ID {
+					l.previous, _ = st.LoadRun(r.ID)
+					break
+				}
+			}
 		}
 	}
 	base, startAt, resumes, state := l.base, l.startAt, l.resumes, l.state
@@ -683,6 +694,9 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 	ctx, abort := context.WithCancelCause(ictx)
 	defer abort(nil)
 	id := engine.NewRunID()
+	if l.resumed != nil && !f.newRun {
+		id = l.resumed.ID // the run carries on, in its own record
+	}
 	if f.runID != "" {
 		id = f.runID
 	}
@@ -705,7 +719,7 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		State: state, Resumes: resumes, RunbookVersion: ver, Libraries: libs,
 		// Only a recorded run of a saved runbook can run dangerous steps
 		// without a double check.
-		Sanctioned: ver > 0 && !f.noHistory && !f.dry, Resumed: l.resumed,
+		Sanctioned: ver > 0 && !f.noHistory && !f.dry, Resumed: l.resumed, Continue: l.resumed != nil && !f.newRun,
 		// A resume leaves out every step that finished, not only those
 		// before where it starts.
 		// (Unless the operator chose the steps with --skip.)
@@ -842,8 +856,11 @@ func resumeCmd(s func() *store.Store) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "resume <run-id>",
 		Short: "Continue a failed or aborted run from where it stopped",
-		Long: `Start a new run of the same runbook with the same inputs, beginning at the
-first step that didn't succeed. Steps that finished in that run, before or
+		Long: `Carry on the run from the first step that didn't succeed, with the same
+inputs, in the same run: its record and log go on (runnr history <id>),
+with the steps that finished as they went, and the earlier tries of the
+steps it does again kept beside them. --new-run starts a new run instead,
+which points back at this one. Steps that finished in that run, before or
 after it, are left out (the review can put one back; with --skip, only the
 steps you list are). An optional background step that didn't finish (a
 watcher) runs again. Secret inputs aren't
@@ -863,14 +880,41 @@ stored, so they're asked for again (or pass them with -v). Steps marked
 			if err != nil {
 				return err
 			}
-			if len(rb.Steps) != len(prev.Steps) || rb.Steps[start].Name != prev.Steps[start].Name {
-				return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step>", rb.Name, prev.ID, rb.Name)
+			if engine.RunbookChanged(prev, rb) {
+				if f.newRun {
+					return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step> (or resume without --new-run to carry the run on with this version)", rb.Name, prev.ID, rb.Name)
+				}
+				// The run carries on with this version: its steps matched by name.
+				aligned, moved := engine.AlignRun(prev, rb)
+				names := map[int]string{}
+				for i, st := range prev.Steps {
+					names[i] = st.Name
+				}
+				if err := s().MoveRunNotes(prev.ID, moved, names); err != nil {
+					return err
+				}
+				gone := len(aligned.Removed) - len(prev.Removed)
+				fmt.Printf("runbook %s changed since this run (version %d, it ran version %d): carrying on with it, steps matched by name%s\n",
+					rb.Name, ver, prev.RunbookVersion, map[bool]string{true: fmt.Sprintf("; %d step(s) no longer in it are kept in the record", gone), false: ""}[gone > 0])
+				prev = aligned
+				if start = engine.ResumePoint(prev); start < 0 {
+					return fmt.Errorf("run %s has no unfinished steps in this version", prev.ID)
+				}
 			}
 			fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
-			return f.execute(s(), rb, ver, launch{base: engine.ResumeInputs(prev), startAt: start, resumes: prev.ID, state: engine.ResumeState(prev), previous: prev, resumed: prev})
+			l := launch{base: engine.ResumeInputs(prev), startAt: start, resumes: prev.ID, state: engine.ResumeState(prev), previous: prev, resumed: prev}
+			if !f.newRun {
+				// The same run: compared with what it was compared with before.
+				l.resumes, l.previous = "", nil
+				if prev.Previous != "" {
+					l.previous, _ = s().LoadRun(prev.Previous)
+				}
+			}
+			return f.execute(s(), rb, ver, l)
 		},
 	}
 	f.register(cmd)
+	cmd.Flags().BoolVar(&f.newRun, "new-run", false, "start a new run (pointing back at this one) instead of carrying this one on")
 	return cmd
 }
 

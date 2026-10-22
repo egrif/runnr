@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.4.0 — 2026-10-22
+
+A resume carries the same run on, and console shells follow the run.
+
+### Changed
+
+- **Resuming continues the run**: the same run ID, one record in the
+  history and one log (`runnr history <id> --raw`). Steps that finished
+  stay as they went; a step done again keeps its earlier tries ("before the
+  run was resumed"); the record lists each resume (when, from which step,
+  how the run had ended). The run page shows them, and the console's Run
+  log has the earlier tries.
+- **A changed runbook doesn't start a new log**: resuming after the runbook
+  was edited carries the run on with the new version. Steps are matched by
+  name (a new one is still to do; notes follow their steps), the record
+  notes the version it was resumed with, and steps the new version no
+  longer has stay in the record (`removed`), their notes moved to the run.
+  The resume screens say the runbook changed.
+- `runnr resume --new-run` (API: `"new_run": true`) starts a new run that
+  points back at the old one, as before (not from a changed runbook).
+- Under `--tmux`, a resumed run's session is `runnr-<runbook>-r2-<id>` (the
+  earlier session may still hold background steps the resume follows).
+
+- **Console shells follow the run**: as the run goes on to each step, a
+  Shell pane's shell is ended and opened again at the new step, unless
+  it's pinned (📌, off by default); ↻ reopens it at the current step.
+- **Shell transcripts are kept while open**: a shell alongside the run is
+  recorded with its step so far at each step and when the run ends, not
+  only when it's closed. A shell nothing was entered in isn't recorded.
+- **Timed shell lines**: each line of an interactive shell's transcript
+  carries the time it was entered or printed (`[15:04:05] …`).
+- When a background job starts and the console has no Background target
+  on screen, one is added.
+
+### Fixed
+
+- A note on a step carried over by a resume showed twice.
+
 ## v0.3.3 — 2026-10-22
 
 ### Changed

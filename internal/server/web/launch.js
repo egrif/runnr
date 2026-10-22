@@ -13,7 +13,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
   const plan = scheduleId ? await api("GET", `/api/schedules/${enc(scheduleId)}`).catch(() => null) : null;
   let prev = null;
   if (runId) {
-    prev = (await api("GET", `/api/runs/${enc(runId)}`)).run;
+    prev = alignedRun((await api("GET", `/api/runs/${enc(runId)}`)).run, rb);
   } else {
     const latest = await api("GET", `/api/runs?runbook=${enc(name)}&limit=1`);
     if (latest.length) prev = (await api("GET", `/api/runs/${enc(latest[0].id)}`)).run;
@@ -50,7 +50,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
   const lastLink = prev ? `<a href="#/runs/${enc(prev.id)}">${esc(prev.id)}</a> (${esc(prev.status)})` : "";
   el.innerHTML = `
     ${plan ? `<div class="banner">Starting the run scheduled for ${new Date(plan.at).toLocaleString()}${plan.title ? `: <b>${esc(plan.title)}</b>` : ""}, with its inputs.</div>` : ""}
-    ${mode !== "run" ? `<div class="banner">${what} of run ${lastLink}${mode === "resume" ? " — steps that already finished are left out; tick any you want to run again." : " with the same inputs."}</div>` : ""}
+    ${mode !== "run" ? `<div class="banner">${what} of run ${lastLink}${mode === "resume" ? ` — steps that already finished are left out; tick any you want to run again.${changedNote(prev, data.version)}` : " with the same inputs."}</div>` : ""}
     <form id="run-form">
       <div class="card">
         ${inputs.length ? `<div class="form-grid">${inputs.map(field).join("")}</div>` : `<div class="muted">This runbook takes no inputs.</div>`}

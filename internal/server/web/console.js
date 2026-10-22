@@ -55,6 +55,7 @@ async function viewConsole(id) {
     const before = state.steps.findIndex((s) => s.status === "running");
     applyEvent(state, e);
     if (e.kind === "step_finished" || e.kind === "step_started") state.onState();
+    if (e.kind === "step_started") cxFollowShells(state);
     // Follow the run: the step it's on (or asking about) is the selected one.
     const at = state.question?.step === -1 ? -1 : cxCurrent(state);
     const moved = at !== before || e.kind === "question";
@@ -142,11 +143,22 @@ function cxRenderTop(state) {
       ${cur >= 0 ? `<span class="cx-at"><b>Step ${cur + 1}</b> of ${state.steps.length}: ${esc(st.name)}</span>` : `<span class="cx-at muted">${cxWhere(state)}</span>`}
       ${section ? `<span class="cx-chip" title="The section the run is in, and how long since its first step started">§ ${esc(section)} ${inSection}</span>` : ""}
       ${cxWindowChip(r)}
+      ${cxResumedChips(r)}
       ${(state.messages || []).slice(-1).map((m) => `<span class="muted small">ℹ ${esc(m)}</span>`).join("")}
     </div>
     <div class="cx-toolbar">${cxToolbar(state, live)}</div>
     ${cxBanners(state, live)}`;
   cxBindTop(state, el, live);
+}
+
+// cxResumedChips: the times the run was resumed (and with which runbook
+// version), and steps it ran that the runbook no longer has.
+function cxResumedChips(r) {
+  const rs = r.resumptions || [], rm = r.removed || [];
+  const tip = rs.map((x) => `Resumed ${new Date(x.at).toLocaleString()} from step ${x.from + 1} (it had ${x.status})${x.was_version ? ` with runbook version ${x.runbook_version} (it had run version ${x.was_version})` : ""}`).join("\n");
+  const ver = rs.filter((x) => x.was_version).pop();
+  return (rs.length ? `<span class="cx-chip" title="${esc(tip)}">↻ resumed${rs.length > 1 ? ` ${rs.length}×` : ""}${ver ? ` · runbook v${ver.was_version} → v${ver.runbook_version}` : ""}</span>` : "")
+    + (rm.length ? `<a class="cx-chip" href="#/runs/${enc(r.id)}" data-classic title="${esc(rm.map((x) => x.name).join(", "))}: on the classic run page">${rm.length} step${rm.length === 1 ? "" : "s"} no longer in the runbook</a>` : "");
 }
 
 function cxWindowChip(r) {
@@ -267,7 +279,7 @@ function cxBindTop(state, el, live) {
       cxRender(state, { details: false });
     } catch (e) { toast(e.message); }
   }));
-  el.querySelector("[data-classic]").onclick = () => runView("classic");
+  el.querySelectorAll("[data-classic]").forEach((a) => (a.onclick = () => runView("classic")));
   el.querySelector("[data-reset-layout]").onclick = () => cxResetLayout(state);
   el.querySelectorAll("[data-pick]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); cxSelect(state, +a.dataset.pick); }));
 }
@@ -703,6 +715,8 @@ function cxHostTerms(state) {
   term.host = {
     started(s) {
       if (s.background) {
+        // No background target on screen: put one there.
+        cxEnsurePane(state, "background");
         cxBgAssign(state, s);
         (state.bgActiveBy ||= {})[s.bgPane] = s.id;
         return cxRenderBg(state);
@@ -713,7 +727,12 @@ function cxHostTerms(state) {
         const panes = cxLeafIds(state, "shell");
         const busy = (p) => [...term.sessions.values()].some((x) => x !== s && x.shellPane === p && !x.ended && !x.gone);
         const id = panes.includes(sh.pane) ? sh.pane : panes.find((p) => !busy(p));
-        if (id) { s.shellPane = sh.pane = id; cxRenderShells(state); s.xt.focus(); return; }
+        if (id) {
+          s.shellPane = sh.pane = id; cxRenderShells(state); s.xt.focus();
+          // The run may have gone on while it opened.
+          cxFollowShells(state);
+          return;
+        }
       }
       state.fg = s; state.actionTab = "term"; cxRenderAction(state); cxLayout(state); s.xt.focus();
     },
@@ -822,15 +841,20 @@ function cxRenderShells(state) {
     if (!pane) continue;
     const mine = [...term.sessions.values()].filter((x) => x.shellPane === id && !x.gone);
     const s = mine.find((x) => !x.ended) || mine[mine.length - 1];
-    const open = pane.querySelector("[data-sh-open]"), reopen = pane.querySelector("[data-sh-reopen]"), end = pane.querySelector("[data-sh-end]");
+    const open = pane.querySelector("[data-sh-open]"), reopen = pane.querySelector("[data-sh-reopen]"), end = pane.querySelector("[data-sh-end]"), pin = pane.querySelector("[data-sh-pin]");
+    const pinned = cxShellPins.has(id);
+    pin.classList.toggle("on", pinned);
+    pin.title = pinned
+      ? "Pinned: the shell stays open as the run goes from step to step (↻ reopens it at the step the run is on). Click to unpin."
+      : "Not pinned: as the run goes on to each step, the shell is ended (its transcript recorded with its step) and a new one opened at the new step. Click to pin it, keeping it open.";
+    pin.onclick = () => { cxShellPins[pinned ? "delete" : "add"](id); cxSavePins(); cxRenderShells(state); if (pinned) cxFollowShells(state); };
     const running = !!s && !s.ended;
     open.hidden = running;
     open.disabled = false;
     open.textContent = `⌨ Open shell${at}`;
     open.title = CX_SHELL_NOTE[phase];
     reopen.hidden = !running;
-    reopen.textContent = `↻ Reopen${at}`;
-    reopen.title = `End this shell and open a new one${at}, with the ${phase === "before" ? "inputs as they are now" : "run's values as they are now"}`;
+    reopen.title = `Reopen${at}: end this shell and open a new one${at}, with the ${phase === "before" ? "inputs as they are now" : "run's values as they are now"}`;
     end.hidden = !running;
     const outside = s && !/^shell alongside/.test(s.title);
     pane.querySelector(".cx-shell-title").textContent = s ? `${s.title.replace(/^shell (alongside the run · )?/, "")}${outside ? " · not recorded" : ""}${s.ended ? " · ended" : ""}` : "";
@@ -862,8 +886,31 @@ async function cxOpenShell(state, pane, cur) {
     : { run: state.run.id, step: 0 };
   try {
     const sh = await api("POST", "/api/shells", body);
+    // Where it opened, before its stream starts (cxFollowShells reads it).
+    cxShells.set(sh.id, { seq: -1, step: sh.step - 1, phase: sh.phase });
     cxShellStream(state, sh.id, pane);
   } catch (e) { toast(e.message); }
+}
+
+// Shell panes that are pinned keep their shell open from step to step;
+// the others follow the run: at each step, the shell is ended (recorded
+// with its step) and a new one opened at the step the run is on.
+const cxShellPins = new Set((() => { try { return JSON.parse(localStorage.getItem("runnr.shellPins") || "[]"); } catch { return []; } })());
+function cxSavePins() { try { localStorage.setItem("runnr.shellPins", JSON.stringify([...cxShellPins])); } catch {} }
+
+function cxFollowShells(state) {
+  if (cxShellPhase(state) !== "alongside") return;
+  const cur = cxCurrent(state);
+  if (cur < 0) return;
+  for (const id of cxLeafIds(state, "shell")) {
+    if (cxShellPins.has(id)) continue;
+    const s = [...term.sessions.values()].find((x) => x.shellPane === id && !x.ended && !x.gone);
+    const sh = s && cxShells.get(s.runId);
+    if (!sh || sh.reopening || (sh.phase === "alongside" && sh.step === cur)) continue;
+    sh.reopening = true;
+    sendTerm(s, { end: true });
+    cxOpenShell(state, id, cur);
+  }
 }
 
 // Shells opened from Shell panes are sessions of their own on the server
@@ -954,7 +1001,7 @@ async function viewConsoleLaunch(name, query) {
   const data = await api("GET", `/api/runbooks/${enc(name)}`);
   const rb = data.runbook;
   if (!rb) throw new Error(`${name} isn't valid: ${data.error || "fix it in the editor"}`);
-  const prev = fromId ? (await api("GET", `/api/runs/${enc(fromId)}`)).run : null;
+  const prev = fromId ? alignedRun((await api("GET", `/api/runs/${enc(fromId)}`)).run, rb) : null;
   const state = {
     launch: true, mode, prev, rb, version: data.version, console: true,
     run: { runbook: name, status: "pending", window: rb.maintenance_window ? { target: rb.maintenance_window.target } : null },
@@ -1023,6 +1070,7 @@ function cxLaunchRenderTop(state) {
     </div>
     <div class="cx-status">
       <span class="cx-at">${mode === "run" ? "A new run" : `${mode === "resume" ? "Resuming" : "Running again"} <a href="#/runs/${enc(prev.id)}/console">${esc(prev.id)}</a> (${esc(prev.status)})${mode === "resume" ? ": steps that finished are left out" : ""}`}</span>
+      ${mode === "resume" && prev?.changed ? `<span class="cx-chip" title="${esc(changedNote(prev, state.version).trim())}">⚠ runbook changed: v${prev.runbook_version || "?"} → v${state.version}</span>` : ""}
       <span class="cx-chip">${n} of ${state.steps.length} steps</span>
       ${rb.maintenance_window ? `<span class="cx-chip cx-window muted">Maintenance window${rb.maintenance_window.target ? `, target ${esc(rb.maintenance_window.target)}` : ""}</span>` : ""}
     </div>

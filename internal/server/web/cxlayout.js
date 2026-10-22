@@ -23,7 +23,7 @@ const CX_KINDS = {
   terminal: { label: "Terminal target", html: `<section class="cx-pane cx-termpane"><div class="cx-pane-head"><b>Terminal</b><span class="muted small cx-termpane-title"></span><span class="spacer"></span><button class="link" data-tp-end hidden>End session</button></div><div class="cx-pane-body cx-term"><p class="muted cx-termpane-empty">A terminal step's terminal, or a shell opened from a step's question, shows here.</p></div></section>` },
   background: { label: "Background target", multi: true, html: `<section class="cx-pane cx-bg"><div class="cx-pane-head"><b>Background</b><div class="cx-tabs"></div><span class="cx-bg-status small"></span></div><div class="cx-pane-body cx-term"><p class="muted cx-bg-empty">Background steps' terminals show here while they run.</p></div></section>` },
   log: { label: "Run log", html: `<section class="cx-pane cx-logpane"><div class="cx-pane-head"><b>Run log</b><span class="muted small">every step's output, in order</span></div><div class="cx-pane-body"><pre class="log cx-runlog"></pre></div></section>` },
-  shell: { label: "Shell", multi: true, html: `<section class="cx-pane cx-shellpane"><div class="cx-pane-head"><b>Shell</b><span class="muted small cx-shell-title"></span><span class="spacer"></span><button class="primary" data-sh-open>⌨ Open shell</button><button data-sh-reopen hidden>↻ Reopen</button><button class="link" data-sh-end hidden>End session</button></div><div class="cx-pane-body cx-term"><p class="muted cx-shell-empty"></p></div></section>` },
+  shell: { label: "Shell", multi: true, html: `<section class="cx-pane cx-shellpane"><div class="cx-pane-head"><b>Shell</b><span class="muted small cx-shell-title"></span><span class="spacer"></span><button class="primary" data-sh-open>⌨ Open shell</button><button class="cx-icon" data-sh-reopen hidden>↻</button><button class="cx-icon cx-pin" data-sh-pin>📌</button><button class="link" data-sh-end hidden>End session</button></div><div class="cx-pane-body cx-term"><p class="muted cx-shell-empty"></p></div></section>` },
 };
 
 const CX_DEFAULT_LAYOUT = { dir: "row", kids: [{ k: "steps" }, { dir: "col", kids: [{ k: "details" }, { k: "action" }, { k: "background" }], sizes: [1, 1.4, 0.8] }], sizes: [1, 3.2] };
@@ -82,6 +82,27 @@ function cxLeafIds(state, kind) {
   return out;
 }
 const cxPlaced = (state, kind) => cxLeafIds(state, kind).length > 0;
+
+// cxEnsurePane puts a pane of kind on screen if there's none: in an empty
+// pane, else below the step's activity (or the first pane). It says whether
+// it added one.
+function cxEnsurePane(state, kind) {
+  if (cxPlaced(state, kind)) return false;
+  const leaf = cxNewLeaf(state, kind);
+  const empty = cxLeafIds(state, "empty")[0];
+  if (empty) {
+    const [parent, i] = cxFind(state.layout, empty);
+    cxReplace(state, parent, i, leaf);
+    state.frames[empty]?.remove();
+    delete state.frames[empty];
+  } else {
+    const anchor = ["action", "details", "steps"].find((id) => cxFind(state.layout, id));
+    if (anchor) cxSplit(state, anchor, "bottom", leaf);
+    else state.layout = { dir: "col", kids: [state.layout, leaf], sizes: [3, 1] };
+  }
+  cxLayoutChanged(state);
+  return true;
+}
 
 function cxSizesOf(n) {
   if (!n.sizes || n.sizes.length !== n.kids.length) n.sizes = n.kids.map(() => 1);
@@ -359,7 +380,10 @@ function cxRenderLog(state) {
   pre.innerHTML = state.steps.map((s, i) => {
     if (s.status === "pending" && !s.log?.length) return "";
     const head = `<span class="info">── ${i + 1}. ${esc(s.name)}: ${ICONS[s.status] || ""} ${esc(s.status)}${s.note ? ` (${esc(s.note)})` : ""} ──</span>`;
-    return [head, ...(s.log || []).map((l) => `<span class="${esc(l.stream)}">${esc(l.text)}</span>`)].join("\n");
+    // Its tries before the run was resumed come first.
+    const before = (s.before || []).map((b) => [`<span class="info">── ${i + 1}. ${esc(s.name)}, before the run was resumed: ${ICONS[b.status] || ""} ${esc(b.status)} ──</span>`,
+      ...(b.output || "").replace(/\n$/, "").split("\n").filter(Boolean).map((t) => esc(t))].join("\n"));
+    return [...before, head, ...(s.log || []).map((l) => `<span class="${esc(l.stream)}">${esc(l.text)}</span>`)].join("\n");
   }).filter(Boolean).join("\n") || `<span class="info">Nothing has run yet.</span>`;
   if (atEnd) pre.scrollTop = pre.scrollHeight;
 }

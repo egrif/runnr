@@ -164,3 +164,30 @@ func (s *Store) DeleteRunbook(name string) ([]string, error) {
 	}
 	return also, nil
 }
+
+// MoveRunNotes follows a run's steps to their new places (moved: old index
+// → new, -1 for a step no longer in the runbook: its notes go to the run,
+// saying which step they were on).
+func (s *Store) MoveRunNotes(runID string, moved map[int]int, names map[int]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Out of the way first, so moves can't collide.
+	if _, err := tx.Exec(s.q(`UPDATE run_notes SET step = -1000 - step WHERE run_id = ? AND step >= 0`), runID); err != nil {
+		return err
+	}
+	for old, to := range moved {
+		if to >= 0 {
+			_, err = tx.Exec(s.q(`UPDATE run_notes SET step = ? WHERE run_id = ? AND step = ?`), to, runID, -1000-old)
+		} else {
+			_, err = tx.Exec(s.q(`UPDATE run_notes SET step = -1, text = ? || text WHERE run_id = ? AND step = ?`),
+				fmt.Sprintf("(on step %d, %s, no longer in the runbook) ", old+1, names[old]), runID, -1000-old)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

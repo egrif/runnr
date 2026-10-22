@@ -15,10 +15,11 @@ import (
 
 // A shell alongside the run: opened on demand (the console's Shell pane)
 // at the step the run is on, while the run carries on. It reads the run's
-// variables as they are when it opens; what it publishes, and its
-// transcript, reach the run when the next step starts (or the run ends),
-// so the shell never changes the run under a step that's running. It can
-// outlive the run: what it leaves after that isn't applied.
+// variables as they are when it opens; what it publishes reaches the run
+// when the next step starts (or the run ends), so the shell never changes
+// the run under a step that's running. Its transcript is recorded with its
+// step then too, so far as it has gone if it's still open. It can outlive
+// the run: what it leaves after that isn't applied.
 
 // AsideSheller is implemented by sessions that can open such a shell.
 type AsideSheller interface {
@@ -34,11 +35,23 @@ type asideResult struct {
 	idx        int
 	transcript string
 	res        cmdResult
+	sh         *asideShell
+}
+
+// asideShell is a shell alongside the run, open or just ended.
+type asideShell struct {
+	idx  int
+	sess *termSession
+	// slot is where its transcript is in its step's Shells (-1: not yet),
+	// last what was put there.
+	slot int
+	last string
 }
 
 type asideState struct {
 	mu      sync.Mutex
 	pending []asideResult
+	open    map[*asideShell]bool
 	// closed: the run has finished; nothing more is taken.
 	closed bool
 }
@@ -67,11 +80,20 @@ func (x *executor) ShellAside(ctx context.Context, idx int, conn TermConn) error
 	if err != nil {
 		return err
 	}
-	res, transcript, err := x.shellOn(ctx, idx, step, extra, dir, conn)
+	sh := &asideShell{idx: idx, slot: -1}
+	res, transcript, err := x.shellOn(ctx, idx, step, extra, dir, conn, func(s *termSession) {
+		x.aside.mu.Lock()
+		defer x.aside.mu.Unlock()
+		if x.aside.open == nil {
+			x.aside.open = map[*asideShell]bool{}
+		}
+		sh.sess, x.aside.open[sh] = s, true
+	})
 	x.aside.mu.Lock()
+	delete(x.aside.open, sh)
 	closed = x.aside.closed
 	if !closed {
-		x.aside.pending = append(x.aside.pending, asideResult{idx: idx, transcript: strings.TrimSpace(x.mask(transcript)), res: res})
+		x.aside.pending = append(x.aside.pending, asideResult{idx: idx, transcript: strings.TrimSpace(x.mask(transcript)), res: res, sh: sh})
 	}
 	x.aside.mu.Unlock()
 	if n := len(res.outputs) + len(res.secrets); n > 0 {
@@ -86,8 +108,8 @@ func (x *executor) ShellAside(ctx context.Context, idx int, conn TermConn) error
 
 // shellOn runs an interactive shell at step (the step's shell, else the
 // runbook's, else sh) on conn, and returns what it published and its
-// transcript.
-func (x *executor) shellOn(ctx context.Context, idx int, step runbook.Step, extra []string, dir string, conn TermConn) (cmdResult, string, error) {
+// transcript. started, if given, is told of the session once it's going.
+func (x *executor) shellOn(ctx context.Context, idx int, step runbook.Step, extra []string, dir string, conn TermConn, started func(*termSession)) (cmdResult, string, error) {
 	var res cmdResult
 	tmp, err := x.tempDir("runnr-shell-")
 	if err != nil {
@@ -102,6 +124,9 @@ func (x *executor) shellOn(ctx context.Context, idx int, step runbook.Step, extr
 	if err != nil {
 		conn.Close()
 		return res, "", err
+	}
+	if started != nil {
+		started(s)
 	}
 	_, transcript, err := s.wait()
 	if errors.Is(err, context.Canceled) {
@@ -151,21 +176,26 @@ func OpenShell(ctx context.Context, spec ShellSpec, conn TermConn) (string, erro
 		conn.Close()
 		return "", err
 	}
-	_, transcript, err := x.shellOn(ctx, spec.Step, step, extra, dir, conn)
+	_, transcript, err := x.shellOn(ctx, spec.Step, step, extra, dir, conn, nil)
 	return strings.TrimSpace(x.mask(transcript)), err
 }
 
-// takeAside applies what aside shells left (on the run's own goroutine,
-// between steps).
+// takeAside applies what aside shells left, and records the transcripts
+// of those still open so far (on the run's own goroutine, between steps).
 func (x *executor) takeAside() {
 	x.aside.mu.Lock()
 	pending := x.aside.pending
 	x.aside.pending = nil
-	x.aside.mu.Unlock()
-	for _, a := range pending {
-		if a.transcript != "" && a.idx >= 0 && a.idx < len(x.run.Steps) {
-			x.run.Steps[a.idx].Shells = append(x.run.Steps[a.idx].Shells, a.transcript)
+	var open []*asideShell
+	for sh := range x.aside.open {
+		if sh.sess != nil {
+			open = append(open, sh)
 		}
+	}
+	x.aside.mu.Unlock()
+	recorded := false
+	for _, a := range pending {
+		recorded = x.recordAside(a.sh, a.idx, a.transcript) || recorded
 		x.apply(runbook.Step{}, a.res)
 		var names []string
 		for k := range a.res.outputs {
@@ -179,10 +209,35 @@ func (x *executor) takeAside() {
 			x.notify(Event{Kind: EventOutput, Step: a.idx, Stream: "info", Text: "from the shell alongside the run: " + strings.Join(names, ", ")})
 		}
 	}
-	if len(pending) > 0 {
+	for _, sh := range open {
+		recorded = x.recordAside(sh, sh.idx, strings.TrimSpace(x.mask(sh.sess.snapshot()))) || recorded
+	}
+	if len(pending) > 0 || recorded {
 		x.refreshState()
 		x.save()
 	}
+}
+
+// recordAside puts a shell's transcript with step idx: in its place there
+// if it has one (sh: the shell alongside, nil for others), else after the
+// others. It says whether the record changed.
+func (x *executor) recordAside(sh *asideShell, idx int, transcript string) bool {
+	if transcript == "" || idx < 0 || idx >= len(x.run.Steps) {
+		return false
+	}
+	shells := x.run.Steps[idx].Shells
+	if sh == nil || sh.slot < 0 || sh.slot >= len(shells) {
+		x.run.Steps[idx].Shells = append(shells, transcript)
+		if sh != nil {
+			sh.slot, sh.last = len(shells), transcript
+		}
+		return true
+	}
+	if sh.last == transcript {
+		return false
+	}
+	shells[sh.slot], sh.last = transcript, transcript
+	return true
 }
 
 // endAside takes what aside shells have left, and closes the run to them:

@@ -134,8 +134,18 @@ func TestTokenAuthWaitAndResume(t *testing.T) {
 	var resumed engine.Run
 	r = do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true}`, auth)
 	json.NewDecoder(r.Body).Decode(&resumed)
-	if resumed.Status != engine.StatusSucceeded || resumed.Resumes != run.ID || resumed.Steps[0].Status != engine.StatusSkipped {
+	// The run carries on in its own record; step a stands as it went.
+	if resumed.Status != engine.StatusSucceeded || resumed.ID != run.ID || len(resumed.Resumptions) != 1 || !resumed.Steps[0].Carried || len(resumed.Steps[1].Before) != 1 {
 		t.Fatalf("resume: %d %+v", r.StatusCode, resumed)
+	}
+	// new_run: a new run, pointing back at it.
+	var failed, again engine.Run
+	r = do(t, "POST", ts.URL+"/api/runs", `{"runbook":"flaky","unattended":true,"wait":true}`, auth)
+	json.NewDecoder(r.Body).Decode(&failed)
+	r = do(t, "POST", ts.URL+"/api/runs/"+failed.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true,"new_run":true}`, auth)
+	json.NewDecoder(r.Body).Decode(&again)
+	if r.StatusCode != http.StatusOK || again.ID == failed.ID || again.Resumes != failed.ID {
+		t.Fatalf("new_run: %d %+v", r.StatusCode, again)
 	}
 
 	if r := do(t, "POST", ts.URL+"/api/runs", `{"runbook":"flaky","wait":true}`, auth); r.StatusCode != http.StatusBadRequest {
@@ -524,5 +534,43 @@ func TestExplainOverHTTP(t *testing.T) {
 	defer ts2.Close()
 	if r := do(t, "POST", ts2.URL+"/api/explain", body, nil); r.StatusCode != http.StatusBadRequest {
 		t.Fatalf("without a key: %d", r.StatusCode)
+	}
+}
+
+func TestResumeWithChangedRunbook(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+
+	v1 := "name: ch\ninputs: [{name: mode, default: fail}]\nsteps:\n  - {name: a, run: 'true'}\n  - {name: gone, run: 'true'}\n  - {name: b, run: '[ \"$mode\" = ok ]'}\n"
+	do(t, "POST", ts.URL+"/api/runbooks", v1, nil)
+	var run engine.Run
+	json.NewDecoder(do(t, "POST", ts.URL+"/api/runs", `{"runbook":"ch","unattended":true,"wait":true}`, nil).Body).Decode(&run)
+	if run.Status != engine.StatusFailed {
+		t.Fatalf("run %s", run.Status)
+	}
+	if r := do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/notes", `{"step":2,"text":"saw it","author":"pat"}`, nil); r.StatusCode >= 300 {
+		b, _ := io.ReadAll(r.Body)
+		t.Fatalf("note: %d %s", r.StatusCode, b)
+	}
+	v2 := strings.Replace(v1, "  - {name: gone, run: 'true'}\n", "", 1) + "  - {name: c, run: 'true'}\n"
+	if r := do(t, "PUT", ts.URL+"/api/runbooks/ch", v2, nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("edit: %d", r.StatusCode)
+	}
+	// A new run won't start from a changed runbook's steps.
+	if r := do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true,"new_run":true}`, nil); r.StatusCode == http.StatusOK {
+		t.Fatalf("new_run on a changed runbook: %d", r.StatusCode)
+	}
+	// Carrying on: the same run, with version 2 noted.
+	var got engine.Run
+	r := do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true}`, nil)
+	json.NewDecoder(r.Body).Decode(&got)
+	if r.StatusCode != http.StatusOK || got.ID != run.ID || got.Status != engine.StatusSucceeded || len(got.Steps) != 3 ||
+		len(got.Resumptions) != 1 || got.Resumptions[0].RunbookVersion != 2 || len(got.Removed) != 1 || got.Removed[0].Name != "gone" {
+		t.Fatalf("resume: %d %+v", r.StatusCode, got)
+	}
+	saved, _ := st.LoadRun(run.ID)
+	if len(saved.Notes) != 1 || !strings.Contains(saved.Notes[0].Text, "gone, no longer in the runbook") {
+		t.Fatalf("notes %+v", saved.Notes)
 	}
 }
