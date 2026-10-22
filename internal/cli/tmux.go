@@ -372,7 +372,12 @@ func (d *tmuxDetacher) Start(idx int, title string, spec engine.DetachedSpec) (e
 		_, _ = d.srv.run("select-pane", "-t", pane, "-T", title)
 		return newTmuxJob(tmuxRef{Server: d.srv, Session: d.session, Pane: pane, Tmp: spec.Tmp}), nil
 	}
-	pane, err := d.srv.run("new-window", "-d", "-t", d.session+":", "-n", fmt.Sprintf("bg %d", idx+1), "-P", "-F", "#{pane_id}", run)
+	// A background step's window is "bg N"; a command the operator started at step N, "job N".
+	win := fmt.Sprintf("bg %d", idx+1)
+	if strings.HasPrefix(title, "job ") {
+		win = fmt.Sprintf("job %d", idx+1)
+	}
+	pane, err := d.srv.run("new-window", "-d", "-t", d.session+":", "-n", win, "-P", "-F", "#{pane_id}", run)
 	if err != nil {
 		return nil, err
 	}

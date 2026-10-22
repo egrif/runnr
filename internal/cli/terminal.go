@@ -343,8 +343,6 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 		case "\x00pane":
 			if err := t.session.(engine.PaneSheller).ShellInPane(idx); err != nil {
 				fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
-			} else {
-				fmt.Fprintln(t.out, t.c("2", "  a shell opened in a pane below: what it publishes reaches the run when the next step starts"))
 			}
 		case "\x00job":
 			fmt.Fprint(t.out, "  command to run in the background (with the run's environment): ")
