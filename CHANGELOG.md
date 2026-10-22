@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.3.3 — 2026-10-22
+
+### Changed
+
+- The `bifrost` AI provider is a generic Bifrost gateway: it needs
+  `RUNNR_AI_BASE_URL` (no built-in gateway addresses) and takes its key from
+  `RUNNR_AI_API_KEY` or `RUNNR_AI_API_KEY_CMD` (no built-in key command).
+  `RUNNR_AI_BIFROST_ENV` is gone. If you used it, set `RUNNR_AI_BASE_URL`
+  and `RUNNR_AI_API_KEY_CMD` yourself.
+
 ## v0.3.2 — 2026-10-22
 
 Documentation brought up to date, with new screenshots.

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -68,10 +67,6 @@ func (o *OpenAI) key(ctx context.Context, renew bool) (string, error) {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
 			msg = strings.TrimSpace(string(ee.Stderr))
-		}
-		if strings.Contains(msg, ".sso-token-cli") && os.Getenv("SSO_TOKEN_CLI_CONFIG") == "" {
-			// It reads its config from the directory it runs in by default.
-			msg += " (set SSO_TOKEN_CLI_CONFIG to the path of your sso-token-cli config file, or start runnr in the directory that has it)"
 		}
 		return "", fmt.Errorf("getting a key (%s): %s", o.KeyCmd, msg)
 	}
