@@ -163,11 +163,12 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | GET | `/api/runs/{id}/plan` | | `{steps: [StepView], version, latest, changed?, shape?, live}`: the steps as this run uses them, and the runbook's newest version (`changed`: steps not run yet that it has differently; `shape`: why it can't be adopted) |
 | POST | `/api/runs/{id}/adopt-version` | `{version}` | `{changed, restarted, version}`: a live run takes that version for the steps it hasn't run (`409` if it can't) |
 | GET | `/api/runs/{id}/chain` | | `[{id, status, started, ended?, resumes?, runbook_version?, steps}]`: the run and the runs linked to it by resuming, oldest first |
-| GET | `/api/runs/{id}/logs?ids=&format=raw\|json\|both&single=1` | | those runs of the chain (all by default) as raw logs, records (JSON) or both, in one file per format or one per run: a file, or a zip of several |
+| GET | `/api/runs/{id}/logs?ids=&format=raw\|json\|both&single=1` | | those runs of the chain (all by default) as raw logs, records (JSON) or both, in one file per format or one per run: a file, or a zip of several. `format` can add `,timeline` (or be just `timeline`): a page per run laying it out in time |
 | POST | `/api/runs/{id}/logs` | `{ids?, format, single?, path, overwrite?}` | `{written: [paths]}`: the same, into folder `path` |
 | GET | `/api/runbooks/{name}/tests` | | the runbook's test suite (`suite`: name, version, fake libraries, isolated commands, scenarios; `null` without one) and its latest results (`last`) |
 | POST | `/api/runbooks/{name}/tests/run` | `{scenario?, raw?}` | runs the suite (or one scenario), against the saved runbook or the draft YAML in `raw`: `{at, draft, results: [{scenario, passed, problems, status, steps, calls, asked, unused, log}]}` |
 | GET | `/api/runs/{id}/log?download=1` | | the run as a plain-text log (`download` saves it as a file) |
+| GET | `/api/runs/{id}/timeline?download=1` | | the run laid out in time, as a self-contained HTML page (`download` saves it as a file) |
 | GET | `/api/runs/{id}/events` | | Server-Sent Events (live runs only) |
 | POST | `/api/runs/{id}/answer` | `{question_id, value, note?}` | `204` |
 | POST | `/api/runs/{id}/goto` | `{step, force?}` | `204`: while the run waits on a question (those carry `goto: true`), goes to step `step` (1-based): back (it and the steps after it run again), the same step again, or ahead (the steps between are skipped). It waits before running. `409` if the run isn't waiting, or (`needs_force`) going back past a point of no return without `force` |

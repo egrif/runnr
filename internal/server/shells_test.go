@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/store"
 )
 
@@ -62,5 +63,36 @@ steps:
 	}
 	if !ended || !strings.Contains(out.String(), "[world here]") {
 		t.Fatalf("ended %v output %q", ended, out.String())
+	}
+}
+
+// An unattended run started here can still be driven from the console: a
+// shell opens alongside it, and its background steps get a terminal.
+func TestUnattendedRunIsLive(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	srv := New(st, Config{})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	do(t, "POST", ts.URL+"/api/runbooks", "name: u\nshell: sh\nsteps:\n  - {name: bg, run: 'echo bg; sleep 0.3', background: true}\n  - {name: slow, run: 'sleep 1.5'}\n", nil)
+	var run engine.Run
+	json.NewDecoder(do(t, "POST", ts.URL+"/api/runs", `{"runbook":"u","unattended":true}`, nil).Body).Decode(&run)
+	time.Sleep(400 * time.Millisecond)
+	var sh struct{ Phase string }
+	json.NewDecoder(do(t, "POST", ts.URL+"/api/shells", `{"run":"`+run.ID+`","step":0}`, nil).Body).Decode(&sh)
+	if sh.Phase != "alongside" {
+		t.Fatalf("shell phase %q", sh.Phase)
+	}
+	l := srv.getLive(run.ID)
+	if l == nil {
+		t.Fatal("not live")
+	}
+	l.mu.Lock()
+	var bg bool
+	for _, e := range l.events {
+		bg = bg || (e.Kind == "term_start" && e.Term != nil && e.Term.Background)
+	}
+	l.mu.Unlock()
+	if !bg {
+		t.Fatal("the background step got no terminal")
 	}
 }

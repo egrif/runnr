@@ -84,7 +84,8 @@ async function exportLogs(runId) {
     <div class="row small exp-opts">
       <b>As</b><label class="check"><input type="radio" name="fmt" value="raw" checked> raw logs (to read)</label>
       <label class="check"><input type="radio" name="fmt" value="json"> records (JSON, to import)</label>
-      <label class="check"><input type="radio" name="fmt" value="both"> both</label></div>
+      <label class="check"><input type="radio" name="fmt" value="both"> both</label>
+      <label class="check" title="A page per run laying it out in time: its steps, tries, shells, resumes and notes"><input type="checkbox" data-timeline> + timeline (HTML)</label></div>
     <div class="row small exp-opts"><b>In</b><label class="check"><input type="radio" name="single" value="1" ${st.single ? "checked" : ""}> one file</label>
       <label class="check"><input type="radio" name="single" value="" ${st.single ? "" : "checked"}> a file per run</label></div>
     <div class="row path-field"><input class="exp-path" spellcheck="false" value="${esc(st.path)}" title="The folder to write them in"><button type="button" data-browse>📁 Browse…</button></div>
@@ -95,7 +96,7 @@ async function exportLogs(runId) {
   const $e = (s) => dlg.querySelector(s);
   const read = () => {
     st.ids = new Set([...dlg.querySelectorAll("[data-id]")].filter((c) => c.checked).map((c) => c.dataset.id));
-    st.format = dlg.querySelector("[name=fmt]:checked").value;
+    st.format = dlg.querySelector("[name=fmt]:checked").value + ($e("[data-timeline]").checked ? ",timeline" : "");
     st.single = !!dlg.querySelector("[name=single]:checked").value;
     st.path = $e(".exp-path").value.trim();
     st.overwrite = $e("[data-overwrite]").checked;

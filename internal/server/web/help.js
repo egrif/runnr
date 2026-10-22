@@ -317,6 +317,7 @@ functions:
       <li><b>Change a step mid-run</b>: <b>✎ edit</b> on the current step or a later one (CLI: <b>[m]odify step</b>). A step waiting on a question starts again with the change. It's only in that run until you <b>Save to runbook</b>.</li>
       <li><b>Dangerous steps</b> (<code>dangerous: true</code>) run like any other in sequence. Out of sequence (earlier steps skipped, a later start, Run this, a runbook file) they list what didn't run and wait for you to type the step number; a resume counts the steps the earlier run finished.</li>
       <li><b>Resume</b> continues a stopped run at the step that didn't finish, with the same inputs and state, in the same run (one record and log; earlier tries of the steps done again are kept). If the runbook has changed since, the run carries on with the new version, its steps matched by name, and the record notes the version; <b>run again</b> repeats it, comparing each step with last time.</li>
+      <li><b>◷ Timeline</b> (a run's page or console; <code>runnr history &lt;id&gt; --timeline</code>) lays the run out in time: each step's tries (earlier ones, before a resume, faded), shells and jobs beside them, background steps, the maintenance window (with a closer look), the time it was stopped, notes, input changes and resumes, then the key moments. Long idle stretches are cut short. Export logs can add a timeline page per run.</li>
     </ul>
 
     <h2 id="help-example">Example</h2>

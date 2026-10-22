@@ -10,9 +10,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/timeline"
 )
 
 // Exporting runs: a run with the runs it's linked to by resuming (the run
@@ -69,21 +71,39 @@ type LogFile struct {
 	Data []byte
 }
 
-// LogFiles renders runs: format raw (logs to read), json (records to
-// import) or both; single puts them in one file per format (raw logs one
+// LogFiles renders runs: format is raw (logs to read), json (records to
+// import), both, and/or timeline (a page per run laying it out in time),
+// comma-separated; single puts them in one file per format (raw logs one
 // after another; records as a JSON list), else one file per run.
+// Timelines are always a page per run.
 func LogFiles(runs []*engine.Run, format string, single bool, base string) ([]LogFile, error) {
 	if len(runs) == 0 {
 		return nil, errors.New("no runs to export")
 	}
-	raw, js := format == "raw" || format == "both" || format == "", format == "json" || format == "both"
-	if !raw && !js {
-		return nil, fmt.Errorf("format %q: raw, json or both", format)
+	var raw, js, tl bool
+	for _, f := range strings.Split(format, ",") {
+		switch strings.TrimSpace(f) {
+		case "raw", "":
+			raw = true
+		case "json":
+			js = true
+		case "both":
+			raw, js = true, true
+		case "timeline":
+			tl = true
+		default:
+			return nil, fmt.Errorf("format %q: raw, json, both or timeline (or several, comma-separated)", format)
+		}
+	}
+	var out []LogFile
+	if tl {
+		for _, r := range runs {
+			out = append(out, LogFile{"run-" + r.ID + ".timeline.html", timeline.Build(r, time.Now()).HTML()})
+		}
 	}
 	if base == "" {
 		base = runs[0].Runbook + "-" + runs[len(runs)-1].ID
 	}
-	var out []LogFile
 	if single {
 		if raw {
 			var b strings.Builder

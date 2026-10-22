@@ -384,6 +384,7 @@ function renderRun(state) {
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
       <a class="button" href="#/runs/${enc(run.id)}/console" title="One screen: the steps, the selected step's definition, what it's doing, and the background steps">▣ Console</a>
+      <button id="timeline" title="The run laid out in time: its steps, tries, shells, resumes and notes">◷ Timeline</button>
       ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="delete-run" class="danger" title="Delete this run's record">Delete run</button><button id="export-logs" title="Its logs, with the runs linked to it by resuming: to files, or a download">⇩ Export logs…</button><button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
     ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
@@ -475,6 +476,7 @@ function renderRun(state) {
   $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
   $("#change-inputs") && ($("#change-inputs").onclick = () => changeInputs(state));
   $("#export-logs") && ($("#export-logs").onclick = () => exportLogs(run.id));
+  $("#timeline").onclick = () => openTimeline(run.id);
   $("#delete-run") && ($("#delete-run").onclick = async () => {
     if (!confirm(`Delete run ${run.id}? Its record, output and notes are removed for good.`)) return;
     try { await api("DELETE", `/api/runs/${enc(run.id)}`); toast("Run deleted"); location.hash = `#/runbooks/${enc(run.runbook)}`; }
@@ -758,6 +760,19 @@ function changedNote(prev, version) {
   if (!prev?.changed) return "";
   const d = prev.dropped || [];
   return ` The runbook has changed since this run (it ran version ${prev.runbook_version || "?"}, now ${version}): it carries on with this version, its steps matched by name${d.length ? `; ${d.length === 1 ? "a step it ran is" : `${d.length} steps it ran are`} no longer in it (${d.map(esc).join(", ")}) and ${d.length === 1 ? "stays" : "stay"} in the record` : ""}.`;
+}
+
+// openTimeline shows the run laid out in time (a page of its own, from
+// the server).
+function openTimeline(runId) {
+  const url = `/api/runs/${enc(runId)}/timeline`;
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step timeline-dlg";
+  dlg.innerHTML = `<div class="row"><h3>Timeline</h3><span class="spacer"></span><a class="button" href="${url}" target="_blank" rel="noopener">Open in a tab</a><a class="button" href="${url}?download=1">Download</a><button data-close>Close</button></div><iframe src="${url}" title="Timeline of run ${esc(runId)}"></iframe>`;
+  document.body.append(dlg);
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  dlg.showModal();
 }
 
 // earlierTries are a step's tries before the run was resumed.

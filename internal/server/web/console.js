@@ -188,6 +188,7 @@ function cxToolbar(state, live) {
       ["failed", "aborted"].includes(r.status) && stop >= 0 ? btn("resume", "▶ Resume…", "primary", `Continue from step ${stop + 1}`) : "",
       btn("rerun", "↻ Run again…"),
       btn("raw", "Raw log", "", "The whole run as a plain log"),
+      btn("timeline", "◷ Timeline", "", "The run laid out in time: its steps, tries, shells, resumes and notes"),
       btn("export-logs", "⇩ Export logs…", "", "Its logs, with the runs linked to it by resuming: to files, or a download"),
     ].join("");
   }
@@ -251,6 +252,7 @@ function cxBindTop(state, el, live) {
         case "rerun": location.hash = `#/runbooks/${enc(r.runbook)}/console?rerun=${enc(r.id)}`; return;
         case "raw": return cxRawLog(state);
         case "export-logs": return exportLogs(state.run.id);
+        case "timeline": return openTimeline(state.run.id);
         case "save-edits": {
           if (!confirm(`Save this run's step edits as a new version of “${r.runbook}”?\nThe YAML is reformatted, so comments in it are dropped.`)) return;
           const { version } = await api("POST", `/api/runs/${enc(r.id)}/save-edits`);

@@ -77,7 +77,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr abort <run-id> [-m reason] [--force]` | Abort a run running elsewhere (another terminal, the GUI), or one left "running" by a process that's gone |
 | `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open a shell (the runbook's `shell`, else `$SHELL`) with that environment; given a run, with its inputs and what its steps published, as last saved (secrets are asked for or re-derived) |
 | `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
-| `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail (`--raw`: as a plain log, each step's command, output and result in order; **Raw log** on a past run's page in the GUI) |
+| `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail (`--raw`: as a plain log, each step's command, output and result in order; **Raw log** on a past run's page in the GUI; `--timeline`: a chart of the run in time, then its key moments; `--timeline=html` for a page) |
 | `runnr history prune --older-than 90d` | Delete old finished runs |
 | `runnr db info` / `runnr db import <dir>` | Show storage details / import a file-based runnr home |
 | `runnr serve` (alias `ui`) | Serve the GUI and API (`--addr`, `--open`, `--token`, `--no-ui`) |
@@ -263,8 +263,17 @@ it aborted now**).
   next) without stopping the run, and **✎ Change inputs** changes the
   inputs for the rest of the run.
 - **Finished runs**: **Raw log**, **⇩ Export logs…** (the run and the runs
-  linked to it by resuming, as raw logs, records to import, or both; to a
-  folder or a download), **Run again…**, **Resume…** and **Delete run**.
+  linked to it by resuming, as raw logs, records to import, or both, plus a
+  timeline page per run if you like; to a folder or a download), **Run
+  again…**, **Resume…** and **Delete run**.
+- **◷ Timeline** (any run, running or done): the run laid out in time.
+  Each step's tries as bars (earlier tries, before a resume, faded), the
+  shells and jobs alongside them, background steps, the maintenance window
+  (with a closer look at it), the time it was stopped before a resume,
+  notes, input changes and edits, and a list of key moments. Long idle
+  stretches, like a night between a failure and its resume, are cut short
+  so the rest still reads. It's a page of its own: open it in a tab or
+  download it.
 - **Editing**: YAML with live validation, or a **structured view** (switch
   any time). Each step opens as **details | command | run**: the common
   details (what we're doing, by the end, section, owner, confirm) with an
