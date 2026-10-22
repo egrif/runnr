@@ -29,6 +29,9 @@ jobs:
       - name: Test
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq zsh tmux >/dev/null
+          # Ubuntu's /etc/zsh/zshrc runs compinit, which stops to ask about the
+          # runner's group-writable directories; the shell tests can't answer.
+          echo 'skip_global_compinit=1' >> ~/.zshenv
           go vet ./...
           go test ./...
 
