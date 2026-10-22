@@ -22,6 +22,7 @@ import (
 	"github.com/egrif/runnr/internal/htmlview"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/timeline"
 )
 
 //go:embed web
@@ -124,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/manage/restore", s.manageRestore)
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 	mux.HandleFunc("GET /api/runs/{id}/log", s.runLog)
+	mux.HandleFunc("GET /api/runs/{id}/timeline", s.runTimeline)
 	mux.HandleFunc("GET /api/runbooks/{name}/tests", s.getTests)
 	mux.HandleFunc("POST /api/runbooks/{name}/tests/run", s.runTests)
 	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
@@ -905,6 +907,20 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // runLog is a run as a plain-text log (?download=1 saves it as a file).
+// runTimeline is the run laid out in time, as a page of its own.
+func (s *Server) runTimeline(w http.ResponseWriter, r *http.Request) {
+	run, err := s.st.LoadRun(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if r.URL.Query().Get("download") != "" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="run-%s.timeline.html"`, run.ID))
+	}
+	w.Write(timeline.Build(run, time.Now()).HTML())
+}
+
 func (s *Server) runLog(w http.ResponseWriter, r *http.Request) {
 	run, err := s.st.LoadRun(r.PathValue("id"))
 	if err != nil {

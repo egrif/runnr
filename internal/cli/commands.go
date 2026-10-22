@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/term"
 	"io"
 	"net"
 	"os"
@@ -29,6 +30,7 @@ import (
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/server"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/timeline"
 )
 
 // Set via -ldflags "-X github.com/egrif/runnr/internal/cli.version=..."
@@ -1392,6 +1394,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		as     string
 		single bool
 		only   bool
+		tl     string
 	)
 	cmd := &cobra.Command{
 		Use:   "history [run-id]",
@@ -1444,6 +1447,21 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 					fmt.Print(engine.RawLog(r))
 					return nil
 				}
+				switch tl {
+				case "":
+				case "text":
+					width := 120
+					if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+						width = w
+					}
+					fmt.Print(timeline.Build(r, time.Now()).Text(width, isTTY(os.Stdout) && os.Getenv("NO_COLOR") == ""))
+					return nil
+				case "html":
+					_, err := os.Stdout.Write(timeline.Build(r, time.Now()).HTML())
+					return err
+				default:
+					return fmt.Errorf("--timeline=%s: text or html", tl)
+				}
 				printRun(r)
 				return nil
 			}
@@ -1472,11 +1490,13 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&filter, "runbook", "r", "", "only runs of this runbook")
 	cmd.Flags().BoolVar(&raw, "raw", false, "show the run as a plain log: each step's command, output and result in order")
+	cmd.Flags().StringVar(&tl, "timeline", "", "show the run laid out in time: a chart of its steps, then its key moments (--timeline=html: a page to save)")
+	cmd.Flags().Lookup("timeline").NoOptDefVal = "text"
 	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "max runs to list")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	cmd.AddCommand(pruneCmd(s))
 	cmd.Flags().StringVar(&export, "export", "", "write the run's logs into this folder, with the runs linked to it by resuming")
-	cmd.Flags().StringVar(&as, "as", "raw", "--export: raw (logs to read), json (records to import) or both")
+	cmd.Flags().StringVar(&as, "as", "raw", "--export: raw (logs to read), json (records to import), both, and/or timeline (a page per run laying it out in time), comma-separated")
 	cmd.Flags().BoolVar(&single, "one-file", false, "--export: all the runs in one file (per format)")
 	cmd.Flags().BoolVar(&only, "only", false, "--export: just this run, not those linked by resuming")
 	cmd.Flags().BoolVar(&del, "delete", false, "delete the run's record (not a running one)")

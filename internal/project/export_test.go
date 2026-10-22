@@ -84,3 +84,28 @@ func TestLogsChainAndImport(t *testing.T) {
 		t.Fatalf("again %v", res)
 	}
 }
+
+// Timelines export as a page per run, beside the other formats; a folder
+// with them still imports.
+func TestLogsWithTimeline(t *testing.T) {
+	at := time.Now()
+	var runs []*engine.Run
+	for i, id := range []string{"r1", "r2"} {
+		runs = append(runs, &engine.Run{ID: id, Runbook: "rb", Status: engine.StatusSucceeded, Started: at.Add(time.Duration(i) * time.Minute), Ended: at.Add(time.Duration(i)*time.Minute + time.Second),
+			Steps: []engine.StepResult{{Name: "one", Status: engine.StatusSucceeded, Started: at, Ended: at.Add(time.Second)}}})
+	}
+	files, err := LogFiles(runs, "json,timeline", true, "x")
+	if err != nil || len(files) != 3 || files[0].Name != "run-r1.timeline.html" || !strings.Contains(string(files[1].Data), "<h2>The whole run</h2>") || files[2].Name != "x.json" {
+		t.Fatalf("%v %v", err, files)
+	}
+	if _, err := LogFiles(runs, "raw,gantt", false, ""); err == nil {
+		t.Fatal("unknown format taken")
+	}
+	dir := t.TempDir()
+	WriteLogFiles(files, dir, false)
+	st, _ := store.Open(t.TempDir(), "")
+	p, _ := Scan(Options{Dir: dir, Lookup: StoreLookup(st)})
+	if res := Apply(p, func(Doc) bool { return false }, StoreSaver(st)); statuses(res) != "imported,imported" {
+		t.Fatalf("%v", res)
+	}
+}

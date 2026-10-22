@@ -67,6 +67,17 @@ its variables, and the status board in the background.
 
 ![The run console: steps, the step waiting, a shell, the status board](screenshots/console.png)
 
+## Timeline
+
+**◷ Timeline** on a run's page (or in its console; `runnr history <id>
+--timeline` in a terminal) lays the run out in time: each step's tries,
+the shells and jobs beside them, the maintenance window, notes, input
+changes and resumes, then the key moments. Here a cutover failed one
+afternoon and was resumed the next morning: the night between is cut
+short, and the window gets a closer look of its own.
+
+![A run's timeline: steps in time, the night cut short, the window](screenshots/timeline.png)
+
 ## HTML view
 
 **View as HTML** on the run page (or `runnr export <runbook> -o page.html`)

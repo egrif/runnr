@@ -574,3 +574,17 @@ func TestResumeWithChangedRunbook(t *testing.T) {
 		t.Fatalf("notes %+v", saved.Notes)
 	}
 }
+
+func TestRunTimeline(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+	do(t, "POST", ts.URL+"/api/runbooks", "name: tl\nsteps: [{name: a, run: 'true'}]\n", nil)
+	var run engine.Run
+	json.NewDecoder(do(t, "POST", ts.URL+"/api/runs", `{"runbook":"tl","unattended":true,"wait":true}`, nil).Body).Decode(&run)
+	r := do(t, "GET", ts.URL+"/api/runs/"+run.ID+"/timeline?download=1", "", nil)
+	b, _ := io.ReadAll(r.Body)
+	if r.StatusCode != http.StatusOK || !strings.HasPrefix(r.Header.Get("Content-Type"), "text/html") || !strings.Contains(r.Header.Get("Content-Disposition"), ".timeline.html") || !strings.Contains(string(b), ">a<") {
+		t.Fatalf("%d %v %s", r.StatusCode, r.Header, b)
+	}
+}

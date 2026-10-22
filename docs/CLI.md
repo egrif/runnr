@@ -161,6 +161,13 @@ time.
 
 ![runnr history, the list and one run](screenshots/cli-history.png)
 
+`runnr history <run-id> --timeline` draws the run in time, to the width of
+the terminal: a row per step (its tries, earlier ones faded; shells and
+jobs on a row under it), the run's row with the maintenance window, notes
+(◆), input changes (✎) and resumes (↻), long idle stretches cut short
+(╌), then its key moments. `--timeline=html` writes the same as a page
+(`> run.html`), the one **◷ Timeline** shows in the GUI.
+
 ## More
 
 - `runnr new` / `runnr edit` open a runbook in `$EDITOR`. It's saved only
@@ -178,7 +185,8 @@ time.
 - `runnr export <runbook> -o file.yaml` writes the runbook with the
   libraries it uses beside it. `runnr history <run-id> --export <folder>`
   writes a run's logs, with the runs linked to it by resuming (`--as raw`,
-  `json` or `both`; `--one-file`).
+  `json` or `both`, and/or `timeline` for a page per run, comma-separated;
+  `--one-file`).
 - `runnr delete` keeps every version: `runnr restore` lists what was
   deleted and brings it back. `runnr history --delete <run-id>` removes a
   run.

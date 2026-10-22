@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.5.0 — 2026-10-22
+
+A run's timeline.
+
+### Added
+
+- **◷ Timeline**: a run laid out in time, on its page and in its console
+  (a page of its own: open it in a tab or download it), and in a terminal
+  with `runnr history <id> --timeline` (`--timeline=html` for the page).
+  Each step's tries as bars, earlier tries (before a resume) faded; the
+  shells (from their timed lines) and jobs alongside; background steps;
+  the maintenance window, with a closer look at it; the time the run was
+  stopped before a resume; notes, input changes, edits and resumes; then
+  the key moments. Long idle stretches are cut short so the rest reads.
+- Export logs (GUI, `--as`, the API's `format`) can add a timeline page per
+  run: `timeline`, alone or with the others (`raw,timeline`).
+
 ## v0.4.0 — 2026-10-22
 
 A resume carries the same run on, and console shells follow the run.
