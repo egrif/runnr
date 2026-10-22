@@ -17,6 +17,7 @@ Move about a run, and stop a step without stopping the run.
   console), or Ctrl-C in the CLI (Ctrl-C again to abort the run). Its
   command is interrupted as abort would; the step fails, "stopped by …",
   and the run asks what to do: retry, skip, or go to a step.
+
 ## v0.2.3 — 2026-10-22
 
 ### Fixed
