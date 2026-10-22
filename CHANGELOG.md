@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.0 — 2026-10-22
+
+A resume carries the same run on.
+
+### Changed
+
+- **Resuming continues the run**: the same run ID, one record in the
+  history and one log (`runnr history <id> --raw`). Steps that finished
+  stay as they went; a step done again keeps its earlier tries ("before the
+  run was resumed"); the record lists each resume (when, from which step,
+  how the run had ended). The run page shows them, and the console's Run
+  log has the earlier tries.
+- `runnr resume --new-run` (API: `"new_run": true`) starts a new run that
+  points back at the old one, as before.
+- Under `--tmux`, a resumed run's session is `runnr-<runbook>-r2-<id>` (the
+  earlier session may still hold background steps the resume follows).
+
 ## v0.3.3 — 2026-10-22
 
 ### Changed

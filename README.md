@@ -69,7 +69,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
 | `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later, `--tmux` runs it in tmux |
 | `runnr rerun <run-id>` | Run again with an earlier run's inputs, comparing each step with what it did then |
-| `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped |
+| `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped, in the same run (`--new-run` for a new one) |
 | `runnr attach [run-id\|runbook]` | Go back to a run started with `--tmux` |
 | `runnr watch <run-id>` | Follow a run's steps as it goes (the `--tmux` side pane) |
 | `runnr save-edits <run-id>` | Save the step changes made during a run as a new runbook version |
@@ -215,6 +215,13 @@ inputs (secret inputs are asked again) and the same state (secrets excepted),
 starting at the step that didn't finish. Steps marked `always` (typically
 environment setup) run again and re-derive the secrets. For
 multi-day procedures, abort at a "wait" step and resume later.
+
+A resume carries the same run on: same run ID, one record and one log
+(`runnr history <id>`, `--raw`). The steps that finished stay as they went,
+a step done again keeps its earlier tries beside it ("before the run was
+resumed"), and the record lists each time it was resumed. `--new-run` (or
+`"new_run": true` in the API) starts a new run that points back at it
+instead.
 
 **Aborting.** In the terminal running it, Ctrl-C or `a` at a prompt aborts
 a run. From anywhere else, `runnr abort <run-id> -m "why"` (or **Abort

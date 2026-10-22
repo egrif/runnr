@@ -64,11 +64,20 @@ func RawLog(r *Run) string {
 		w("note (%s, %s): %s\n", n.Author, at(n.Time), n.Text)
 	}
 
-	for i, s := range r.Steps {
+	for _, rs := range r.Resumptions {
+		w("resumed %s from step %d (it had %s", rs.At.Local().Format("2006-01-02 15:04:05"), rs.From+1, rs.Status)
+		if rs.Error != "" {
+			w(": %s", rs.Error)
+		}
+		w(")\n")
+	}
+
+	// one writes a step's try; an earlier one (before a resume) says so.
+	one := func(i int, s StepResult, earlier bool) {
 		w("\n")
 		if s.Status == StatusPending {
 			w("[%s] ○ %d. %s — not reached\n", at(time.Time{}), i+1, s.Name)
-			continue
+			return
 		}
 		head := fmt.Sprintf("%d. %s (%s", i+1, s.Name, s.Kind)
 		if s.Way != "" {
@@ -76,6 +85,9 @@ func RawLog(r *Run) string {
 		}
 		if s.Optional {
 			head += ", optional"
+		}
+		if earlier {
+			head += ", before the run was resumed"
 		}
 		w("[%s] ▶ %s)\n", at(s.Started), head)
 		// (A checks step's command is its plan; its checks are listed below.)
@@ -135,6 +147,12 @@ func RawLog(r *Run) string {
 		for _, n := range s.Notes {
 			w("  note (%s, %s): %s\n", n.Author, at(n.Time), n.Text)
 		}
+	}
+	for i, s := range r.Steps {
+		for _, e := range s.Before {
+			one(i, e, true)
+		}
+		one(i, s, false)
 	}
 	return b.String()
 }

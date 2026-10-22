@@ -359,7 +359,10 @@ function cxRenderLog(state) {
   pre.innerHTML = state.steps.map((s, i) => {
     if (s.status === "pending" && !s.log?.length) return "";
     const head = `<span class="info">── ${i + 1}. ${esc(s.name)}: ${ICONS[s.status] || ""} ${esc(s.status)}${s.note ? ` (${esc(s.note)})` : ""} ──</span>`;
-    return [head, ...(s.log || []).map((l) => `<span class="${esc(l.stream)}">${esc(l.text)}</span>`)].join("\n");
+    // Its tries before the run was resumed come first.
+    const before = (s.before || []).map((b) => [`<span class="info">── ${i + 1}. ${esc(s.name)}, before the run was resumed: ${ICONS[b.status] || ""} ${esc(b.status)} ──</span>`,
+      ...(b.output || "").replace(/\n$/, "").split("\n").filter(Boolean).map((t) => esc(t))].join("\n"));
+    return [...before, head, ...(s.log || []).map((l) => `<span class="${esc(l.stream)}">${esc(l.text)}</span>`)].join("\n");
   }).filter(Boolean).join("\n") || `<span class="info">Nothing has run yet.</span>`;
   if (atEnd) pre.scrollTop = pre.scrollHeight;
 }

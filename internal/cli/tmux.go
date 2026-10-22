@@ -111,7 +111,16 @@ func startTmuxRun(args []string, runbookName, id string) error {
 		return err
 	}
 	srv := currentTmuxServer()
-	name := "runnr-" + sessionUnsafe.ReplaceAllString(runbookName, "-") + "-" + id[len(id)-6:]
+	base := "runnr-" + sessionUnsafe.ReplaceAllString(runbookName, "-")
+	name := base + "-" + id[len(id)-6:]
+	// A resumed run carries on under its ID; its earlier session may still
+	// be there (with background steps the resume follows again).
+	for n := 2; ; n++ {
+		if _, err := srv.run("has-session", "-t", "="+name); err != nil {
+			break
+		}
+		name = fmt.Sprintf("%s-r%d-%s", base, n, id[len(id)-6:])
+	}
 	pane := func(argv ...string) (string, error) {
 		f, err := writeEnvFile()
 		if err != nil {

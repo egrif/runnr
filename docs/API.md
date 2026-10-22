@@ -175,7 +175,7 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | POST | `/api/runs/{id}/stop` | `{step?, by?}` | `204`: interrupts the running step's command (`step` 1-based; `0`: whichever). The step fails ("stopped by …") and the run asks what to do; `409` if it isn't running |
 | PUT | `/api/runs/{id}/inputs` | `{values: {name: value}, by?}` | `{changed, stale, replaces, restarted}`: changes a live run's inputs, checked as at the start. They take effect before its next command; a step waiting to run its command starts again (`restarted`). `stale`: per input, the steps (1-based) that already ran with it; `replaces`: inputs a step had published a value for. `400` if a value isn't allowed |
 | POST | `/api/runs/{id}/cancel` | `{author?, reason?, force?}` | `{aborted, message}`: aborts it. A run this server runs stops now; one running elsewhere is asked to stop (waits up to 8s); one whose process is gone, or with `force`, is marked aborted |
-| POST | `/api/runs/{id}/resume` | start request (no `runbook`/`from`) | like `POST /api/runs` |
+| POST | `/api/runs/{id}/resume` | start request (no `runbook`/`from`); `"new_run": true` for a new run | like `POST /api/runs`: the same run ID (it carries on), unless `new_run` |
 | POST | `/api/runs/{id}/notes` | `{step, text, author?}` (`step` 1-based; `0` = the run) | `201 {time, author, text}` |
 | GET | `/api/runs/{id}/preview` | | `{steps: [StepView]}` with the run's inputs and current state |
 | GET / PUT | `/api/runs/{id}/controls` | `{step_mode, skip, pause_before, pause_after}` | the live run's controls; changes apply to steps not reached yet |
@@ -205,7 +205,7 @@ and a `steps` array with each step's `status` (also `pending`, `skipped`, or
 (system note, e.g. the force reason), `notes` (operator notes), `shells`
 (shell sessions opened at it), `jobs` (commands the operator ran in the
 background at it: `{command, started, ended, exit_code, output, note}`) and
-timings, plus `runbook_version`, `resumes`, `edits` and `input_changes`
+timings, plus `runbook_version`, `resumes` (a `new_run` resume), `resumptions` (each time it was resumed in place), `edits` and `input_changes`
 (`{at, name, old, new, by, step}`). Secrets are masked.
 
 ### Interactive runs over the API

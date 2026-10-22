@@ -315,7 +315,7 @@ functions:
       <li>Shells opened during a run (the console's Shell panes, the CLI's <code>!</code> and <code>p</code>, the <code>--tmux</code> shell pane) keep up with it: what later steps publish, secrets too, is read again before a prompt (zsh also before each command).</li>
       <li><b>Change a step mid-run</b>: <b>✎ edit</b> on the current step or a later one (CLI: <b>[m]odify step</b>). A step waiting on a question starts again with the change. It's only in that run until you <b>Save to runbook</b>.</li>
       <li><b>Dangerous steps</b> (<code>dangerous: true</code>) run like any other in sequence. Out of sequence (earlier steps skipped, a later start, Run this, a runbook file) they list what didn't run and wait for you to type the step number; a resume counts the steps the earlier run finished.</li>
-      <li><b>Resume</b> continues a stopped run at the step that didn't finish, with the same inputs and state; <b>run again</b> repeats it, comparing each step with last time.</li>
+      <li><b>Resume</b> continues a stopped run at the step that didn't finish, with the same inputs and state, in the same run (one record and log; earlier tries of the steps done again are kept); <b>run again</b> repeats it, comparing each step with last time.</li>
     </ul>
 
     <h2 id="help-example">Example</h2>

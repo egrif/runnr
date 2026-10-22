@@ -403,6 +403,9 @@ type startReq struct {
 	DryRun       bool `json:"dry_run"`
 	// From starts at a later step (id, 1-based number or name).
 	From string `json:"from"`
+	// NewRun (resume): a new run that points back at the resumed one,
+	// instead of carrying that run on in its own record.
+	NewRun bool `json:"new_run"`
 	// Wait blocks until the run finishes and returns its record.
 	Wait bool `json:"wait"`
 	// Skip lists 1-based step numbers to leave out. On resume, sending it
@@ -526,13 +529,20 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Previous == "" {
 		req.Previous = prev.ID
+		if !req.NewRun {
+			// The same run: compared with what it was compared with before.
+			req.Previous = prev.Previous
+			if req.Previous == "" {
+				req.Previous = "-"
+			}
+		}
 	}
 	s.launch(w, r, rb, ver, req, start, prev, engine.ResumeState(prev))
 }
 
 func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, ver int, req startReq, start int, resumed *engine.Run, state map[string]string) {
-	resumes := ""
-	if resumed != nil {
+	resumes, cont := "", resumed != nil && !req.NewRun
+	if resumed != nil && !cont {
 		resumes = resumed.ID
 	}
 	cv, err := toControls(req, len(rb.Steps))
@@ -561,6 +571,18 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		}
 	}
 	id := engine.NewRunID()
+	if cont {
+		id = resumed.ID // the run carries on, in its own record
+		if l := s.getLive(id); l != nil {
+			l.mu.Lock()
+			done := l.done
+			l.mu.Unlock()
+			if !done {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "run " + id + " is still going"})
+				return
+			}
+		}
+	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	l := newLiveRun(id, cancel)
 	if !req.test && !req.DryRun {
@@ -593,6 +615,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 			State:          state,
 			Resumes:        resumes,
 			Resumed:        resumed,
+			Continue:       cont,
 			RunbookVersion: ver,
 			// Only a recorded run of a saved runbook can run dangerous
 			// steps without a double check.
@@ -612,7 +635,9 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		// Keep the event log around briefly for late subscribers.
 		time.AfterFunc(10*time.Minute, func() {
 			s.mu.Lock()
-			delete(s.live, id)
+			if s.live[id] == l { // not a resume that carries it on
+				delete(s.live, id)
+			}
 			s.mu.Unlock()
 		})
 	}()

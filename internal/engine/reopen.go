@@ -77,7 +77,7 @@ func (x *executor) reopen(k, j int) {
 	}
 	for i := j; i <= k; i++ {
 		old := x.run.Steps[i]
-		x.run.Steps[i] = StepResult{Index: i, Name: old.Name, Section: old.Section, Owner: old.Owner, Kind: old.Kind, Status: StatusPending, Notes: old.Notes, Edited: old.Edited}
+		x.run.Steps[i] = StepResult{Index: i, Name: old.Name, Section: old.Section, Owner: old.Owner, Kind: old.Kind, Status: StatusPending, Notes: old.Notes, Edited: old.Edited, Before: old.Before}
 		x.notify(Event{Kind: EventStepProgress, Step: i, Result: x.result(i)})
 	}
 	x.em.Lock()

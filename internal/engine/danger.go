@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
 )
@@ -82,9 +84,49 @@ func (x *executor) carryResumed() {
 	if prev == nil || len(prev.Steps) != len(x.run.Steps) {
 		return
 	}
+	if x.opts.Continue {
+		x.continueRun(prev)
+		return
+	}
 	for i := range x.run.Steps {
 		if skip, _, _ := x.ctl.Get(i); skip && inSequence(prev.Steps[i]) {
 			x.run.Steps[i].Status, x.run.Steps[i].Note = StatusSkipped, NoteCarried
+		}
+	}
+}
+
+// Resumption is a time a run was resumed.
+type Resumption struct {
+	At time.Time `json:"at"`
+	// From is the step it carried on from (0-based).
+	From int `json:"from"`
+	// How the run had ended.
+	Status Status    `json:"status"`
+	Error  string    `json:"error,omitempty"`
+	Ended  time.Time `json:"ended,omitzero"`
+}
+
+// continueRun takes up the run being resumed, in place: its start, input
+// changes and resumptions; the steps it leaves out that finished in
+// sequence, as they went; and, for the steps it does again, their earlier
+// tries.
+func (x *executor) continueRun(prev *Run) {
+	x.run.Started, x.run.InputChanges, x.run.Resumes = prev.Started, prev.InputChanges, ""
+	if x.run.Previous == "" {
+		x.run.Previous = prev.Previous
+	}
+	x.run.Resumptions = append(slices.Clone(prev.Resumptions), Resumption{At: time.Now(), From: max(x.opts.StartAt, 0), Status: prev.Status, Error: prev.Error, Ended: prev.Ended})
+	for i := range x.run.Steps {
+		p := prev.Steps[i]
+		if skip, _, _ := x.ctl.Get(i); skip && inSequence(p) {
+			p.Carried = true
+			x.run.Steps[i] = p
+			continue
+		}
+		if p.Status != StatusPending {
+			before := p.Before
+			p.Before, p.Carried = nil, false
+			x.run.Steps[i].Before = append(slices.Clone(before), p)
 		}
 	}
 }

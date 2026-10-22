@@ -129,7 +129,7 @@ func (x *executor) verifyResumed(ctx context.Context) {
 	}
 	last := -1
 	for i, r := range x.run.Steps {
-		if r.Note == NoteCarried && x.rb.Steps[i].Verify != "" {
+		if (r.Note == NoteCarried || r.Carried) && x.rb.Steps[i].Verify != "" {
 			last = i
 		}
 	}
@@ -151,6 +151,13 @@ func (x *executor) verifyResumed(ctx context.Context) {
 	x.notify(Event{Kind: EventOutput, Step: last, Stream: "info", Text: fmt.Sprintf("✘ step %d (%s) doesn't stand any more (%s): doing it again", last+1, step.Name, x.mask(out.err.Error()))})
 	if skip, _, _ := x.ctl.Get(last); skip {
 		x.ctl.Toggle("skip", last)
+	}
+	if r := &x.run.Steps[last]; r.Carried {
+		// Done again: how it went before is an earlier try now.
+		p := *r
+		p.Before, p.Carried = nil, false
+		r.Before = append(r.Before, p)
+		*r = StepResult{Index: p.Index, Name: p.Name, Section: p.Section, Owner: p.Owner, Kind: p.Kind, Optional: p.Optional, Notes: p.Notes, Before: r.Before}
 	}
 	x.run.Steps[last].Status, x.run.Steps[last].Note = StatusPending, ""
 }

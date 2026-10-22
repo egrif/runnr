@@ -134,8 +134,18 @@ func TestTokenAuthWaitAndResume(t *testing.T) {
 	var resumed engine.Run
 	r = do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true}`, auth)
 	json.NewDecoder(r.Body).Decode(&resumed)
-	if resumed.Status != engine.StatusSucceeded || resumed.Resumes != run.ID || resumed.Steps[0].Status != engine.StatusSkipped {
+	// The run carries on in its own record; step a stands as it went.
+	if resumed.Status != engine.StatusSucceeded || resumed.ID != run.ID || len(resumed.Resumptions) != 1 || !resumed.Steps[0].Carried || len(resumed.Steps[1].Before) != 1 {
 		t.Fatalf("resume: %d %+v", r.StatusCode, resumed)
+	}
+	// new_run: a new run, pointing back at it.
+	var failed, again engine.Run
+	r = do(t, "POST", ts.URL+"/api/runs", `{"runbook":"flaky","unattended":true,"wait":true}`, auth)
+	json.NewDecoder(r.Body).Decode(&failed)
+	r = do(t, "POST", ts.URL+"/api/runs/"+failed.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true,"new_run":true}`, auth)
+	json.NewDecoder(r.Body).Decode(&again)
+	if r.StatusCode != http.StatusOK || again.ID == failed.ID || again.Resumes != failed.ID {
+		t.Fatalf("new_run: %d %+v", r.StatusCode, again)
 	}
 
 	if r := do(t, "POST", ts.URL+"/api/runs", `{"runbook":"flaky","wait":true}`, auth); r.StatusCode != http.StatusBadRequest {

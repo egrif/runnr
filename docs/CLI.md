@@ -124,7 +124,8 @@ it again, and a later step with `wait_for` waits for it to finish.
 `--from` starts later. A `dangerous` step that runs when earlier steps
 didn't lists what was skipped. To run it, you type its step number, not
 just `y`. A run that's aborted or fails can be continued with
-`runnr resume <run-id>`.
+`runnr resume <run-id>`: the same run carries on, its log too, with each
+resume and the earlier tries of steps done again recorded in it.
 
 ![A dangerous step out of sequence](screenshots/cli-dangerous.png)
 

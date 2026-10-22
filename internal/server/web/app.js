@@ -396,6 +396,7 @@ function renderRun(state) {
     <div class="notes">${renderNotes(run.notes)}<button class="link" data-note="0">✎ Add run note</button></div>
     ${renderState(run.state, state)}
     ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
+    ${resumedHTML(run)}
     ${state.prev ? `<p class="muted">Compared with <a href="#/runs/${esc(state.prev.id)}">${esc(state.prev.id)}</a> (${esc(state.prev.status)}): open a step to see what it did then.</p>` : ""}
     ${live && state.controls && run.mode === "interactive" ? `<p><label><input type="checkbox" id="step-all" ${state.controls.step_mode ? "checked" : ""}> Step through the remaining steps</label>
       <span class="muted small"> · upcoming steps can be skipped or paused below</span></p>` : ""}
@@ -729,7 +730,21 @@ function thisRun(s, i) {
     ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : s.status === "running" ? `<p class="muted">No output yet.</p>` : ""}
     ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}
     ${renderChecks(s.checks)}${renderSub(s)}
-    ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}`;
+    ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
+    ${earlierTries(s)}`;
+}
+
+// earlierTries are a step's tries before the run was resumed.
+function earlierTries(s) {
+  return (s.before || []).map((b, n) => `<details class="shell-log"><summary>Earlier try${(s.before.length > 1) ? ` ${n + 1}` : ""}, before the run was resumed: <span class="s-${esc(b.status)}">${ICONS[b.status] || ""} ${esc(b.status)}</span>${b.started ? ` <span class="muted">${new Date(b.started).toLocaleString()}</span>` : ""}</summary>
+    ${b.output ? `<pre class="log">${esc(b.output)}</pre>` : ""}${b.error ? `<div class="error-text">${esc(b.error)}</div>` : ""}</details>`).join("");
+}
+
+// resumedHTML lists the times a run was resumed (it carried on in the same record).
+function resumedHTML(run) {
+  const rs = run.resumptions || [];
+  if (!rs.length) return "";
+  return `<p class="muted">${rs.map((r) => `↻ Resumed ${new Date(r.at).toLocaleString()} from step ${r.from + 1} (it had ${esc(r.status)}${r.error ? `: ${esc(r.error)}` : ""})`).join("<br>")}</p>`;
 }
 
 async function saveRunEdits(state) {
