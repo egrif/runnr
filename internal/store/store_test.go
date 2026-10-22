@@ -236,3 +236,40 @@ func TestCollectionsAndTestValues(t *testing.T) {
 		})
 	}
 }
+
+func TestMoveRunNotes(t *testing.T) {
+	for name, s := range stores(t) {
+		t.Run(name, func(t *testing.T) {
+			s.db.Exec("DELETE FROM run_notes")
+			r := &engine.Run{ID: "m1", Runbook: "x", Status: engine.StatusFailed, Started: time.Now(), Steps: []engine.StepResult{{Name: "a"}, {Name: "b"}, {Name: "c"}}}
+			s.SaveRun(r)
+			var first engine.Note
+			for i, txt := range []string{"on a", "on b", "on c"} {
+				n, err := s.AddNote("m1", i, "pat", txt)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if i == 0 {
+					first = n
+				}
+			}
+			// The runbook changed: a stays, b is gone, c moves to 3 (after
+			// a new step at 2).
+			if err := s.MoveRunNotes("m1", map[int]int{0: 0, 1: -1, 2: 3}, map[int]string{1: "b"}); err != nil {
+				t.Fatal(err)
+			}
+			r.Steps = []engine.StepResult{{Name: "a"}, {Name: "new"}, {Name: "x"}, {Name: "c"}}
+			// A copy of a note already in the record isn't shown twice.
+			r.Steps[0].Notes = []engine.Note{first}
+			s.SaveRun(r)
+			got, err := s.LoadRun("m1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Steps[0].Notes) != 1 || len(got.Steps[3].Notes) != 1 || got.Steps[3].Notes[0].Text != "on c" ||
+				len(got.Notes) != 1 || got.Notes[0].Text != "(on step 2, b, no longer in the runbook) on b" {
+				t.Fatalf("steps %+v, run notes %+v", got.Steps, got.Notes)
+			}
+		})
+	}
+}

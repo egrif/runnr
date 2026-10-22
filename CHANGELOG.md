@@ -12,10 +12,20 @@ A resume carries the same run on.
   run was resumed"); the record lists each resume (when, from which step,
   how the run had ended). The run page shows them, and the console's Run
   log has the earlier tries.
+- **A changed runbook doesn't start a new log**: resuming after the runbook
+  was edited carries the run on with the new version. Steps are matched by
+  name (a new one is still to do; notes follow their steps), the record
+  notes the version it was resumed with, and steps the new version no
+  longer has stay in the record (`removed`), their notes moved to the run.
+  The resume screens say the runbook changed.
 - `runnr resume --new-run` (API: `"new_run": true`) starts a new run that
-  points back at the old one, as before.
+  points back at the old one, as before (not from a changed runbook).
 - Under `--tmux`, a resumed run's session is `runnr-<runbook>-r2-<id>` (the
   earlier session may still hold background steps the resume follows).
+
+### Fixed
+
+- A note on a step carried over by a resume showed twice.
 
 ## v0.3.3 — 2026-10-22
 

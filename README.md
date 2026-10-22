@@ -223,6 +223,12 @@ resumed"), and the record lists each time it was resumed. `--new-run` (or
 `"new_run": true` in the API) starts a new run that points back at it
 instead.
 
+If the runbook has changed since, the resume carries the run on with the
+new version: steps are matched by name, a new step is still to do, and the
+record notes which version it was resumed with. Steps it ran that the new
+version no longer has stay in the record (and their notes become the
+run's). `--new-run` won't start from a changed runbook.
+
 **Aborting.** In the terminal running it, Ctrl-C or `a` at a prompt aborts
 a run. From anywhere else, `runnr abort <run-id> -m "why"` (or **Abort
 run** on its page in the GUI) asks the runnr running it to stop, whether

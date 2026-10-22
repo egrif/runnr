@@ -515,9 +515,26 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	if len(rb.Steps) != len(prev.Steps) || rb.Steps[start].Name != prev.Steps[start].Name {
-		writeErr(w, fmt.Errorf("runbook %q changed since run %s; start a new run with \"from\"", rb.Name, prev.ID))
-		return
+	if engine.RunbookChanged(prev, rb) {
+		if req.NewRun {
+			writeErr(w, fmt.Errorf("runbook %q changed since run %s; start a new run with \"from\", or resume without new_run to carry the run on with this version", rb.Name, prev.ID))
+			return
+		}
+		// The run carries on with this version: its steps matched by name.
+		aligned, moved := engine.AlignRun(prev, rb)
+		names := map[int]string{}
+		for i, st := range prev.Steps {
+			names[i] = st.Name
+		}
+		if err := s.st.MoveRunNotes(prev.ID, moved, names); err != nil {
+			writeErr(w, err)
+			return
+		}
+		prev = aligned
+		if start = engine.ResumePoint(prev); start < 0 {
+			writeErr(w, fmt.Errorf("run %s has no unfinished steps in this version", prev.ID))
+			return
+		}
 	}
 	vars := engine.ResumeInputs(prev)
 	for k, v := range req.Vars {

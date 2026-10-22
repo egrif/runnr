@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -483,10 +484,15 @@ func (s *Store) attachNotes(r *engine.Run) error {
 			return err
 		}
 		n.Time = parseTS(created)
+		// A record can carry notes already (a resumed run keeps its steps
+		// whole; an imported one brings its own): not twice.
+		has := func(ns []engine.Note) bool {
+			return slices.ContainsFunc(ns, func(m engine.Note) bool { return m.Author == n.Author && m.Text == n.Text && m.Time.Equal(n.Time) })
+		}
 		switch {
-		case step == -1:
+		case step == -1 && !has(r.Notes):
 			r.Notes = append(r.Notes, n)
-		case step >= 0 && step < len(r.Steps):
+		case step >= 0 && step < len(r.Steps) && !has(r.Steps[step].Notes):
 			r.Steps[step].Notes = append(r.Steps[step].Notes, n)
 		}
 	}

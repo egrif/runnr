@@ -205,7 +205,7 @@ and a `steps` array with each step's `status` (also `pending`, `skipped`, or
 (system note, e.g. the force reason), `notes` (operator notes), `shells`
 (shell sessions opened at it), `jobs` (commands the operator ran in the
 background at it: `{command, started, ended, exit_code, output, note}`) and
-timings, plus `runbook_version`, `resumes` (a `new_run` resume), `resumptions` (each time it was resumed in place), `edits` and `input_changes`
+timings, plus `runbook_version`, `resumes` (a `new_run` resume), `resumptions` (each time it was resumed in place, with `runbook_version` and `was_version` when the runbook had changed), `removed` (steps it ran that a changed runbook no longer has), `edits` and `input_changes`
 (`{at, name, old, new, by, step}`). Secrets are masked.
 
 ### Interactive runs over the API

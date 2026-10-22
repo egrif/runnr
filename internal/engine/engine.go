@@ -96,6 +96,9 @@ type Run struct {
 	// Resumptions are the times this run was resumed (it carries on in
 	// the same record).
 	Resumptions []Resumption `json:"resumptions,omitempty"`
+	// Removed are steps it ran that the runbook no longer has (it was
+	// resumed with a version without them).
+	Removed []StepResult `json:"removed,omitempty"`
 	// Window is the maintenance window, if the runbook has one.
 	Window *WindowRecord `json:"window,omitempty"`
 	// Edits are changes made to steps during the run; EditsSaved is the

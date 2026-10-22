@@ -880,8 +880,26 @@ stored, so they're asked for again (or pass them with -v). Steps marked
 			if err != nil {
 				return err
 			}
-			if len(rb.Steps) != len(prev.Steps) || rb.Steps[start].Name != prev.Steps[start].Name {
-				return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step>", rb.Name, prev.ID, rb.Name)
+			if engine.RunbookChanged(prev, rb) {
+				if f.newRun {
+					return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step> (or resume without --new-run to carry the run on with this version)", rb.Name, prev.ID, rb.Name)
+				}
+				// The run carries on with this version: its steps matched by name.
+				aligned, moved := engine.AlignRun(prev, rb)
+				names := map[int]string{}
+				for i, st := range prev.Steps {
+					names[i] = st.Name
+				}
+				if err := s().MoveRunNotes(prev.ID, moved, names); err != nil {
+					return err
+				}
+				gone := len(aligned.Removed) - len(prev.Removed)
+				fmt.Printf("runbook %s changed since this run (version %d, it ran version %d): carrying on with it, steps matched by name%s\n",
+					rb.Name, ver, prev.RunbookVersion, map[bool]string{true: fmt.Sprintf("; %d step(s) no longer in it are kept in the record", gone), false: ""}[gone > 0])
+				prev = aligned
+				if start = engine.ResumePoint(prev); start < 0 {
+					return fmt.Errorf("run %s has no unfinished steps in this version", prev.ID)
+				}
 			}
 			fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
 			l := launch{base: engine.ResumeInputs(prev), startAt: start, resumes: prev.ID, state: engine.ResumeState(prev), previous: prev, resumed: prev}

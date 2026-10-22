@@ -104,6 +104,10 @@ type Resumption struct {
 	Status Status    `json:"status"`
 	Error  string    `json:"error,omitempty"`
 	Ended  time.Time `json:"ended,omitzero"`
+	// RunbookVersion is the version it carried on with; Was, the one before
+	// (when they differ).
+	RunbookVersion int `json:"runbook_version,omitempty"`
+	Was            int `json:"was_version,omitempty"`
 }
 
 // continueRun takes up the run being resumed, in place: its start, input
@@ -115,7 +119,12 @@ func (x *executor) continueRun(prev *Run) {
 	if x.run.Previous == "" {
 		x.run.Previous = prev.Previous
 	}
-	x.run.Resumptions = append(slices.Clone(prev.Resumptions), Resumption{At: time.Now(), From: max(x.opts.StartAt, 0), Status: prev.Status, Error: prev.Error, Ended: prev.Ended})
+	res := Resumption{At: time.Now(), From: max(x.opts.StartAt, 0), Status: prev.Status, Error: prev.Error, Ended: prev.Ended, RunbookVersion: x.opts.RunbookVersion}
+	if prev.RunbookVersion != x.opts.RunbookVersion {
+		res.Was = prev.RunbookVersion
+	}
+	x.run.Resumptions = append(slices.Clone(prev.Resumptions), res)
+	x.run.Removed = prev.Removed
 	for i := range x.run.Steps {
 		p := prev.Steps[i]
 		if skip, _, _ := x.ctl.Get(i); skip && inSequence(p) {
@@ -125,7 +134,8 @@ func (x *executor) continueRun(prev *Run) {
 		}
 		if p.Status != StatusPending {
 			before := p.Before
-			p.Before, p.Carried = nil, false
+			// Its notes stay with the step (the store keeps them by step).
+			p.Before, p.Carried, p.Notes = nil, false, nil
 			x.run.Steps[i].Before = append(slices.Clone(before), p)
 		}
 	}

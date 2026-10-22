@@ -42,3 +42,22 @@ func TestResumeContinuesTheRun(t *testing.T) {
 		t.Fatalf("step one twice:\n%s", log)
 	}
 }
+
+func TestAlignRun(t *testing.T) {
+	old := &Run{Steps: []StepResult{{Name: "a", Status: StatusSucceeded}, {Name: "b", Status: StatusSucceeded}, {Name: "c", Status: StatusFailed}}}
+	rb := mustParse(t, "name: t\nsteps:\n  - {name: a, run: 'true'}\n  - {name: x, run: 'true'}\n  - {name: c, run: 'true'}\n  - {name: d, run: 'true'}\n")
+	if !RunbookChanged(old, rb) {
+		t.Fatal("not changed")
+	}
+	al, moved := AlignRun(old, rb)
+	var got []string
+	for _, s := range al.Steps {
+		got = append(got, s.Name+":"+string(s.Status))
+	}
+	if strings.Join(got, ",") != "a:succeeded,x:pending,c:failed,d:pending" || moved[0] != 0 || moved[1] != -1 || moved[2] != 2 {
+		t.Fatalf("%v %v", got, moved)
+	}
+	if len(al.Removed) != 1 || al.Removed[0].Name != "b" || ResumePoint(al) != 1 {
+		t.Fatalf("removed %+v, resume at %d", al.Removed, ResumePoint(al))
+	}
+}

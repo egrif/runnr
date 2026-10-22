@@ -69,7 +69,11 @@ func RawLog(r *Run) string {
 		if rs.Error != "" {
 			w(": %s", rs.Error)
 		}
-		w(")\n")
+		w(")")
+		if rs.Was != 0 {
+			w(" with runbook version %d (it had run version %d)", rs.RunbookVersion, rs.Was)
+		}
+		w("\n")
 	}
 
 	// one writes a step's try; an earlier one (before a resume) says so.
@@ -153,6 +157,12 @@ func RawLog(r *Run) string {
 			one(i, e, true)
 		}
 		one(i, s, false)
+	}
+	if len(r.Removed) > 0 {
+		w("\n── steps no longer in the runbook (from an earlier version) ──\n")
+		for _, s := range r.Removed {
+			one(s.Index, s, false)
+		}
 	}
 	return b.String()
 }

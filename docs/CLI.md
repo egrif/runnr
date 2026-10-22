@@ -125,7 +125,9 @@ it again, and a later step with `wait_for` waits for it to finish.
 didn't lists what was skipped. To run it, you type its step number, not
 just `y`. A run that's aborted or fails can be continued with
 `runnr resume <run-id>`: the same run carries on, its log too, with each
-resume and the earlier tries of steps done again recorded in it.
+resume and the earlier tries of steps done again recorded in it. If the
+runbook has changed since, it carries on with the new version (steps
+matched by name) and the log notes the version.
 
 ![A dangerous step out of sequence](screenshots/cli-dangerous.png)
 

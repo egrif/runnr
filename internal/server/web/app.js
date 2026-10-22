@@ -397,6 +397,7 @@ function renderRun(state) {
     ${renderState(run.state, state)}
     ${run.resumes ? `<p class="muted">Resumes <a href="#/runs/${esc(run.resumes)}">${esc(run.resumes)}</a></p>` : ""}
     ${resumedHTML(run)}
+    ${removedHTML(run)}
     ${state.prev ? `<p class="muted">Compared with <a href="#/runs/${esc(state.prev.id)}">${esc(state.prev.id)}</a> (${esc(state.prev.status)}): open a step to see what it did then.</p>` : ""}
     ${live && state.controls && run.mode === "interactive" ? `<p><label><input type="checkbox" id="step-all" ${state.controls.step_mode ? "checked" : ""}> Step through the remaining steps</label>
       <span class="muted small"> · upcoming steps can be skipped or paused below</span></p>` : ""}
@@ -734,6 +735,31 @@ function thisRun(s, i) {
     ${earlierTries(s)}`;
 }
 
+// alignedRun is run with its steps matched to rb's by name (in order), as a
+// resume does when the runbook has changed since: a step it doesn't have
+// is pending. changed says the runbook's steps differ; dropped names the
+// steps it ran that the runbook no longer has.
+function alignedRun(run, rb) {
+  if (!run || !rb?.steps) return run;
+  const used = new Set();
+  const steps = rb.steps.map((s, j) => {
+    const i = run.steps.findIndex((r, k) => !used.has(k) && r.name === s.name);
+    if (i < 0) return { index: j, name: s.name, status: "pending" };
+    used.add(i);
+    return run.steps[i];
+  });
+  const changed = steps.length !== run.steps.length || steps.some((s, i) => s.name !== run.steps[i].name);
+  const dropped = run.steps.filter((s, k) => !used.has(k) && s.status !== "pending").map((s) => s.name);
+  return { ...run, steps, changed, dropped };
+}
+
+// changedNote says a resume carries the run on with a changed runbook.
+function changedNote(prev, version) {
+  if (!prev?.changed) return "";
+  const d = prev.dropped || [];
+  return ` The runbook has changed since this run (it ran version ${prev.runbook_version || "?"}, now ${version}): it carries on with this version, its steps matched by name${d.length ? `; ${d.length === 1 ? "a step it ran is" : `${d.length} steps it ran are`} no longer in it (${d.map(esc).join(", ")}) and ${d.length === 1 ? "stays" : "stay"} in the record` : ""}.`;
+}
+
 // earlierTries are a step's tries before the run was resumed.
 function earlierTries(s) {
   return (s.before || []).map((b, n) => `<details class="shell-log"><summary>Earlier try${(s.before.length > 1) ? ` ${n + 1}` : ""}, before the run was resumed: <span class="s-${esc(b.status)}">${ICONS[b.status] || ""} ${esc(b.status)}</span>${b.started ? ` <span class="muted">${new Date(b.started).toLocaleString()}</span>` : ""}</summary>
@@ -744,7 +770,15 @@ function earlierTries(s) {
 function resumedHTML(run) {
   const rs = run.resumptions || [];
   if (!rs.length) return "";
-  return `<p class="muted">${rs.map((r) => `↻ Resumed ${new Date(r.at).toLocaleString()} from step ${r.from + 1} (it had ${esc(r.status)}${r.error ? `: ${esc(r.error)}` : ""})`).join("<br>")}</p>`;
+  return `<p class="muted">${rs.map((r) => `↻ Resumed ${new Date(r.at).toLocaleString()} from step ${r.from + 1} (it had ${esc(r.status)}${r.error ? `: ${esc(r.error)}` : ""})${r.was_version ? ` with runbook version ${r.runbook_version} (it had run version ${r.was_version})` : ""}`).join("<br>")}</p>`;
+}
+
+// removedHTML lists steps the run did that its runbook no longer has.
+function removedHTML(run) {
+  const rm = run.removed || [];
+  if (!rm.length) return "";
+  return `<details class="card removed-steps"><summary>${rm.length} step${rm.length === 1 ? "" : "s"} it ran that the runbook no longer has</summary>
+    ${rm.map((s) => `<div class="removed-step"><b>${esc(s.name)}</b> <span class="s-${esc(s.status)}">${ICONS[s.status] || ""} ${esc(s.status)}</span>${s.output ? `<pre class="log">${esc(s.output)}</pre>` : ""}</div>`).join("")}</details>`;
 }
 
 async function saveRunEdits(state) {
