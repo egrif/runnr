@@ -1,8 +1,7 @@
-# Tests every pull request and push to main. Then releases what
-# CHANGELOG.md says to: when the top section names a version ("## v1.2.3 —
-# unreleased") that has no tag yet, a push to main dates it, tags it,
-# builds the binaries and publishes the release with the section's notes.
-# "## Unreleased" (no version) gathers changes without releasing them.
+# Every merge to main is a release. A pull request must pass "test" and
+# "changelog" (its CHANGELOG.md starts with a new, dated version: "## v1.2.3
+# — 2026-10-22"); main's ruleset requires both. On main, the version the
+# changelog names is tagged, built and published with its notes.
 name: test and release
 
 on:
@@ -32,6 +31,16 @@ jobs:
           go vet ./...
           go test ./...
 
+  changelog:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The changelog names a new release
+        run: .github/scripts/changelog.sh check
+
   release:
     needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -46,7 +55,7 @@ jobs:
         run: |
           v=$(.github/scripts/changelog.sh version)
           if [[ -z $v ]]; then
-            echo "The top of CHANGELOG.md names no version: nothing to release."
+            echo "::warning::The top of CHANGELOG.md names no version: nothing to release."
           elif git rev-parse -q --verify "refs/tags/$v" >/dev/null; then
             echo "$v is tagged already: nothing to release."
             v=
@@ -57,19 +66,6 @@ jobs:
         if: steps.what.outputs.version != ''
         with:
           go-version-file: go.mod
-
-      - name: Date the release in CHANGELOG.md
-        if: steps.what.outputs.version != ''
-        env:
-          V: ${{ steps.what.outputs.version }}
-        run: |
-          if [[ $(.github/scripts/changelog.sh dated) == no ]]; then
-            .github/scripts/changelog.sh date "$V" "$(TZ=America/New_York date +%F)"
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git commit -am "Release $V"
-            git push origin HEAD:main
-          fi
 
       - name: Build
         if: steps.what.outputs.version != ''

@@ -627,13 +627,14 @@ are each an `engine.Interactor`.
 
 ## Releasing
 
-Releases come from CHANGELOG.md. Add your changes under its top section:
+Every merge to `main` is a release, made from CHANGELOG.md:
 
-- `## v1.2.3 — unreleased` releases when it reaches `main`: GitHub Actions
-  runs the tests, dates the section, tags `v1.2.3`, builds runnr for macOS
-  and Linux (amd64, arm64) and publishes the release with the section as
-  its notes. A patch, minor or major release is just the version you write.
-- `## Unreleased` (no version) gathers changes without releasing them; give
-  it a version when it's time.
-
-Every pull request runs the tests too.
+- A pull request starts CHANGELOG.md with its version and date, e.g.
+  `## v1.2.3 — 2026-10-22`, and what's in it. Patch, minor or major is the
+  version you write; it must be above the last release.
+- Before it can merge, GitHub Actions checks the changelog (`changelog`)
+  and runs the tests (`test`): `main` accepts only pull requests that pass
+  both.
+- On merge, the workflow tags the version, builds runnr for macOS and
+  Linux (amd64, arm64) and publishes the release with the section as its
+  notes.
