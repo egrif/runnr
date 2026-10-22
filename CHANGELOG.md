@@ -37,6 +37,10 @@ A resume carries the same run on, and console shells follow the run.
 ### Fixed
 
 - A note on a step carried over by a resume showed twice.
+- A run started unattended from the GUI or API can be driven from the
+  console like an interactive one: shells open alongside it, its
+  background steps get terminals (and the Background pane), and Stop step,
+  go to step and changing inputs work.
 
 ## v0.3.3 — 2026-10-22
 

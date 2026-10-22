@@ -609,7 +609,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	l.ctl = engine.NewControls(cv)
 	var ui engine.Interactor = l
 	if req.Unattended {
-		ui = engine.Unattended{OnEvent: l.Notify, AssumeYes: req.Yes}
+		ui = unattendedWeb{engine.Unattended{OnEvent: l.Notify, AssumeYes: req.Yes}, l}
 	}
 	s.mu.Lock()
 	s.live[id] = l
@@ -1686,4 +1686,18 @@ func (s *Server) validateCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// unattendedWeb is an unattended run's interactor here: it asks nothing,
+// but the console can still drive the run (its session: shells alongside,
+// stop step, go to step, inputs) and watch its background steps.
+type unattendedWeb struct {
+	engine.Unattended
+	l *liveRun
+}
+
+func (u unattendedWeb) Bind(se engine.Session) { u.l.Bind(se) }
+
+func (u unattendedWeb) StartBackground(idx int, title string) engine.TermConn {
+	return u.l.StartBackground(idx, title)
 }
