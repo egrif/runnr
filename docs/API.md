@@ -13,7 +13,8 @@ RUNNR_TOKEN=$(openssl rand -hex 32) runnr serve --addr 0.0.0.0:7777 --no-ui
   and be same-origin, so other web pages can't drive your local runnr.
 - **With `--token`/`RUNNR_TOKEN`**: every `/api` request needs
   `Authorization: Bearer <token>`. Required to listen on anything but loopback.
-  The GUI asks for the token once and keeps it in an HttpOnly cookie.
+  The GUI asks for the token once (`POST /api/login {token}` → `204`) and
+  keeps it in an HttpOnly cookie.
 
 runnr runs shell commands. Anyone holding the token can run any runbook and
 create new ones, so treat the token like shell access. Use TLS (e.g. a reverse
@@ -27,16 +28,50 @@ proxy) off-host.
 | GET | `/api/runbooks/{name}` | | `{raw, version, updated_at, runbook?, error?}` (+ `ETag: <version>`) |
 | POST | `/api/runbooks` | YAML | `201 {name, version, runbook}` (`400` if invalid or exists) |
 | PUT | `/api/runbooks/{name}` | YAML | `{name, version, runbook}`; renames if `name` changed |
-| DELETE | `/api/runbooks/{name}` | | `204` (version history is kept) |
+| DELETE | `/api/runbooks/{name}` | | `204`: version history is kept; it's taken out of its collections and its scheduled runs are removed |
 | GET | `/api/runbooks/{name}/versions` | | `[{version, created_at, bytes}]`, newest first |
 | GET | `/api/runbooks/{name}/versions/{n}` | | `{version, raw}` |
 | POST | `/api/validate` | YAML | `{ok, error?}` |
 | POST | `/api/parse` | YAML | `{ok, runbook?, comments?, error?}`: the structured form, and the YAML's comments by field path (`"steps.3.run"`, `"steps.3"` for the item, `""` for the file) |
 | POST | `/api/format` | runbook JSON, or `{runbook, comments}` | `{ok, raw?, error?}`: YAML (validated), with the comments put back on their fields |
 | POST | `/api/preview` | `{runbook \| raw, vars, from_run?}` | `{steps: [StepView]}`: what each step would do with these inputs (and that run's state) |
+| GET | `/api/runbooks/{name}/steps/{n}` | | `{yaml, version}`: step `n` (1-based) of the saved runbook |
+| PUT | `/api/runbooks/{name}/steps/{n}` | step YAML (+ `If-Match`) | `{version, runbook}`: replaces that step, the rest of the YAML as it was, as a new version |
+| POST | `/api/parse-step` | step YAML | `{ok, step?, error?}` |
+| POST | `/api/format-step` | step JSON | `{ok, raw?, error?}` |
+| GET | `/api/template?name=` | | `{raw}`: a starter runbook |
 
 Send `If-Match: <version>` with `PUT` to get `409 Conflict` instead of
 overwriting a newer save.
+
+## Import, export, manage
+
+Paths are on the machine runnr runs on.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/api/import/check?set=NAME=VALUE` | a runbook or library's YAML | `{kind, name, exists, version?, updated_at?, same?, builtin?, placeholders?, unset?, error?}` |
+| POST | `/api/import?as=&replace=1&collection=&set=NAME=VALUE` | YAML | `201 {kind, name, version, replaced?, collection?}`; `409 {error, check}` if the name is taken (unless `as` or `replace`); `400 {error, unset}` for placeholders without a value |
+| POST | `/api/import/scan` | `{dir, values?, renames?, include?, skip?}` | the plan for a project folder: `{dir, repo_root, docs, values, unset, ignored}` |
+| POST | `/api/import/project` | as scan, `+ {replace?, replace_all?, collection?}` | `{plan, results: [{rel, kind, name, status, version?, replaced?, error?}]}` |
+| GET | `/api/fs?path=&hidden=1` | | `{path, parent, home, entries: [{name, dir, size?}], asked, exists, is_dir}`: the folder at `path` (or holding it, or the nearest that exists) |
+| POST | `/api/runbooks/{name}/files/plan` | `{path}` | `{files: [{kind, name, path, version?, exists?, builtin?, missing?}]}`: the runbook and the libraries it uses (beside it as `<name>.yaml`) |
+| POST | `/api/runbooks/{name}/files` | `{path, libraries, overwrite?}` | `{written: [...]}`; files already there are refused without `overwrite` |
+| GET | `/api/manage` | | `{items: [{kind, name, version, updated_at, used_by, schedules?, builtin?, error?}], deleted: [{kind, name, version, saved_at}]}` |
+| POST | `/api/manage/delete` | `{items: [{kind, name}]}` | `{results: [{kind, name, ok, error?, also?}]}` (`also`: collections and scheduled runs a runbook was taken out of) |
+| POST | `/api/manage/restore` | `{items: [{kind, name}]}` | `{results: [{kind, name, ok, version?, error?}]}`: saves the last version again |
+
+A project folder's `docs` are `{path, rel, kind, name, original, error?,
+placeholders?, refs?, included?, skipped?, exists, version?, updated_at?,
+same?, builtin?}`, `kind` being `runbook`, `library`, `fakes`, `suite` or
+`run` (a run record, JSON). `values` fill in placeholders (`@NAME@`;
+`PROJECT_DIR` and `REPO_ROOT` default to the folder and its git root),
+`renames` are `{"kind:name": "new"}` (references to it follow), `include`
+adds files or folders from elsewhere, `skip` leaves files out (by path), and
+`replace` names files to save as the next version of the one with their
+name. A result's `status` is `imported`, `replaced`, `unchanged`, `skipped`,
+`exists` (taken, not replaced) or `failed`. Kinds for manage are `runbook`,
+`library`, `fakes`, `suite` and `collection`.
 
 ## Collections
 
@@ -124,12 +159,21 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | POST | `/api/runs` | start request | `202 {id}`, or the run record with `wait` |
 | GET | `/api/runs?runbook=&limit=` | | recent runs (no step detail), newest first; limit ≤ 1000, default 100 |
 | GET | `/api/runs/{id}` | | `{run, live}` |
+| DELETE | `/api/runs/{id}` | | `204`; `409` while it's running |
+| GET | `/api/runs/{id}/plan` | | `{steps: [StepView], version, latest, changed?, shape?, live}`: the steps as this run uses them, and the runbook's newest version (`changed`: steps not run yet that it has differently; `shape`: why it can't be adopted) |
+| POST | `/api/runs/{id}/adopt-version` | `{version}` | `{changed, restarted, version}`: a live run takes that version for the steps it hasn't run (`409` if it can't) |
+| GET | `/api/runs/{id}/chain` | | `[{id, status, started, ended?, resumes?, runbook_version?, steps}]`: the run and the runs linked to it by resuming, oldest first |
+| GET | `/api/runs/{id}/logs?ids=&format=raw\|json\|both&single=1` | | those runs of the chain (all by default) as raw logs, records (JSON) or both, in one file per format or one per run: a file, or a zip of several |
+| POST | `/api/runs/{id}/logs` | `{ids?, format, single?, path, overwrite?}` | `{written: [paths]}`: the same, into folder `path` |
 | GET | `/api/runbooks/{name}/tests` | | the runbook's test suite (`suite`: name, version, fake libraries, isolated commands, scenarios; `null` without one) and its latest results (`last`) |
 | POST | `/api/runbooks/{name}/tests/run` | `{scenario?, raw?}` | runs the suite (or one scenario), against the saved runbook or the draft YAML in `raw`: `{at, draft, results: [{scenario, passed, problems, status, steps, calls, asked, unused, log}]}` |
 | GET | `/api/runs/{id}/log?download=1` | | the run as a plain-text log (`download` saves it as a file) |
 | GET | `/api/runs/{id}/events` | | Server-Sent Events (live runs only) |
 | POST | `/api/runs/{id}/answer` | `{question_id, value, note?}` | `204` |
-| POST | `/api/runs/{id}/steps/{n}/reopen` | | `204`: goes back to step `n`, the last that succeeded, while the run waits on a question at the next one (questions carry `reopenable`, the step that can be); `n` waits before running again |
+| POST | `/api/runs/{id}/goto` | `{step, force?}` | `204`: while the run waits on a question (those carry `goto: true`), goes to step `step` (1-based): back (it and the steps after it run again), the same step again, or ahead (the steps between are skipped). It waits before running. `409` if the run isn't waiting, or (`needs_force`) going back past a point of no return without `force` |
+| POST | `/api/runs/{id}/steps/{n}/reopen` | | `204`: goes back to step `n`, the last that succeeded (questions carry `reopenable`); `goto` does this and more |
+| POST | `/api/runs/{id}/stop` | `{step?, by?}` | `204`: interrupts the running step's command (`step` 1-based; `0`: whichever). The step fails ("stopped by …") and the run asks what to do; `409` if it isn't running |
+| PUT | `/api/runs/{id}/inputs` | `{values: {name: value}, by?}` | `{changed, stale, replaces, restarted}`: changes a live run's inputs, checked as at the start. They take effect before its next command; a step waiting to run its command starts again (`restarted`). `stale`: per input, the steps (1-based) that already ran with it; `replaces`: inputs a step had published a value for. `400` if a value isn't allowed |
 | POST | `/api/runs/{id}/cancel` | `{author?, reason?, force?}` | `{aborted, message}`: aborts it. A run this server runs stops now; one running elsewhere is asked to stop (waits up to 8s); one whose process is gone, or with `force`, is marked aborted |
 | POST | `/api/runs/{id}/resume` | start request (no `runbook`/`from`) | like `POST /api/runs` |
 | POST | `/api/runs/{id}/notes` | `{step, text, author?}` (`step` 1-based; `0` = the run) | `201 {time, author, text}` |
@@ -158,13 +202,19 @@ Start request:
 A run record has `status` (`running`, `succeeded`, `failed`, `aborted`), `notes`,
 and a `steps` array with each step's `status` (also `pending`, `skipped`, or
 `forced`), `command`, `output` (last 64 KiB), `exit_code`, `error`, `note`
-(system note, e.g. the force reason), `notes` (operator notes) and timings, plus `runbook_version`. Secrets are masked.
+(system note, e.g. the force reason), `notes` (operator notes), `shells`
+(shell sessions opened at it), `jobs` (commands the operator ran in the
+background at it: `{command, started, ended, exit_code, output, note}`) and
+timings, plus `runbook_version`, `resumes`, `edits` and `input_changes`
+(`{at, name, old, new, by, step}`). Secrets are masked.
 
 ### Interactive runs over the API
 
 Start without `unattended`, then read `/events`. Each event is
 `{seq, kind, step, ...}`; kinds are `run_started`, `step_started`, `output`,
-`step_finished`, `run_finished`, plus `question`, `answered` and `note`. Answer a
+`step_finished`, `run_finished`, plus `question`, `answered`, `note`,
+`step_progress`, `window`, `controls` and `inputs` (the run's inputs
+changed: `run` carries `inputs`, `input_changes` and `state`). Answer a
 `question` with `POST /answer`:
 
 | `question.type` | values |
@@ -172,6 +222,9 @@ Start without `unattended`, then read `/events`. Each event is
 | `input` | the input's value |
 | `confirm` | `run`, `skip`, `abort` |
 | `danger` (dangerous step out of sequence) | `run` with `note` = the question's `confirm` (the step number; asked again otherwise), `skip`, `abort` |
+| `typed` (a point of no return, `confirm_typing`) | `run` with `note` = the question's `confirm`, `skip`, `abort` |
+| `ask` (a step's `runnr_confirm`) | `yes`, `no` |
+| `ask_text` (a step's `runnr_ask`) | the answer |
 | `manual` | `done`, `skip`, `fail`, `abort` (optional `note`) |
 | `failure` | `retry`, `skip`, `abort`, `force` (`note` = required reason; asked again without one), and `way` (try another way) for steps with several ways |
 | `before` | `run`, `skip`, `continue` (stop stepping through), `abort` |
@@ -187,7 +240,8 @@ again (`{"restarted": true}`). The run records `edits` and, once
 `edits_saved` (that version). Saving fails if the step has changed in the
 runbook since the run started.
 
-Questions carry `text` (the rendered command or instructions) and `expect`.
+Questions carry `text` (the rendered command or instructions), `expect`,
+and on a step `goto: true` (see `POST /goto`).
 `confirm`/`danger`/`manual`/`failure`/`before`/`after` questions also offer `shell`,
 which opens a terminal session with the run's environment and then asks the
 same question again; `tty` steps open one too.
@@ -204,6 +258,15 @@ keystrokes and the viewer's size with:
 
 What a `tty` step printed is recorded as the step's `output`, and shell
 sessions as its `shells`, cleaned of terminal control codes.
+
+**Shells of their own** (the console's Shell panes) don't depend on a run
+being live: they can open before a run, alongside it, or after it.
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| POST | `/api/shells` | `{run, step?}` or `{runbook, vars?, step?}` | `201 {id, title, step, phase}`: `phase` is `before` (the runbook's environment, the inputs given), `alongside` (a live run at a step: what it publishes reaches the run at its next step, recorded with the step) or `after` (the run's inputs and published values) |
+| GET | `/api/shells/{id}/events` | | Server-Sent Events: `term_start`, `term`, `term_end`, and `output` for errors |
+| POST | `/api/shells/{id}/term` | as `/api/runs/{id}/term` | keystrokes, size, `end` |
 
 `step_finished` events carry `state`: the run's variables, secrets masked.
 `step_progress` events carry a step's `result` while it's still going (each

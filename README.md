@@ -12,10 +12,13 @@ unattended for cron/CI.
 - **Inputs** with defaults, choices and secrets (secrets are masked in output and history).
 - **Shared variables**: a step can publish values (and secrets) for every later step.
 - **Terminal steps** hand the terminal to tools like `terraform apply` or `argocd login --sso`.
-- **Resume** long-running or multi-day procedures from where they stopped.
-- **Run history** for every run, and **version history** for every runbook save.
+- **Resume** long-running or multi-day procedures from where they stopped; go back to a step, jump ahead, or stop a running step without stopping the run.
+- **Shells and background commands** beside a run, with its variables (secrets too) kept up to date.
+- **Run history** for every run, and **version history** for every runbook save; delete and restore from **Manage**.
+- **Import and export**: a project folder at once (placeholders filled in, references checked), a runbook with its libraries, a run's logs with the runs it resumed.
 - **Tests** that run a runbook with its commands faked and a simulated operator, without touching anything ([docs/TESTING.md](docs/TESTING.md)).
 - **SQLite or Postgres** storage: zero-setup locally, shared for a team.
+- **A run console** in the GUI: the run on one screen, in panes you arrange.
 - **HTTP API** for CI, cron and chatops ([docs/API.md](docs/API.md)).
 
 See it in action: tours of **[the GUI](docs/TOUR.md)** and **[the CLI](docs/CLI.md)**, with screenshots.
@@ -55,8 +58,8 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr explain <runbook> [step] [-q question] [--fresh]` | Ask a model about a step, or review the whole runbook (see "Ask Claude" for setup) |
 | `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**); `-f yaml` (or `-o file.yaml`) writes the runbook as written with the libraries it uses beside it (`--lib`, `--no-libs`), so the folder imports again (**⇩ Export…** on the runbook's page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
-| `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export aurora-helpers)"` |
-| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes and test suites: files, or a project folder (its subfolders too). Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along. A taken name is refused unless `-f` (saved as its next version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do. In the GUI: **⇪ Import…** in the sidebar does the same for a folder |
+| `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export db-helpers)"` |
+| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (saved as its next version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do. In the GUI: **⇪ Import…** in the sidebar does the same for a folder |
 | `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
 | `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
 | `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
@@ -64,11 +67,15 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr test <suite\|runbook\|file>` | Test a runbook: run it with its commands faked and a simulated operator, against each scenario's expectations (`-s`, `-v`, `--log`); see [Testing runbooks](docs/TESTING.md) |
 | `runnr tests import/list/show/delete` · `runnr fakes import/list/show/delete/check` | Manage test suites and fake libraries; `fakes check` compares AWS CLI fakes with the CLI's real response shapes |
 | `runnr validate [name\|file]...` | Validate; all runbooks if none given |
-| `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later |
+| `runnr run <name\|file>` | Run a runbook (see below); `--from <step>` starts later, `--tmux` runs it in tmux |
 | `runnr rerun <run-id>` | Run again with an earlier run's inputs, comparing each step with what it did then |
 | `runnr resume <run-id>` | Continue a failed/aborted run at the step where it stopped |
+| `runnr attach [run-id\|runbook]` | Go back to a run started with `--tmux` |
+| `runnr watch <run-id>` | Follow a run's steps as it goes (the `--tmux` side pane) |
+| `runnr save-edits <run-id>` | Save the step changes made during a run as a new runbook version |
+| `runnr doctor <runbook>` | Check that the programs it needs (its `requires`, and its libraries') are here |
 | `runnr abort <run-id> [-m reason] [--force]` | Abort a run running elsewhere (another terminal, the GUI), or one left "running" by a process that's gone |
-| `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open a shell (the runbook's `shell`, else `$SHELL`) with that environment |
+| `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open a shell (the runbook's `shell`, else `$SHELL`) with that environment; given a run, with its inputs and what its steps published, as last saved (secrets are asked for or re-derived) |
 | `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
 | `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail (`--raw`: as a plain log, each step's command, output and result in order; **Raw log** on a past run's page in the GUI) |
 | `runnr history prune --older-than 90d` | Delete old finished runs |
@@ -127,7 +134,7 @@ continue / run it again / mark it failed (then the usual failure choices) /
 abort. Steps with `confirm: true` always ask before running.
 
 **Changing a step mid-run.** While a run is live you can change the
-current step or any later one: **✎ edit** on the run page, or **[c]hange
+current step or any later one: **✎ edit** on the run page, or **[m]odify
 step** at a CLI prompt (opens `$EDITOR` on the step's YAML). If the step is
 waiting on a question (a failure, a pause, a confirmation), it starts again
 with the new version. The change is only in that run until you save it: the
@@ -167,11 +174,6 @@ At any step prompt you can also:
 - **`b`**: run a command in the background with the run's environment (a
   window of its own under `--tmux`; else `w` watches it). It's recorded
   with the step, and ends with the run unless it ends first.
-- Shells opened during a run (`!`, `p`, the `--tmux` shell pane, the
-  console's) keep up with it: zsh reads the run's values again before each
-  prompt and command, bash before each prompt, so what later steps publish
-  (secrets too) is there. They're in a file only you can read
-  (`$RUNNR_VARS`), removed when the run ends.
 - **`p`** (under `--tmux`): a shell like `!`, in a pane beside the run, so
   the prompt stays where it is. What it publishes
   (`echo name=value >> "$RUNNR_OUTPUT"`) reaches the run when the next step
@@ -198,6 +200,15 @@ At any step prompt you can also:
 - **`f`** (failed steps): force the step to count as success. A reason is
   required; the step is recorded as `forced` with it, and whatever it
   published is kept.
+- **`m`**: modify the step for this run (see above).
+- **`a`**: abort the run.
+
+Shells opened during a run (`!`, `p`, the `--tmux` shell pane, the
+console's) keep up with it: zsh reads the run's values again before each
+prompt and command, bash before each prompt, so what later steps publish
+(secrets too) is there. They're in a file only you can read
+(`$RUNNR_VARS`), removed when the run ends. Plain `sh` keeps the values it
+opened with.
 
 A failed or aborted run can be continued with `runnr resume <run-id>`: same
 inputs (secret inputs are asked again) and the same state (secrets excepted),
@@ -231,11 +242,16 @@ it aborted now**).
   errors) is tabbed with **History** (what it did in earlier runs) and
   **Details** (how it's set up). Prompts (confirm, manual, failure, pause
   before and after) are answered in the browser; notes and the run's state
-  are there too. While the run waits for you, the last step that succeeded
-  can be **↺ re-opened**: the run goes back to it, it waits for you before
-  running again (run, skip, edit or open a shell), and the run carries on
-  from there. Only that step: earlier ones would mean undoing more than one
-  step's work.
+  are there too. While the run waits for you, every question has **↺ Back
+  to step N** and **Go to step**: back to a step that ran (it and the ones
+  after it run again), this step again, or ahead (the ones between are
+  skipped); the step gone to waits for you before it runs. **■ Stop step**
+  interrupts the running step's command (it fails, and you choose what's
+  next) without stopping the run, and **✎ Change inputs** changes the
+  inputs for the rest of the run.
+- **Finished runs**: **Raw log**, **⇩ Export logs…** (the run and the runs
+  linked to it by resuming, as raw logs, records to import, or both; to a
+  folder or a download), **Run again…**, **Resume…** and **Delete run**.
 - **Editing**: YAML with live validation, or a **structured view** (switch
   any time). Each step opens as **details | command | run**: the common
   details (what we're doing, by the end, section, owner, confirm) with an
@@ -255,6 +271,17 @@ it aborted now**).
   Drag a runbook to another card to move it (Alt/⌥ to add it there too),
   within a card to reorder, or to "Not in a collection" to take it out.
 - **Collections** group runbooks in the sidebar, with what they're for.
+- **⇪ Import…** in the sidebar imports a project folder on the machine
+  runnr runs on (as `runnr import <folder>`: placeholders, references,
+  libraries found elsewhere in the repository, a choice for each name
+  that's taken), plus run records or other files added from elsewhere, or
+  uploaded files. **⇩ Export…** on a runbook's page writes it with the
+  libraries it uses beside it (each can be left out).
+- **Manage** lists everything stored (runbooks, libraries, fake libraries,
+  test suites, collections) with what uses each, deletes several at once
+  (saying first what depends on them) and restores what was deleted.
+- Inputs of `type: dir` or `file` get **Browse…**: a browser of the
+  folders and files on the machine runnr runs on.
 - History, versions, notes.
 
 Steps that need a terminal (`tty`) and "open shell" get a
@@ -283,7 +310,7 @@ sections:                       # what each group of steps does, and how things 
 tags: [deploy]
 shell: bash                     # default: sh
 profile: [~/.zshrc]             # sourced before every step: your aliases/functions work (slower)
-libraries: [aurora-helpers]     # shared shell functions every step (and shell) can call
+libraries: [db-helpers]         # shared shell functions every step (and shell) can call
 functions:                      # this runbook's own functions
   wait_healthy:
     description: Poll a URL until it returns 200
@@ -411,9 +438,11 @@ answers it (`ask:`), and in an unattended run it fails rather than going on
 unanswered. In a `tty` step they read the terminal. (A plain `read` in a
 step that isn't `tty` gets no input: it has no keyboard.)
 
-**Stopping a step.** Aborting a run (or a step's `timeout`) stops what's
-running the way you would: Ctrl-C to the step's processes, SIGTERM 10
-seconds later if they're still there, SIGKILL at 20. A tool like Terraform
+**Stopping a step.** Aborting a run, a step's `timeout`, or stopping the
+step (**■ Stop step**, Ctrl-C in the CLI) stops what's running the way you
+would: Ctrl-C to the step's processes, SIGTERM 10 seconds later if they're
+still there, SIGKILL at 20. Stopping the step leaves the run going: the
+step fails and you choose what's next. A tool like Terraform
 gets to stop cleanly and release its lock. Detached background steps
 (`--tmux`) are left running.
 
@@ -439,15 +468,16 @@ Step list, Step definition, Step activity, Step edit (else the editor is a
 tab in Step activity), Terminal target (where a terminal step or a step's
 shell opens; else a tab in Step activity), Background target (several take
 background jobs in turn, each to the one with the fewest running) or Shell
-(there can be several). A shell opens any time: before the run, with the
+(there can be several), or Run log. A shell opens any time: before the run, with the
 runbook's environment and the inputs as filled in; while the steps run, at
 the step the run is on, alongside it (values it publishes reach the run
 when the next step starts, and it's recorded with the step); or after the
 run, with what it published. It stays open into the run's console and
 after the run ends, until you exit it, close its pane or leave the
-console; ↻ Reopen starts it again at the step the run is on now or Run log
-(every step's output, in order). The layout
-is kept in your browser; Reset layout puts it back.
+console; ↻ Reopen starts it again at the step the run is on now. A Run
+log pane shows every step's output, in order. While a step runs, ■ Stop
+step in the toolbar stops it. The layout is kept in your browser; Reset
+layout puts it back.
 
 **Running in tmux.** `runnr run --tmux` (or `resume --tmux`) runs in a
 tmux session, so the run outlives the terminal: close it, lose the ssh
@@ -536,7 +566,7 @@ runbook, of the same model, is answered from there, free (**Ask again** /
 | `ANTHROPIC_API_KEY` | Claude through Anthropic (default model `claude-sonnet-5-5`) |
 | `RUNNR_AI_PROVIDER=bedrock` | Claude through Amazon Bedrock, signed with `RUNNR_AI_AWS_PROFILE` (or `AWS_PROFILE`; SSO works, via the AWS CLI) in `AWS_REGION`; `RUNNR_AI_MODEL` is the model or inference profile id. Answers arrive whole |
 | `RUNNR_AI_PROVIDER=openai` | any OpenAI-compatible API: OpenAI, OpenRouter, a LiteLLM gateway, or local models (`RUNNR_AI_BASE_URL=http://localhost:11434/v1` for Ollama); key from `RUNNR_AI_API_KEY` or `OPENAI_API_KEY` |
-| `RUNNR_AI_PROVIDER=bifrost` | Greenhouse's AI gateway (OpenAI-compatible, behind SSO): `RUNNR_AI_VIRTUAL_KEY` (sent as `x-bf-vk`), `RUNNR_AI_BIFROST_ENV` (`dev` default, `staging`, `prod`, `prod-eu`, `prod-apac`); the bearer is a short-lived SSO token from `sso-token-cli -e <env>-bifrost` (it reads its config file from the directory it runs in, so set `SSO_TOKEN_CLI_CONFIG` to its path; override the command with `RUNNR_AI_API_KEY_CMD`), refreshed when the gateway says 401; the model as `<provider>/<model>` (default `openai/gpt-5.4`, what Greenhouse's agents use; a bare `gpt-…` or `claude-…` name gets its provider added; the gateway serves the models its virtual key is set up for). Claude models get Claude's prompt-cache markers |
+| `RUNNR_AI_PROVIDER=bifrost` | a Bifrost AI gateway (OpenAI-compatible, behind SSO): `RUNNR_AI_VIRTUAL_KEY` (sent as `x-bf-vk`), `RUNNR_AI_BIFROST_ENV` (`dev` default, `staging`, `prod`, `prod-eu`, `prod-apac`); the bearer is a short-lived SSO token from `sso-token-cli -e <env>-bifrost` (it reads its config file from the directory it runs in, so set `SSO_TOKEN_CLI_CONFIG` to its path; override the command with `RUNNR_AI_API_KEY_CMD`), refreshed when the gateway says 401; the model as `<provider>/<model>` (default `openai/gpt-5.4`; a bare `gpt-…` or `claude-…` name gets its provider added; the gateway serves the models its virtual key is set up for). Claude models get Claude's prompt-cache markers |
 | `RUNNR_AI_API_KEY_CMD`, `RUNNR_AI_HEADERS`, `RUNNR_AI_CACHE_HINTS=1` | for other gateways: a command that prints the key, extra headers (`Name: value; Name: value`), and Anthropic cache marks on the runbook context |
 | `RUNNR_AI_MODEL` | the model (`RUNNR_CLAUDE_MODEL` also works) |
 | `RUNNR_AI_CACHE_TTL=1h` | Anthropic: keep the runbook in the prompt cache an hour instead of five minutes (writes cost about 2× instead of 1.25×) |
@@ -595,9 +625,9 @@ other terminal: `eval "$(runnr lib export <name>)"`. A run won't start if a
 library it uses is missing.
 
 ```yaml
-# runnr lib import aurora-helpers.yaml
-name: aurora-helpers
-description: Helpers for Aurora migrations
+# runnr lib import db-helpers.yaml
+name: db-helpers
+description: Helpers for database migrations
 functions:
   kpsql:
     description: "Run SQL from a pod in the cluster. Usage: kpsql URL [SQL]"
@@ -643,7 +673,10 @@ internal/engine/    executor + Interactor interface (unattended impl here)
 internal/cli/       cobra commands + terminal Interactor
 internal/server/    HTTP API, SSE, browser Interactor, embedded web/ UI
 internal/store/     SQLite/Postgres storage: runbooks, versions, runs
+internal/project/   importing a project folder; exporting runbooks and run logs
+internal/runtest/   runnr test: fakes, scenarios, the simulated operator
 examples/           sample runbooks
+.github/            tests on every pull request; a release on every merge to main
 ```
 
 The engine never talks to a human directly; the CLI, GUI and unattended modes

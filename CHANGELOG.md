@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.2 — 2026-10-22
+
+Documentation brought up to date, with new screenshots.
+
+### Changed
+
+- README, the CLI and GUI tours, the API reference, the testing guide, the
+  examples and the in-app help cover everything up to now: the run console,
+  shells and background commands, go to / stop a step, changing inputs,
+  import and export, Manage, path inputs, copy on select, and releases.
+- New screenshots of a run in tmux (the layout, a `p` pane shell, a `b`
+  job), the run console, import, export and Manage; every other screenshot
+  retaken.
+- The in-app help's examples are the made-up orders demo throughout.
+- The CLI's key for changing a step for this run is `m` (modify): `c`
+  already means continue at some prompts.
+
+### Fixed
+
+- `runnr fakes list` says "fake libraries"; `runnr export`'s help mentions
+  YAML.
+
 ## v0.3.1 — 2026-10-22
 
 More ways to work beside a run in the CLI.

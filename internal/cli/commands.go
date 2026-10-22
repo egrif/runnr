@@ -1093,7 +1093,7 @@ func exportCmd(s func() *store.Store) *cobra.Command {
 	var noLibs, force bool
 	cmd := &cobra.Command{
 		Use:   "export <runbook|file>",
-		Short: "Write a runbook as Markdown to follow by hand, or as an HTML page to read",
+		Short: "Write a runbook as Markdown to follow by hand, an HTML page to read, or YAML files (with its libraries)",
 		Long: `Writes the runbook as a Markdown document: a collapsed overview, a setup
 block (inputs, environment, helper functions), then each section and step
 with what it's doing and its code, in collapsible blocks.

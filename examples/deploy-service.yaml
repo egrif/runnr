@@ -17,12 +17,17 @@ inputs:
   - name: api_token
     description: Token for the deploy API (masked in logs)
     secret: true
+  - name: workdir
+    description: Where to run the deploy from (the GUI offers Browse…)
+    type: dir
+    default: .
 env:
   DEPLOY_ENV: "{{.env}}"
 steps:
   - name: Preflight checks
+    dir: "{{.workdir}}"
     run: |
-      echo "Checking $DEPLOY_ENV is healthy…"
+      echo "Checking $DEPLOY_ENV is healthy from $PWD…"
       sleep 1
       echo "ok"
   - name: Resolve version

@@ -348,7 +348,7 @@ func docCmd(use, noun, short string,
 	importC.Flags().BoolVarP(&force, "force", "f", false, "overwrite existing ones")
 	var asJSON bool
 	listC := &cobra.Command{
-		Use: "list", Aliases: []string{"ls"}, Short: "List " + noun + "s", Args: cobra.NoArgs,
+		Use: "list", Aliases: []string{"ls"}, Short: "List " + plural(noun), Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			docs, err := list()
 			if err != nil {
@@ -394,4 +394,12 @@ func docCmd(use, noun, short string,
 
 func indentBy(s, prefix string) string {
 	return prefix + strings.ReplaceAll(strings.TrimRight(s, "\n"), "\n", "\n"+prefix)
+}
+
+// plural is a noun's plural, for help text ("fake library" → "fake libraries").
+func plural(noun string) string {
+	if strings.HasSuffix(noun, "y") {
+		return strings.TrimSuffix(noun, "y") + "ies"
+	}
+	return noun + "s"
 }

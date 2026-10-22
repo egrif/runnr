@@ -9,6 +9,8 @@ shows up in the other. Every command is listed in the
 - [Find your way around](#find-your-way-around)
 - [Look before you run](#look-before-you-run)
 - [Running](#running)
+- [Changing course](#changing-course)
+- [In tmux](#in-tmux)
 - [Out of sequence](#out-of-sequence)
 - [Unattended](#unattended)
 - [Schedule](#schedule)
@@ -53,8 +55,10 @@ alongside the others: press `w` at any prompt to watch it. The step that
 opens the maintenance window says so and asks first (`confirm`). Planned
 times show against the window (T+10m, and how far ahead or behind you are).
 A step with ways runs its preferred way. At any prompt you can view the
-step, see what it did last time, look at the environment, add a note, open
-a shell, or change the step for this run.
+step (`v`), see what it did last time (`l`), look at the environment (`e`),
+add a note (`n`), open a shell (`!`), watch a background step (`w`), run a
+command of your own in the background (`b`), go to another step (`g`),
+change the run's inputs (`i`), or modify the step for this run (`m`).
 
 ![A manual step, a background step, the window opening, a step with ways](screenshots/cli-run-window.png)
 
@@ -63,20 +67,47 @@ step stops after the step it was tied to, and the run ends with a summary.
 
 ![The window closing and the end of the run](screenshots/cli-run-end.png)
 
+## Changing course
+
+- **Stop a step**: Ctrl-C while a step's command runs stops that step, not
+  the run. It fails as "stopped by you", and you choose what's next: retry,
+  skip, force it, or go to a step. Ctrl-C again within 3 seconds aborts the
+  run.
+- **Go to a step** (`g`, at any step's prompt): back to a step that ran
+  (Enter goes back one; it and the steps after it run again), this step
+  again, or ahead (the steps between are skipped). The step you go to waits
+  for you before it runs. Going back past a point of no return asks you to
+  type `yes`.
+- **Change the inputs** (`i`): new values are checked as at the start and
+  take effect before the next command; a step waiting to run starts again
+  with them. Each change is recorded, and runnr says which steps already
+  ran with the old value.
+
 ## In tmux
 
 `runnr run <runbook> --tmux` (and `resume --tmux`) starts the run in a tmux
-session and attaches to it:
+session and attaches to it: the run on the left, `runnr watch` (the steps,
+live) top right, and a shell with the run's variables bottom right.
 
-```
-┌──────────────────────────┬──────────────────┐
-│ the run: prompts, output │ runnr watch: the │
-│                          │ steps, live      │
-│                          ├──────────────────┤
-│                          │ a shell with the │
-│                          │ run's variables  │
-└──────────────────────────┴──────────────────┘
-```
+![A run in tmux: the run, its steps, and a shell with its variables](screenshots/tmux-layout.png)
+
+The shell is opened by the run, so it has every value, secrets included,
+and keeps up as later steps publish more (zsh before each prompt and
+command, bash before each prompt). What it publishes
+(`echo name=value >> "$RUNNR_OUTPUT"`) reaches the run when its next step
+starts.
+
+`p` at a prompt opens another such shell, at the step you're on, in a pane
+beside the run. The prompt stays where it is; `exit` closes the pane, and
+the session is recorded with the step.
+
+![p: a shell beside the run, at the step it's waiting on](screenshots/tmux-pane-shell.png)
+
+`b` runs a command of your own in the background with the run's
+environment (here, watching replication lag). It gets a window (`job N`),
+is recorded with the step, and ends with the run unless it ends first.
+
+![b: a command in the background, in a window of its own](screenshots/tmux-background.png)
 
 The run outlives your terminal. Close it, lose the connection, or detach
 (prefix, then `d`), and `runnr attach` gets it back; with several such
@@ -133,7 +164,21 @@ time.
   once it validates, and every save is a version (`runnr versions`,
   `runnr show --version N`).
 - `runnr shell <runbook|run-id>` runs the setup steps, then opens a shell
-  with their environment and the runbook's library functions.
+  with their environment and the runbook's library functions. Given a run,
+  it also has what the run's steps published (secret values aren't saved,
+  so those it can't restore).
+- `runnr import <folder|files>` adds runbooks, libraries, fake libraries,
+  test suites and run records, filling in `@PROJECT_DIR@`-style
+  placeholders (`--set`), checking references and finding missing
+  libraries in the repository. A taken name needs `-f` (next version) or
+  `--rename`; `-n` shows what it would do.
+- `runnr export <runbook> -o file.yaml` writes the runbook with the
+  libraries it uses beside it. `runnr history <run-id> --export <folder>`
+  writes a run's logs, with the runs linked to it by resuming (`--as raw`,
+  `json` or `both`; `--one-file`).
+- `runnr delete` keeps every version: `runnr restore` lists what was
+  deleted and brings it back. `runnr history --delete <run-id>` removes a
+  run.
 - `runnr explain <runbook> [step]` asks a model what a step does, what it
   relies on, and its risks. See "Ask Claude" in the README for setup.
 - `runnr export <runbook>` writes the runbook as Markdown to follow by hand,
