@@ -1,6 +1,22 @@
 # Changelog
 
-## v0.2.1 — unreleased
+## v0.2.2 — 2026-10-22
+
+Every merge to main is now a release.
+
+### Added
+
+- **Releases from the changelog.** A pull request starts CHANGELOG.md with
+  its version and date; GitHub Actions checks that and runs the tests, and
+  main accepts only pull requests that pass both. On merge the version is
+  tagged and released with its notes, with runnr built for macOS and Linux
+  (amd64, arm64).
+
+### Fixed
+
+- The shell test no longer stops at Ubuntu's compinit prompt.
+
+## v0.2.1 — 2026-10-22
 
 ### Added
 

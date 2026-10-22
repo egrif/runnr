@@ -624,3 +624,17 @@ examples/           sample runbooks
 
 The engine never talks to a human directly; the CLI, GUI and unattended modes
 are each an `engine.Interactor`.
+
+## Releasing
+
+Every merge to `main` is a release, made from CHANGELOG.md:
+
+- A pull request starts CHANGELOG.md with its version and date, e.g.
+  `## v1.2.3 — 2026-10-22`, and what's in it. Patch, minor or major is the
+  version you write; it must be above the last release.
+- Before it can merge, GitHub Actions checks the changelog (`changelog`)
+  and runs the tests (`test`): `main` accepts only pull requests that pass
+  both.
+- On merge, the workflow tags the version, builds runnr for macOS and
+  Linux (amd64, arm64) and publishes the release with the section as its
+  notes.
