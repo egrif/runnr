@@ -69,6 +69,11 @@ func (x *executor) interactiveShell(shell string) (cmd *exec.Cmd, env []string, 
 	}
 	done = func() { os.RemoveAll(dir) }
 	home, _ := os.UserHomeDir()
+	// The run's values, read again before a prompt when they change.
+	var vars []string
+	if p := x.varsPath(); p != "" {
+		vars = []string{"RUNNR_VARS=" + p}
+	}
 	switch filepath.Base(sh) {
 	case "zsh":
 		// zsh reads its startup files from $ZDOTDIR: chain to the real ones,
@@ -79,21 +84,23 @@ func (x *executor) interactiveShell(shell string) (cmd *exec.Cmd, env []string, 
 		}
 		files := map[string]string{
 			".zshenv": `[ -f "$RUNNR_ZDOTDIR/.zshenv" ] && . "$RUNNR_ZDOTDIR/.zshenv"` + "\n",
-			".zshrc":  `ZDOTDIR="$RUNNR_ZDOTDIR"; [ -f "$ZDOTDIR/.zshrc" ] && . "$ZDOTDIR/.zshrc"; . "$RUNNR_FUNCTIONS"` + "\n",
+			".zshrc": `ZDOTDIR="$RUNNR_ZDOTDIR"; [ -f "$ZDOTDIR/.zshrc" ] && . "$ZDOTDIR/.zshrc"; . "$RUNNR_FUNCTIONS"` + "\n" +
+				varsHook + "autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook precmd runnr_vars_refresh && add-zsh-hook preexec runnr_vars_refresh\n",
 		}
 		for name, body := range files {
 			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 				return nil, nil, done, err
 			}
 		}
-		return x.command(context.Background(), sh), []string{"ZDOTDIR=" + dir, "RUNNR_ZDOTDIR=" + orig}, done, nil
+		return x.command(context.Background(), sh), append([]string{"ZDOTDIR=" + dir, "RUNNR_ZDOTDIR=" + orig}, vars...), done, nil
 	case "bash":
 		rc := filepath.Join(dir, "bashrc")
-		body := `[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"; . "$RUNNR_FUNCTIONS"` + "\n"
+		body := `[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"; . "$RUNNR_FUNCTIONS"` + "\n" +
+			varsHook + `PROMPT_COMMAND="runnr_vars_refresh${PROMPT_COMMAND:+;$PROMPT_COMMAND}"` + "\n"
 		if err := os.WriteFile(rc, []byte(body), 0o600); err != nil {
 			return nil, nil, done, err
 		}
-		return x.command(context.Background(), sh, "--rcfile", rc, "-i"), nil, done, nil
+		return x.command(context.Background(), sh, "--rcfile", rc, "-i"), vars, done, nil
 	case "sh", "dash", "ksh":
 		// An interactive POSIX shell reads $ENV: the operator's (if any), then the functions.
 		rc := filepath.Join(dir, "shrc")

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -92,5 +93,33 @@ steps:
 	}
 	if !strings.Contains(transcript, "[hi world here yes]") || !strings.Contains(transcript, "ok!") {
 		t.Fatalf("transcript %q", transcript)
+	}
+}
+
+// A shell opened early sees what later steps publish, secrets too: it
+// reads the run's values again before a prompt when they've changed.
+func TestShellSeesLaterValues(t *testing.T) {
+	for _, sh := range []string{"/bin/zsh", "/bin/bash"} {
+		if _, err := os.Stat(sh); err != nil {
+			continue
+		}
+		t.Run(sh, func(t *testing.T) {
+			home := t.TempDir()
+			os.WriteFile(home+"/.zshenv", []byte("skip_global_compinit=1\n"), 0o644)
+			t.Setenv("HOME", home)
+			t.Setenv("ZDOTDIR", "")
+			rb := mustParse(t, "name: t\nshell: "+sh+"\nsteps:\n  - {name: a, run: 'sleep 0.3'}\n  - {name: b, run: 'late=yes; pw=s3cr3t', outputs: [late], secret_outputs: [pw]}\n  - {name: c, run: 'sleep 2'}\n")
+			ui := &asideUI{stepper: stepper{keys: "sleep 1.2\necho \"X=$late P=$pw\"; exit\n"}, err: make(chan error, 1)}
+			run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
+			if err := <-ui.err; err != nil {
+				t.Fatal(err)
+			}
+			if run.Status != StatusSucceeded {
+				t.Fatalf("%s %+v", run.Status, run.Steps[0])
+			}
+			if tr := strings.Join(run.Steps[0].Shells, "\n"); !strings.Contains(tr, "X=yes") {
+				t.Fatalf("transcript %q", tr)
+			}
+		})
 	}
 }

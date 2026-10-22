@@ -131,6 +131,7 @@ func OpenShell(ctx context.Context, spec ShellSpec, conn TermConn) (string, erro
 	p := NewPreviewer(spec.Runbook, spec.Vars, spec.State, false)
 	x := p.x
 	x.opts = spec.Options
+	x.vf.off = true
 	x.run.ID = spec.RunID
 	if err := x.setupFunctions(); err != nil {
 		conn.Close()
