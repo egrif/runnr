@@ -130,9 +130,9 @@ func TestShellSeesLaterValues(t *testing.T) {
 // on, in one place, kept up to date.
 func TestShellAsideRecordedWhileOpen(t *testing.T) {
 	rb := mustParse(t, "name: t\nshell: sh\nsteps:\n  - {name: a, run: 'sleep 0.6'}\n  - {name: b, run: 'sleep 0.6'}\n  - {name: c, run: 'true'}\n")
-	ui := &asideUI{stepper: stepper{keys: "echo first\nsleep 0.3; echo sec\"\"ond\nsleep 2; exit\n"}, err: make(chan error, 1)}
+	ui := &asideUI{stepper: stepper{keys: "echo fi\"\"rst\nsleep 0.3; echo sec\"\"ond\nsleep 2; exit\n"}, err: make(chan error, 1)}
 	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true})
-	if sh := run.Steps[0].Shells; run.Status != StatusSucceeded || len(sh) != 1 || !strings.Contains(sh[0], "] first") || !strings.Contains(sh[0], "] second") {
+	if sh := run.Steps[0].Shells; run.Status != StatusSucceeded || len(sh) != 1 || !regexp.MustCompile(`(?m)^\[\d\d:\d\d:\d\d\] .*first$`).MatchString(sh[0]) || !strings.Contains(sh[0], "second") {
 		t.Fatalf("%s %q", run.Status, sh)
 	}
 	select {
