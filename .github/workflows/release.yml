@@ -1,0 +1,98 @@
+# Tests every pull request and push to main. Then releases what
+# CHANGELOG.md says to: when the top section names a version ("## v1.2.3 —
+# unreleased") that has no tag yet, a push to main dates it, tags it,
+# builds the binaries and publishes the release with the section's notes.
+# "## Unreleased" (no version) gathers changes without releasing them.
+name: test and release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq zsh tmux >/dev/null
+          go vet ./...
+          go test ./...
+
+  release:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: What to release
+        id: what
+        run: |
+          v=$(.github/scripts/changelog.sh version)
+          if [[ -z $v ]]; then
+            echo "The top of CHANGELOG.md names no version: nothing to release."
+          elif git rev-parse -q --verify "refs/tags/$v" >/dev/null; then
+            echo "$v is tagged already: nothing to release."
+            v=
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        if: steps.what.outputs.version != ''
+        with:
+          go-version-file: go.mod
+
+      - name: Date the release in CHANGELOG.md
+        if: steps.what.outputs.version != ''
+        env:
+          V: ${{ steps.what.outputs.version }}
+        run: |
+          if [[ $(.github/scripts/changelog.sh dated) == no ]]; then
+            .github/scripts/changelog.sh date "$V" "$(TZ=America/New_York date +%F)"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -am "Release $V"
+            git push origin HEAD:main
+          fi
+
+      - name: Build
+        if: steps.what.outputs.version != ''
+        env:
+          V: ${{ steps.what.outputs.version }}
+        run: |
+          mkdir -p dist
+          for target in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64; do
+            os=${target%/*} arch=${target#*/}
+            out=dist/runnr-$V-$os-$arch
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X github.com/egrif/runnr/internal/cli.version=$V" -o "$out/runnr" ./cmd/runnr
+            tar -C "$out" -czf "$out.tar.gz" runnr
+          done
+          (cd dist && sha256sum *.tar.gz > checksums.txt)
+
+      - name: Tag and publish
+        if: steps.what.outputs.version != ''
+        env:
+          V: ${{ steps.what.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/changelog.sh notes "$V" > notes.md
+          git tag -a "$V" -m "runnr $V"
+          git push origin "$V"
+          gh release create "$V" --verify-tag --title "runnr $V" --notes-file notes.md dist/*.tar.gz dist/checksums.txt

@@ -624,3 +624,16 @@ examples/           sample runbooks
 
 The engine never talks to a human directly; the CLI, GUI and unattended modes
 are each an `engine.Interactor`.
+
+## Releasing
+
+Releases come from CHANGELOG.md. Add your changes under its top section:
+
+- `## v1.2.3 — unreleased` releases when it reaches `main`: GitHub Actions
+  runs the tests, dates the section, tags `v1.2.3`, builds runnr for macOS
+  and Linux (amd64, arm64) and publishes the release with the section as
+  its notes. A patch, minor or major release is just the version you write.
+- `## Unreleased` (no version) gathers changes without releasing them; give
+  it a version when it's time.
+
+Every pull request runs the tests too.
