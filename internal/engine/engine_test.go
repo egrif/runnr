@@ -974,6 +974,9 @@ func TestFunctionsInShells(t *testing.T) {
 			home := t.TempDir()
 			// The user's own config still loads, before the run's functions.
 			os.WriteFile(home+"/.zshrc", []byte("myalias_ok() { echo user-config }\n"), 0o644)
+			// Ubuntu's /etc/zsh/zshrc runs compinit, which can stop to ask about
+			// insecure directories (as on CI runners); a user can skip it so.
+			os.WriteFile(home+"/.zshenv", []byte("skip_global_compinit=1\n"), 0o644)
 			os.WriteFile(home+"/.bashrc", []byte("myalias_ok() { echo user-config; }\n"), 0o644)
 			t.Setenv("HOME", home)
 			t.Setenv("ZDOTDIR", "")
