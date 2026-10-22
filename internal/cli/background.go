@@ -33,7 +33,9 @@ func (t *Terminal) StartBackground(idx int, title string) engine.TermConn {
 	if t.bg == nil {
 		t.bg = map[int]*bgView{}
 	}
-	t.bg[idx] = &bgView{idx: idx, title: title, conn: c}
+	// Keyed by when it started: a step can have a background job of the
+	// operator's as well as its own.
+	t.bg[len(t.bg)] = &bgView{idx: idx, title: title, conn: c}
 	fmt.Fprintln(t.out, t.c("36", "  ◐ started in the background · press w at any prompt to watch it"))
 	return c
 }

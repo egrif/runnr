@@ -1288,14 +1288,16 @@ runbook's shell, else your $SHELL) with
 everything they published, plus inputs and the runbook's env, in the
 environment. Nothing is recorded in history.
 
-Given a run ID, the shell uses that run's runbook and inputs (secret inputs
-are asked for again).`,
+Given a run ID, the shell uses that run's runbook, inputs and the values its
+steps have published so far, as last saved (secret inputs are asked for
+again; secret values can't be restored).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isTTY(os.Stdin) {
 				return errors.New("runnr shell needs a terminal")
 			}
 			base := map[string]string{}
+			var state map[string]string
 			rb, _, err := s().Resolve(args[0])
 			if err != nil {
 				prev, rerr := s().LoadRun(args[0])
@@ -1306,6 +1308,8 @@ are asked for again).`,
 					return err
 				}
 				base = engine.ResumeInputs(prev)
+				// What the run has published so far, as it last saved it.
+				state = engine.ResumeState(prev)
 			}
 			for _, kv := range vars {
 				k, v, ok := strings.Cut(kv, "=")
@@ -1322,7 +1326,7 @@ are asked for again).`,
 			if err != nil {
 				return err
 			}
-			run := engine.Execute(ctx, rb, term, "", engine.Options{Vars: base, Interactive: true, ShellOnly: true, Libraries: libs})
+			run := engine.Execute(ctx, rb, term, "", engine.Options{Vars: base, State: state, Interactive: true, ShellOnly: true, Libraries: libs})
 			if run.Status != engine.StatusSucceeded {
 				return ExitError{1}
 			}

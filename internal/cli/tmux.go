@@ -344,8 +344,24 @@ func (d *tmuxDetacher) Start(idx int, title string, spec engine.DetachedSpec) (e
 	if err := os.WriteFile(filepath.Join(spec.Tmp, "spec.json"), b, 0o600); err != nil {
 		return nil, err
 	}
-	pane, err := d.srv.run("new-window", "-d", "-t", d.session+":", "-n", fmt.Sprintf("bg %d", idx+1), "-P", "-F", "#{pane_id}",
-		shellQuote([]string{d.exe, "__detached", spec.Tmp}))
+	run := shellQuote([]string{d.exe, "__detached", spec.Tmp})
+	if spec.Pane {
+		// Beside the run's own pane, with the keyboard; it closes when it ends.
+		at := os.Getenv("TMUX_PANE")
+		if at == "" {
+			at = d.session + ":run.0"
+		}
+		pane, err := d.srv.run("split-window", "-v", "-t", at, "-l", "45%", "-P", "-F", "#{pane_id}", run)
+		if err != nil {
+			return nil, err
+		}
+		// The session keeps panes that end (to show how a step ended); a
+		// shell's pane goes when it's done.
+		_, _ = d.srv.run("set-option", "-p", "-t", pane, "remain-on-exit", "off")
+		_, _ = d.srv.run("select-pane", "-t", pane, "-T", title)
+		return newTmuxJob(tmuxRef{Server: d.srv, Session: d.session, Pane: pane, Tmp: spec.Tmp}), nil
+	}
+	pane, err := d.srv.run("new-window", "-d", "-t", d.session+":", "-n", fmt.Sprintf("bg %d", idx+1), "-P", "-F", "#{pane_id}", run)
 	if err != nil {
 		return nil, err
 	}
@@ -466,9 +482,16 @@ func detachedMain(args []string) int {
 		return 1
 	}
 	defer logf.Close()
-	fmt.Printf("\x1b[1mrunnr · background %s\x1b[0m\n\n", spec.Title)
+	if spec.Pane {
+		fmt.Printf("\x1b[1mrunnr · %s\x1b[0m \x1b[2m(the run's variables; echo name=value >> \"$RUNNR_OUTPUT\" publishes; exit to close)\x1b[0m\n\n", spec.Title)
+	} else {
+		fmt.Printf("\x1b[1mrunnr · background %s\x1b[0m\n\n", spec.Title)
+	}
 
 	cmd := exec.Command(spec.Shell, "-c", spec.Command)
+	if len(spec.Args) > 0 {
+		cmd = exec.Command(spec.Args[0], spec.Args[1:]...)
+	}
 	cmd.Env, cmd.Dir = spec.Env, spec.Dir
 	ptmx, err := pty.Start(cmd)
 	if err != nil {

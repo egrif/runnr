@@ -36,6 +36,10 @@ func (d *fakeDetacher) Start(idx int, _ string, s DetachedSpec) (DetachedJob, er
 	d.n++
 	j := &fakeJob{ref: "job" + string(rune('0'+d.n)), done: make(chan struct{})}
 	j.cmd = exec.Command(s.Shell, "-c", s.Command)
+	if s.Pane {
+		// A shell in a pane: the operator publishes a value and leaves.
+		j.cmd = exec.Command("sh", "-c", `echo from_pane=hi >> "$RUNNR_OUTPUT"; echo in the pane`)
+	}
 	j.cmd.Env, j.cmd.Dir, j.cmd.Stdout = s.Env, s.Dir, &j.out
 	if err := j.cmd.Start(); err != nil {
 		return nil, err

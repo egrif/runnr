@@ -276,6 +276,14 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 		extra += " · [w]atch background"
 		all["w"], all["watch"] = "\x00watch", "\x00watch"
 	}
+	if ps, ok := t.session.(engine.PaneSheller); ok && ps.CanPane() {
+		extra += " · [p]ane shell"
+		all["p"], all["pane"] = "\x00pane", "\x00pane"
+	}
+	if _, ok := t.session.(engine.JobStarter); ok && idx >= 0 {
+		extra += " · [b]ackground command"
+		all["b"], all["background"] = "\x00job", "\x00job"
+	}
 	if _, ok := t.session.(engine.Navigator); ok && idx >= 0 {
 		extra += " · [g]o to step"
 		all["g"], all["goto"] = "\x00goto", "\x00goto"
@@ -324,6 +332,28 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 		case "\x00watch":
 			if err := t.watch(ctx); err != nil {
 				return "", err
+			}
+		case "\x00pane":
+			if err := t.session.(engine.PaneSheller).ShellInPane(idx); err != nil {
+				fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
+			} else {
+				fmt.Fprintln(t.out, t.c("2", "  a shell opened in a pane below: what it publishes reaches the run when the next step starts"))
+			}
+		case "\x00job":
+			fmt.Fprint(t.out, "  command to run in the background (with the run's environment): ")
+			line, err := t.readLine(ctx)
+			if err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if err := t.session.(engine.JobStarter).StartJob(idx, line); err != nil {
+				fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
+			} else if ps, ok := t.session.(engine.PaneSheller); ok && ps.CanPane() {
+				fmt.Fprintln(t.out, t.c("2", "  started in a window of its own (it ends with the run, unless it ends first)"))
+			} else {
+				fmt.Fprintln(t.out, t.c("2", "  started: [w]atch it (it ends with the run, unless it ends first)"))
 			}
 		case "\x00goto":
 			if err := t.goTo(ctx, idx); err != nil {

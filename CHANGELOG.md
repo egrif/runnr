@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.3.1 — 2026-10-22
+
+More ways to work beside a run in the CLI.
+
+### Added
+
+- **`b` at a step prompt**: run a command in the background with the run's
+  environment: a window of its own under `--tmux`, else watched with `w`.
+  Recorded with the step; it ends with the run unless it ends first.
+- **`p` at a step prompt (under `--tmux`)**: a shell with the run's
+  variables in a pane beside the run, without holding up the prompt. What
+  it publishes reaches the run at the next step; the session is recorded
+  with the step.
+
+### Fixed
+
+- `runnr shell <run-id>`, and so the shell pane of a `--tmux` run, has the
+  values the run's steps published (as last saved), not only its inputs
+  and setup steps.
+
 ## v0.3.0 — 2026-10-22
 
 Move about a run, and stop a step without stopping the run.

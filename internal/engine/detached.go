@@ -22,10 +22,14 @@ type Detacher interface {
 
 // DetachedSpec is what a detached background step runs.
 type DetachedSpec struct {
-	Shell   string   `json:"shell"`
-	Command string   `json:"command"`
-	Env     []string `json:"env"`
-	Dir     string   `json:"dir,omitempty"`
+	Shell   string `json:"shell"`
+	Command string `json:"command"`
+	// Args, if set, is run as it is instead (an interactive shell).
+	Args []string `json:"args,omitempty"`
+	// Pane opens it in a pane beside the run instead of a window of its own.
+	Pane bool     `json:"pane,omitempty"`
+	Env  []string `json:"env"`
+	Dir  string   `json:"dir,omitempty"`
 	// Tmp is the step's own directory ($RUNNR_OUTPUT is in it); the job
 	// keeps its exit status and output there too.
 	Tmp string `json:"tmp"`

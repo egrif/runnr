@@ -164,6 +164,13 @@ At any step prompt you can also:
   with the step. `echo name=value >> "$RUNNR_OUTPUT"`
   in that shell publishes a value to later steps. Ctrl-C in the shell doesn't
   touch the run.
+- **`b`**: run a command in the background with the run's environment (a
+  window of its own under `--tmux`; else `w` watches it). It's recorded
+  with the step, and ends with the run unless it ends first.
+- **`p`** (under `--tmux`): a shell like `!`, in a pane beside the run, so
+  the prompt stays where it is. What it publishes
+  (`echo name=value >> "$RUNNR_OUTPUT"`) reaches the run when the next step
+  starts, and the session is recorded with the step; `exit` closes the pane.
 - **`g`**: go to a step: back (Enter: the step before; it and the steps
   after it run again), this step again, or ahead (the steps between are
   skipped, "jumped over"). The step gone to waits for you before it runs.
@@ -441,7 +448,8 @@ is kept in your browser; Reset layout puts it back.
 tmux session, so the run outlives the terminal: close it, lose the ssh
 connection, then `runnr attach` (or detach on purpose with the prefix key and
 `d`). Beside the run are `runnr watch` (the steps, live) and a shell with the
-run's variables. Each background step gets a window of its own and runs
+run's variables (as they were when it opened; `p` at a prompt opens a fresh
+one whose published values reach the run). Each background step gets a window of its own and runs
 outside runnr: if the run fails or is aborted while one is running (a
 Terraform apply, say), it's left running, and `runnr resume --tmux` follows it
 again. Without `--tmux`, background steps end with the run, and resuming

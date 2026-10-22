@@ -502,55 +502,11 @@ func (x *executor) startBackground(ctx context.Context, i int, step runbook.Step
 		x.stepDone(i)
 		return nil
 	}
-	shell := nonEmpty(step.Shell, nonEmpty(x.rb.Shell, "sh"))
-	extra, err := x.runnrEnv(step)
+	job, tmp, ref, err := x.launchJob(ctx, i, step, cmd, fmt.Sprintf("step %d: %s", i+1, step.Name))
 	if err != nil {
 		return x.fail(i, err)
 	}
-	dir, err := x.render(step.Dir)
-	if err != nil {
-		return x.fail(i, fmt.Errorf("dir: %w", err))
-	}
-	tmp, err := x.tempDir("runnr-bg-")
-	if err != nil {
-		return x.fail(i, err)
-	}
-	extra = append(extra, "RUNNR_OUTPUT="+filepath.Join(tmp, "output"), "RUNNR_SECRET="+filepath.Join(tmp, "secret"))
-	if cmd, err = x.withPrelude(cmd, tmp); err != nil {
-		return x.fail(i, err)
-	}
-
-	title := fmt.Sprintf("background · step %d: %s", i+1, step.Name)
-	var job bgJob
-	if d := x.opts.Detached; d != nil {
-		env, err := x.env(step)
-		if err != nil {
-			os.RemoveAll(tmp)
-			return x.fail(i, err)
-		}
-		env = append(env, "RUNNR_OUTPUT="+filepath.Join(tmp, "output"), "RUNNR_SECRET="+filepath.Join(tmp, "secret"))
-		dj, err := d.Start(i, fmt.Sprintf("step %d: %s", i+1, step.Name), DetachedSpec{Shell: shell, Command: cmd, Env: env, Dir: dir, Tmp: tmp})
-		if err != nil {
-			os.RemoveAll(tmp)
-			return x.fail(i, err)
-		}
-		job, res.Detached = dj, dj.Ref()
-	} else {
-		var conn TermConn
-		if h, ok := x.ui.(BackgroundHost); ok {
-			conn = h.StartBackground(i, title)
-		} else {
-			conn = NewBackgroundConn(40, 140)
-		}
-		// The session belongs to the run, not this step.
-		s, err := x.startTerm(ctx, shell, cmd, extra, dir, conn)
-		if err != nil {
-			conn.Close()
-			os.RemoveAll(tmp)
-			return x.fail(i, err)
-		}
-		job = s
-	}
+	res.Detached = ref
 	stopAfter := -1
 	note := "running in the background until the run ends"
 	if step.StopAfter != "" {
@@ -566,10 +522,64 @@ func (x *executor) startBackground(ctx context.Context, i int, step runbook.Step
 	return nil
 }
 
+// launchJob starts cmd in the background with step i's environment: in a
+// window of its own if runs are detached (tmux), else on a terminal of the
+// run's. tmp is the job's directory ($RUNNR_OUTPUT is in it); ref finds a
+// detached job again.
+func (x *executor) launchJob(ctx context.Context, i int, step runbook.Step, cmd, name string) (job bgJob, tmp, ref string, err error) {
+	shell := nonEmpty(step.Shell, nonEmpty(x.rb.Shell, "sh"))
+	x.vmu.RLock()
+	extra, err := x.runnrEnv(step)
+	var dir string
+	if err == nil {
+		dir, err = x.render(step.Dir)
+		if err != nil {
+			err = fmt.Errorf("dir: %w", err)
+		}
+	}
+	x.vmu.RUnlock()
+	if err != nil {
+		return nil, "", "", err
+	}
+	if tmp, err = x.tempDir("runnr-bg-"); err != nil {
+		return nil, "", "", err
+	}
+	outs := []string{"RUNNR_OUTPUT=" + filepath.Join(tmp, "output"), "RUNNR_SECRET=" + filepath.Join(tmp, "secret")}
+	extra = append(extra, outs...)
+	if cmd, err = x.withPrelude(cmd, tmp); err != nil {
+		os.RemoveAll(tmp)
+		return nil, "", "", err
+	}
+	if d := x.opts.Detached; d != nil {
+		env := append(x.baseEnv(), extra...)
+		dj, err := d.Start(i, name, DetachedSpec{Shell: shell, Command: cmd, Env: env, Dir: dir, Tmp: tmp})
+		if err != nil {
+			os.RemoveAll(tmp)
+			return nil, "", "", err
+		}
+		return dj, tmp, dj.Ref(), nil
+	}
+	var conn TermConn
+	if h, ok := x.ui.(BackgroundHost); ok {
+		conn = h.StartBackground(i, "background · "+name)
+	} else {
+		conn = NewBackgroundConn(40, 140)
+	}
+	// The session belongs to the run, not this step.
+	s, err := x.startTerm(ctx, shell, cmd, extra, dir, conn)
+	if err != nil {
+		conn.Close()
+		os.RemoveAll(tmp)
+		return nil, "", "", err
+	}
+	return s, tmp, "", nil
+}
+
 // tendBackground records background steps that ended on their own, and
 // stops those whose stop_after step (finished) is just reached. Pass
 // finished = -1 to only check; final stops everything (run ending).
 func (x *executor) tendBackground(finished int, final bool) {
+	x.tendJobs(final)
 	for i, b := range x.background {
 		ended := false
 		select {

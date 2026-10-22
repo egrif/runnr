@@ -59,6 +59,9 @@ type StepResult struct {
 	Notes    []Note `json:"notes,omitempty"`
 	// Shells are transcripts of shells the operator opened at this step.
 	Shells []string `json:"shells,omitempty"`
+	// Jobs are commands the operator started in the background at this
+	// step, with the run's environment.
+	Jobs []JobRecord `json:"jobs,omitempty"`
 	// Checks holds the latest attempt of a group of checks.
 	Checks []CheckResult `json:"checks,omitempty"`
 	// Way is the way the step was done, when it has several.
@@ -456,6 +459,10 @@ type executor struct {
 	reopenTo, pauseAt int
 	// stop stops the step whose command is running (nil: none).
 	stop *stepStop
+	// runCtx is the run's context; jobs are the operator's background
+	// commands still running.
+	runCtx context.Context
+	jobs   []*adhocJob
 	// windowOpenedBy is the step that opened the maintenance window in
 	// this run (-1: none, or it was open already when resuming).
 	windowOpenedBy int
@@ -483,7 +490,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	own := *rb
 	own.Steps = slices.Clone(rb.Steps)
 	rb = &own
-	x := &executor{rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
+	x := &executor{runCtx: ctx, rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
