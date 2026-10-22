@@ -132,7 +132,10 @@ func startTmuxRun(args []string, runbookName, id string) error {
 		return err
 	}
 	rn := shellQuote(append([]string{exe}, storeFlags...))
-	shell, err := pane("sh", "-c", fmt.Sprintf(`printf 'A shell with the run'"'"'s variables opens here once its first step starts…\n'; %[1]s __waitrun %[2]s && clear && exec %[1]s shell %[2]s`, rn, id))
+	// The run's own process starts the shell here once its steps begin (with
+	// every value, secrets too); if it doesn't, runnr shell (the run's saved
+	// values, without secrets) does.
+	shell, err := pane("sh", "-c", fmt.Sprintf(`printf 'A shell with the run'"'"'s variables opens here once its first step starts…\n'; %[1]s __waitrun %[2]s && sleep 8 && clear && exec %[1]s shell %[2]s`, rn, id))
 	if err != nil {
 		return err
 	}
@@ -345,6 +348,14 @@ func (d *tmuxDetacher) Start(idx int, title string, spec engine.DetachedSpec) (e
 		return nil, err
 	}
 	run := shellQuote([]string{d.exe, "__detached", spec.Tmp})
+	if spec.Pane && spec.PaneAt != "" {
+		// The layout's shell pane: the run's own process starts the shell there.
+		if _, err := d.srv.run("respawn-pane", "-k", "-t", spec.PaneAt, run); err != nil {
+			return nil, err
+		}
+		_, _ = d.srv.run("select-pane", "-t", spec.PaneAt, "-T", title)
+		return newTmuxJob(tmuxRef{Server: d.srv, Session: d.session, Pane: spec.PaneAt, Tmp: spec.Tmp}), nil
+	}
 	if spec.Pane {
 		// Beside the run's own pane, with the keyboard; it closes when it ends.
 		at := os.Getenv("TMUX_PANE")
@@ -645,4 +656,24 @@ func shellQuote(argv []string) string {
 		}
 	}
 	return strings.Join(q, " ")
+}
+
+// layoutShellPane is the --tmux layout's shell pane, if this runnr runs in
+// one (the run's own pane is in the session's "run" window).
+func layoutShellPane() string {
+	name := os.Getenv(envTmuxSession)
+	if name == "" || os.Getenv("TMUX_PANE") == "" {
+		return ""
+	}
+	srv := tmuxServer{Socket: os.Getenv(envTmuxSocket)}
+	out, err := srv.run("list-panes", "-t", name+":run", "-F", "#{pane_id} #{pane_title}")
+	if err != nil {
+		return ""
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if id, title, ok := strings.Cut(strings.TrimSpace(l), " "); ok && strings.HasPrefix(title, "shell (the run") {
+			return id
+		}
+	}
+	return ""
 }

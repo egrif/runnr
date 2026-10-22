@@ -167,6 +167,11 @@ At any step prompt you can also:
 - **`b`**: run a command in the background with the run's environment (a
   window of its own under `--tmux`; else `w` watches it). It's recorded
   with the step, and ends with the run unless it ends first.
+- Shells opened during a run (`!`, `p`, the `--tmux` shell pane, the
+  console's) keep up with it: zsh reads the run's values again before each
+  prompt and command, bash before each prompt, so what later steps publish
+  (secrets too) is there. They're in a file only you can read
+  (`$RUNNR_VARS`), removed when the run ends.
 - **`p`** (under `--tmux`): a shell like `!`, in a pane beside the run, so
   the prompt stays where it is. What it publishes
   (`echo name=value >> "$RUNNR_OUTPUT"`) reaches the run when the next step
@@ -448,8 +453,8 @@ is kept in your browser; Reset layout puts it back.
 tmux session, so the run outlives the terminal: close it, lose the ssh
 connection, then `runnr attach` (or detach on purpose with the prefix key and
 `d`). Beside the run are `runnr watch` (the steps, live) and a shell with the
-run's variables (as they were when it opened; `p` at a prompt opens a fresh
-one whose published values reach the run). Each background step gets a window of its own and runs
+run's variables, secrets included, opened by the run itself: what it
+publishes reaches the run (`p` at a prompt opens another). Each background step gets a window of its own and runs
 outside runnr: if the run fails or is aborted while one is running (a
 Terraform apply, say), it's left running, and `runnr resume --tmux` follows it
 again. Without `--tmux`, background steps end with the run, and resuming

@@ -463,6 +463,8 @@ type executor struct {
 	// commands still running.
 	runCtx context.Context
 	jobs   []*adhocJob
+	// vf is the run's values for its shells (varsfile.go).
+	vf varsFile
 	// windowOpenedBy is the step that opened the maintenance window in
 	// this run (-1: none, or it was open already when resuming).
 	windowOpenedBy int
@@ -578,6 +580,7 @@ func (x *executor) finish(ctx context.Context, err error) {
 	// What shells alongside the run left is taken; any still open carry on.
 	x.endAside()
 	x.tendBackground(-1, true)
+	x.removeVars()
 	if x.funcFile != "" {
 		os.Remove(x.funcFile)
 	}
@@ -895,6 +898,7 @@ func (x *executor) addSecret(v string, force bool) {
 
 // refreshState records the run's current variables (masked) and which are secret.
 func (x *executor) refreshState() {
+	x.writeVars()
 	x.run.State = x.State()
 	x.run.Secrets = x.run.Secrets[:0]
 	for k := range x.secretVars {

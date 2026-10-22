@@ -97,6 +97,13 @@ func (t *Terminal) Notify(e engine.Event) {
 	case engine.EventRunStarted:
 		t.runID = e.Run.ID
 		fmt.Fprintf(t.out, "%s %s  %s\n", t.c("1", "runnr"), e.Run.Runbook, t.c("2", e.Run.ID))
+		// Under --tmux, the layout's shell pane gets a shell from this
+		// process: the run's values, secrets included (not the saved ones).
+		if ps, ok := t.session.(engine.PaneSheller); ok && ps.CanPane() {
+			if at := layoutShellPane(); at != "" {
+				go func() { _ = ps.ShellInPaneAt(-1, at) }() // not under Notify: it notifies too
+			}
+		}
 	case engine.EventStepStarted:
 		fmt.Fprintln(t.out, t.header(e.Step, e.Result, false))
 		if t.session != nil {

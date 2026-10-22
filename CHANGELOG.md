@@ -16,9 +16,14 @@ More ways to work beside a run in the CLI.
 
 ### Fixed
 
-- `runnr shell <run-id>`, and so the shell pane of a `--tmux` run, has the
-  values the run's steps published (as last saved), not only its inputs
-  and setup steps.
+- `runnr shell <run-id>` has the values the run's steps published (as last
+  saved), not only its inputs and setup steps.
+- The shell pane of a `--tmux` run is opened by the run itself, so it has
+  every value, secrets included; what it publishes reaches the run.
+- Shells opened during a run (that pane, `p`, `!`, the console's) see what
+  later steps publish, secrets too: zsh reads the run's values again before
+  each prompt and command, bash before each prompt. They're kept in a file
+  only you can read, removed when the run ends.
 
 ## v0.3.0 — 2026-10-22
 

@@ -44,6 +44,9 @@ type JobStarter interface {
 type PaneSheller interface {
 	CanPane() bool
 	ShellInPane(idx int) error
+	// ShellInPaneAt opens it in pane (one the session's layout made)
+	// instead of a new one.
+	ShellInPaneAt(idx int, pane string) error
 }
 
 var (
@@ -110,7 +113,9 @@ func (x *executor) tendJobs(final bool) {
 
 func (x *executor) CanPane() bool { return x.opts.Detached != nil }
 
-func (x *executor) ShellInPane(i int) error {
+func (x *executor) ShellInPane(i int) error { return x.ShellInPaneAt(i, "") }
+
+func (x *executor) ShellInPaneAt(i int, at string) error {
 	d := x.opts.Detached
 	if d == nil {
 		return errors.New("a shell in a pane needs the run in tmux (runnr run --tmux)")
@@ -146,14 +151,19 @@ func (x *executor) ShellInPane(i int) error {
 		return err
 	}
 	env := append(append(append(x.baseEnv(), extra...), shellEnv...), "RUNNR_OUTPUT="+outFile, "RUNNR_SECRET="+secFile, "RUNNR_SHELL=1", "TERM="+termName())
-	title := fmt.Sprintf("shell at step %d: %s", i+1, step.Name)
-	job, err := d.Start(i, title, DetachedSpec{Args: cmd.Args, Env: env, Dir: dir, Tmp: tmp, Pane: true})
+	title := "shell (the run's variables)"
+	if i >= 0 {
+		title = fmt.Sprintf("shell at step %d: %s", i+1, step.Name)
+	}
+	job, err := d.Start(i, title, DetachedSpec{Args: cmd.Args, Env: env, Dir: dir, Tmp: tmp, Pane: true, PaneAt: at})
 	if err != nil {
 		cleanup()
 		os.RemoveAll(tmp)
 		return err
 	}
-	x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "⌨ a shell opened in a pane beside the run: what it publishes reaches the run when the next step starts"})
+	if at == "" {
+		x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "⌨ a shell opened in a pane beside the run: what it publishes reaches the run when the next step starts"})
+	}
 	go func() {
 		<-job.Done()
 		_, transcript, _ := job.Wait()
