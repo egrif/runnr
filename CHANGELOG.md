@@ -2,7 +2,7 @@
 
 ## v0.4.0 — 2026-10-22
 
-A resume carries the same run on.
+A resume carries the same run on, and console shells follow the run.
 
 ### Changed
 
@@ -22,6 +22,17 @@ A resume carries the same run on.
   points back at the old one, as before (not from a changed runbook).
 - Under `--tmux`, a resumed run's session is `runnr-<runbook>-r2-<id>` (the
   earlier session may still hold background steps the resume follows).
+
+- **Console shells follow the run**: as the run goes on to each step, a
+  Shell pane's shell is ended and opened again at the new step, unless
+  it's pinned (📌, off by default); ↻ reopens it at the current step.
+- **Shell transcripts are kept while open**: a shell alongside the run is
+  recorded with its step so far at each step and when the run ends, not
+  only when it's closed. A shell nothing was entered in isn't recorded.
+- **Timed shell lines**: each line of an interactive shell's transcript
+  carries the time it was entered or printed (`[15:04:05] …`).
+- When a background job starts and the console has no Background target
+  on screen, one is added.
 
 ### Fixed
 

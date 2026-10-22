@@ -484,10 +484,15 @@ background jobs in turn, each to the one with the fewest running) or Shell
 (there can be several), or Run log. A shell opens any time: before the run, with the
 runbook's environment and the inputs as filled in; while the steps run, at
 the step the run is on, alongside it (values it publishes reach the run
-when the next step starts, and it's recorded with the step); or after the
-run, with what it published. It stays open into the run's console and
-after the run ends, until you exit it, close its pane or leave the
-console; ↻ Reopen starts it again at the step the run is on now. A Run
+when the next step starts, and it's recorded with the step, each line with
+its time, so far as it's gone at each step and when the run ends, even if
+it's still open); or after the run, with what it published. As the run
+goes on to each step, the shell is ended and a new one opened at that
+step, unless its 📌 pin is on: a pinned shell stays open, and ↻ starts it
+again at the step the run is on now. It stays open into the run's console
+and after the run ends, until you exit it, close its pane or leave the
+console. When a background job starts and no Background target is on
+screen, one is added. A Run
 log pane shows every step's output, in order. While a step runs, ■ Stop
 step in the toolbar stops it. The layout is kept in your browser; Reset
 layout puts it back.

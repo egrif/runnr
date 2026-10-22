@@ -55,6 +55,7 @@ async function viewConsole(id) {
     const before = state.steps.findIndex((s) => s.status === "running");
     applyEvent(state, e);
     if (e.kind === "step_finished" || e.kind === "step_started") state.onState();
+    if (e.kind === "step_started") cxFollowShells(state);
     // Follow the run: the step it's on (or asking about) is the selected one.
     const at = state.question?.step === -1 ? -1 : cxCurrent(state);
     const moved = at !== before || e.kind === "question";
@@ -714,6 +715,8 @@ function cxHostTerms(state) {
   term.host = {
     started(s) {
       if (s.background) {
+        // No background target on screen: put one there.
+        cxEnsurePane(state, "background");
         cxBgAssign(state, s);
         (state.bgActiveBy ||= {})[s.bgPane] = s.id;
         return cxRenderBg(state);
@@ -724,7 +727,12 @@ function cxHostTerms(state) {
         const panes = cxLeafIds(state, "shell");
         const busy = (p) => [...term.sessions.values()].some((x) => x !== s && x.shellPane === p && !x.ended && !x.gone);
         const id = panes.includes(sh.pane) ? sh.pane : panes.find((p) => !busy(p));
-        if (id) { s.shellPane = sh.pane = id; cxRenderShells(state); s.xt.focus(); return; }
+        if (id) {
+          s.shellPane = sh.pane = id; cxRenderShells(state); s.xt.focus();
+          // The run may have gone on while it opened.
+          cxFollowShells(state);
+          return;
+        }
       }
       state.fg = s; state.actionTab = "term"; cxRenderAction(state); cxLayout(state); s.xt.focus();
     },
@@ -833,15 +841,20 @@ function cxRenderShells(state) {
     if (!pane) continue;
     const mine = [...term.sessions.values()].filter((x) => x.shellPane === id && !x.gone);
     const s = mine.find((x) => !x.ended) || mine[mine.length - 1];
-    const open = pane.querySelector("[data-sh-open]"), reopen = pane.querySelector("[data-sh-reopen]"), end = pane.querySelector("[data-sh-end]");
+    const open = pane.querySelector("[data-sh-open]"), reopen = pane.querySelector("[data-sh-reopen]"), end = pane.querySelector("[data-sh-end]"), pin = pane.querySelector("[data-sh-pin]");
+    const pinned = cxShellPins.has(id);
+    pin.classList.toggle("on", pinned);
+    pin.title = pinned
+      ? "Pinned: the shell stays open as the run goes from step to step (↻ reopens it at the step the run is on). Click to unpin."
+      : "Not pinned: as the run goes on to each step, the shell is ended (its transcript recorded with its step) and a new one opened at the new step. Click to pin it, keeping it open.";
+    pin.onclick = () => { cxShellPins[pinned ? "delete" : "add"](id); cxSavePins(); cxRenderShells(state); if (pinned) cxFollowShells(state); };
     const running = !!s && !s.ended;
     open.hidden = running;
     open.disabled = false;
     open.textContent = `⌨ Open shell${at}`;
     open.title = CX_SHELL_NOTE[phase];
     reopen.hidden = !running;
-    reopen.textContent = `↻ Reopen${at}`;
-    reopen.title = `End this shell and open a new one${at}, with the ${phase === "before" ? "inputs as they are now" : "run's values as they are now"}`;
+    reopen.title = `Reopen${at}: end this shell and open a new one${at}, with the ${phase === "before" ? "inputs as they are now" : "run's values as they are now"}`;
     end.hidden = !running;
     const outside = s && !/^shell alongside/.test(s.title);
     pane.querySelector(".cx-shell-title").textContent = s ? `${s.title.replace(/^shell (alongside the run · )?/, "")}${outside ? " · not recorded" : ""}${s.ended ? " · ended" : ""}` : "";
@@ -873,8 +886,31 @@ async function cxOpenShell(state, pane, cur) {
     : { run: state.run.id, step: 0 };
   try {
     const sh = await api("POST", "/api/shells", body);
+    // Where it opened, before its stream starts (cxFollowShells reads it).
+    cxShells.set(sh.id, { seq: -1, step: sh.step - 1, phase: sh.phase });
     cxShellStream(state, sh.id, pane);
   } catch (e) { toast(e.message); }
+}
+
+// Shell panes that are pinned keep their shell open from step to step;
+// the others follow the run: at each step, the shell is ended (recorded
+// with its step) and a new one opened at the step the run is on.
+const cxShellPins = new Set((() => { try { return JSON.parse(localStorage.getItem("runnr.shellPins") || "[]"); } catch { return []; } })());
+function cxSavePins() { try { localStorage.setItem("runnr.shellPins", JSON.stringify([...cxShellPins])); } catch {} }
+
+function cxFollowShells(state) {
+  if (cxShellPhase(state) !== "alongside") return;
+  const cur = cxCurrent(state);
+  if (cur < 0) return;
+  for (const id of cxLeafIds(state, "shell")) {
+    if (cxShellPins.has(id)) continue;
+    const s = [...term.sessions.values()].find((x) => x.shellPane === id && !x.ended && !x.gone);
+    const sh = s && cxShells.get(s.runId);
+    if (!sh || sh.reopening || (sh.phase === "alongside" && sh.step === cur)) continue;
+    sh.reopening = true;
+    sendTerm(s, { end: true });
+    cxOpenShell(state, id, cur);
+  }
 }
 
 // Shells opened from Shell panes are sessions of their own on the server

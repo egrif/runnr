@@ -60,8 +60,9 @@ their bars. Panes are the step list, the step's definition, what it's doing
 now (Step activity), a Step edit pane, the Terminal and Background targets,
 the Run log, and Shells. A Shell opens before the run, alongside it (at the
 step it's on, with the run's variables; what it publishes reaches the run
-at the next step), or after it, and ↻ Reopen starts it again at the current
-step. Here: the run waiting to put orders in read-only mode, a shell with
+at the next step; recorded with the step, each line timed), or after it.
+Unless pinned (📌), it's opened again at each step the run goes on to; ↻
+starts it again at the current step. Here: the run waiting to put orders in read-only mode, a shell with
 its variables, and the status board in the background.
 
 ![The run console: steps, the step waiting, a shell, the status board](screenshots/console.png)
