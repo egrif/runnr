@@ -6,11 +6,14 @@ Screenshots of the web GUI (`runnr serve`), using a demo runbook that moves an
 
 - [Runbooks](#runbooks)
 - [Running](#running)
+- [The run console](#the-run-console)
 - [HTML view](#html-view)
 - [Editing](#editing)
+- [Import and export](#import-and-export)
 - [Schedule](#schedule)
 - [Function libraries](#function-libraries)
 - [Collections](#collections)
+- [Manage](#manage)
 
 ## Runbooks
 
@@ -31,7 +34,11 @@ against its target.
 Steps stop for confirmations, manual instructions and failures. Each step shows
 what it's doing, its command and its output; ⚠ dangerous steps ask for a typed
 double check when they're run out of order. You can open a shell with the
-run's variables, add notes, or ✎ edit a step mid-run and run it again.
+run's variables, add notes, or ✎ edit a step mid-run and run it again. Under
+every question, ↺ Back to step N and Go to step move the run (back runs the
+steps from there again, ahead skips the ones between); ■ Stop step
+interrupts a step whose command is running without ending the run, and
+✎ Change inputs changes the inputs for the rest of the run.
 
 ![A run waiting for confirmation](screenshots/running.png)
 
@@ -39,6 +46,25 @@ Background steps (here, a status board) keep running in their own terminal tab
 while the run goes on; terminal steps run in the browser too.
 
 ![A background step's terminal](screenshots/running-terminal.png)
+
+A finished run can ⇩ Export logs (with the runs linked to it by resuming:
+raw logs to read, records to import elsewhere, one file or one per run) or
+be deleted. Selecting text anywhere (a terminal, code, output) copies it;
+Copy on select at the bottom of the sidebar turns that off.
+
+## The run console
+
+▣ Console puts a run on one screen, in panes you arrange: drag a pane by
+its bar onto another to split it or swap them, or split and close panes from
+their bars. Panes are the step list, the step's definition, what it's doing
+now (Step activity), a Step edit pane, the Terminal and Background targets,
+the Run log, and Shells. A Shell opens before the run, alongside it (at the
+step it's on, with the run's variables; what it publishes reaches the run
+at the next step), or after it, and ↻ Reopen starts it again at the current
+step. Here: the run waiting to put orders in read-only mode, a shell with
+its variables, and the status board in the background.
+
+![The run console: steps, the step waiting, a shell, the status board](screenshots/console.png)
 
 ## HTML view
 
@@ -59,6 +85,24 @@ do it (Scripted, Manual…) shows them as tabs. ▶ Run this tries a step with t
 values; 💬 marks YAML comments on fields; ⓘ explains every field.
 
 ![The structured editor](screenshots/editor.png)
+
+## Import and export
+
+⇪ Import… in the sidebar imports a project folder from the machine runnr
+runs on: its runbooks, libraries, fake libraries, test suites and run
+records. Placeholders such as `@PROJECT_DIR@` are filled in (others, like
+`@TEAM@` here, take the value you give), references are checked, and a
+library missing from the folder is found elsewhere in the repository. A
+name that's taken is never saved over without a choice; renaming a file
+renames the references to it.
+
+![Importing a project folder](screenshots/import.png)
+
+⇩ Export… on a runbook writes it, as written, with the libraries it uses
+beside it, so the folder imports again. Inputs that are paths (`type: dir`
+or `file`) get a Browse… button for this machine's folders and files.
+
+![Exporting a runbook with its libraries](screenshots/export.png)
 
 ## Schedule
 
@@ -87,3 +131,11 @@ Group runbooks that belong together. Drag a runbook between collections to move
 it (Alt/⌥ to add it to another as well); names and descriptions edit in place.
 
 ![Collections](screenshots/collections.png)
+
+## Manage
+
+Everything stored, by kind, with what uses each. Delete several at once (it
+says first what depends on them); deleted things keep their versions and
+can be restored here.
+
+![Manage: runbooks, libraries and collections, with what uses them](screenshots/manage.png)

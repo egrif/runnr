@@ -300,8 +300,9 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 		all["i"], all["inputs"] = "\x00inputs", "\x00inputs"
 	}
 	if _, ok := t.session.(engine.Editor); ok && idx >= 0 && t.canShell() {
-		extra += " · [c]hange step"
-		all["c"], all["change"] = "\x00change", "\x00change"
+		// m, not c: c already means continue at some prompts.
+		extra += " · [m]odify step"
+		all["m"], all["modify"], all["change"] = "\x00change", "\x00change", "\x00change"
 	}
 	for k, v := range opts {
 		all[k] = v

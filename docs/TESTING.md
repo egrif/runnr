@@ -80,7 +80,7 @@ that works, the scenario isn't run. Strict suites need macOS: elsewhere
 they refuse to run rather than run unprotected.
 
 ```yaml
-runbook: ghr-aurora-migration
+runbook: orders-db-migration
 strict: true
 allow: [base64]
 isolate: [aws, kubectl, terraform, psql, git]
@@ -219,6 +219,10 @@ again each time, so `failure: [retry, retry, abort]` retries twice.
 Suites and fake libraries are stored in runnr like runbooks and function
 libraries, versioned (`runnr tests import|list|show|delete`, `runnr fakes
 import|list|show|delete|check`). `runnr test` also takes a suite file, and
-`--fakes file.yaml` adds a library from a file, so tests can live in a repo
-beside the runbook. Recorded or hand-written fake data often names real
+`--fakes file.yaml` (and `--lib file.yaml` for a function library) add
+one from a file, so tests can live in a repo beside the runbook.
+`runnr import <folder>` (or **⇪ Import…** in the GUI) imports a folder's
+suites and fake libraries along with its runbooks, checking that each
+suite's runbook and fakes are there. Deleted suites and fake libraries can
+be restored (`runnr restore`, or **Manage** in the GUI). Recorded or hand-written fake data often names real
 hosts and accounts: keep it with the runbook, not anywhere public.

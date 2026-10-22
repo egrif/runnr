@@ -711,7 +711,7 @@ function renderStruct(ed) {
         ${row("By the end", H.runbook.expect, control("expect", "area", d.expect))}
         ${row("Overview", H.runbook.overview, control("overview", "area", d.overview, { rows: 6, placeholder: "the strategy: the phases, why in this order, what can go wrong (Markdown)" }))}
         ${row("Tags", H.runbook.tags, control("tags", "list", d.tags, { placeholder: "ops, deploy" }))}
-        ${row("Libraries", H.runbook.libraries, control("libraries", "list", d.libraries, { placeholder: "aurora-helpers" }))}
+        ${row("Libraries", H.runbook.libraries, control("libraries", "list", d.libraries, { placeholder: "db-helpers" }))}
       </div>
       ${group(`Maintenance window${d.maintenance_window ? "" : " (off)"}`, [
         `<p class="muted small" style="grid-column: 1 / -1">${esc(H.runbook.maintenance_window)}</p>`,

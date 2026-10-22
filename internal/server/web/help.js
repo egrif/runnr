@@ -58,7 +58,7 @@ const FIELD_HELP = {
     stop_after: "The step after which this background command is stopped (hung up).",
     close_on_exit: "Close the background step's terminal as soon as its command ends. By default it stays open, saying how it ended (✔ completed, ✘ exited with a status, ■ stopped), until you close it (✕).",
     wait_for: "Background steps (by id or name) to wait for before this step runs: it waits for them to finish by themselves, and fails if one failed. (stop_after hangs up; wait_for lets it finish.)",
-    confirm_typing: "For a point of no return: the operator must type this (a template, e.g. {{.silo_env}}) to run the step, whatever else was confirmed. Unattended runs can't run it.",
+    confirm_typing: "For a point of no return: the operator must type this (a template, e.g. {{.cluster}}) to run the step, whatever else was confirmed. Unattended runs can't run it.",
     skip_if: "A command run first: if it succeeds the step is skipped as already done (e.g. the resource exists). Template.",
     ok_if: "A regular expression the command's output must match, or the step fails even if it exits 0 (e.g. No changes).",
     fail_if: "A regular expression that fails the step if the command's output matches it, even if it exits 0.",
@@ -163,36 +163,39 @@ function viewHelp() {
 
     <h3>Describing what's happening</h3>
     <p>Every level can say what it's doing and how things should stand afterwards: a <b>collection</b> of runbooks, the <b>runbook</b>, each <b>section</b>, and each <b>step</b> (<code>description</code> and <code>expect</code>).</p>
-    <pre class="cmd">description: Move a silo from RDS to Aurora with ~20 minutes of downtime.
-expect: The silo runs on Aurora; RDS is detached and can be deleted.
+    <pre class="cmd">description: Move the orders database to a new cluster with ~20 minutes of downtime.
+expect: Orders runs on the new cluster; the old one is detached and can be deleted.
 sections:
-  - name: 3. Cutoff
-    description: Stop all traffic to RDS and confirm Aurora has every write.
-    expect: The app is down, RDS takes no writes, Aurora is caught up.
+  - name: 3. Cut over
+    description: Stop writes to the old cluster and confirm the new one has every write.
+    expect: Orders is read-only, the old cluster takes no writes, the new one is caught up.
 steps:
-  - name: Maintenance mode ON
-    section: 3. Cutoff
-    description: Put the app in maintenance mode so customers see a notice, not errors.
-    expect: Greenhouse shows the maintenance page.
-    run: lotus maintenance-mode on …</pre>
+  - name: Read-only mode ON
+    section: 3. Cut over
+    description: Put orders in read-only mode so customers see a notice, not errors.
+    expect: The shop shows the read-only banner.
+    run: orders-admin set-mode read-only …</pre>
     <p><b>Collections</b> group runbooks (managed under Collections, or <code>runnr collection</code>):</p>
-    <pre class="cmd">name: aurora-migration
-description: Moving GHR silos from RDS to Aurora.
-expect: All silos on Aurora; RDS instances retired.
-runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
+    <pre class="cmd">name: orders-db
+description: Moving the orders database to a new cluster.
+expect: Orders on the new cluster; the old one retired.
+runbooks: [orders-db-migration, orders-db-rollback]</pre>
     ${helpTable("collection", [["name"], ["description"], ["expect"], ["runbooks"]])}
 
     <h2 id="help-inputs">Inputs</h2>
     <pre class="cmd">inputs:
-  - name: silo_env
-    description: prod-sN or staging-sN
+  - name: cluster
+    description: the cluster to move to, e.g. orders-2
     required: true
   - name: env
     default: staging
     choices: [staging, production]
   - name: token
-    secret: true</pre>
-    ${helpTable("input", [["name"], ["description"], ["default"], ["choices"], ["required"], ["secret"]])}
+    secret: true
+  - name: infra_dir
+    type: dir             # a folder on this machine: its field gets Browse…
+    default: ~/code/infrastructure</pre>
+    ${helpTable("input", [["name"], ["description"], ["default"], ["choices"], ["required"], ["secret"], ["type"]])}
 
     <h2 id="help-steps">Steps</h2>
     <p>Every step has a <code>name</code> and exactly one of <code>run</code>, <code>manual</code>, <code>checks</code> or <code>ways</code>. The rest is optional.</p>
@@ -211,7 +214,7 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
     <h3>Manual</h3>
     <pre class="cmd">- name: Announce the cutover
   owner: Datastores
-  manual: Post in #eng_manual_changes and ping the on-call.</pre>
+  manual: Post in #orders-ops and ping the on-call.</pre>
     <p>${esc(FIELD_HELP.step.manual)}</p>
 
     <h3>Terminal command (<code>tty</code>)</h3>
@@ -225,16 +228,16 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
   name: Cutover watcher
   background: true
   stop_after: app_back
-  run: ./cutover-window.rb status --watch</pre>
+  run: ./cutover-status.sh --watch</pre>
     <p>${esc(FIELD_HELP.step.background)} Its output is recorded with the step. A background command can't publish outputs.</p>
 
     <h3>Checks</h3>
     <pre class="cmd">- name: Ready for promotion
   checks:
-    - name: Aurora reachable
-      run: psql "$aurora" -c 'select 1'
-    - name: LSN unchanged for 20s
-      run: ./lsn-stable.sh 20
+    - name: New cluster reachable
+      run: psql "$new_db" -c 'select 1'
+    - name: Replication caught up for 20s
+      run: ./lag-stable.sh 20
   repeat:
     every: 20s
     timeout: 10m
@@ -243,16 +246,16 @@ runbooks: [ghr-aurora-migration, ghr-aurora-fallback]</pre>
     ${helpTable("check", [["name"], ["run"]])}
 
     <h3>Several ways</h3>
-    <pre class="cmd">- name: Secrets → HAProxy
+    <pre class="cmd">- name: Point the app at the new cluster
   choose: true            # ask which, each time (otherwise: the preferred one)
   ways:
     - name: Scripted
-      run: ./secret-swap.rb --to haproxy --apply
+      run: ./switch-db.sh --to "$new_db" --apply
       preferred: true
     - name: Manual
-      manual: lotus secrets edit, check the URLs, lotus session commit
-    - name: lotus by hand
-      run: lotus secrets edit
+      manual: In the config console, set the orders database URL and save.
+    - name: Editor by hand
+      run: orders-admin config edit
       tty: true</pre>
     <p>${esc(FIELD_HELP.step.ways)} ${esc(FIELD_HELP.step.choose)} The step's other settings (dir, env, outputs, repeat…) apply whichever way runs.</p>
     ${helpTable("way", [["name"], ["preferred"], ["run"], ["manual"], ["checks"], ["tty"]])}
@@ -284,14 +287,14 @@ steps:
 
     <h2 id="help-functions">Functions &amp; libraries</h2>
     <p>Put commands you use in many steps or runbooks into shell functions. A <b>library</b> is a named set of them, managed under <a href="#/libraries">Libraries</a> (or <code>runnr lib</code>); a runbook uses it by listing it, and can also define its own:</p>
-    <pre class="cmd">libraries: [aurora-helpers]
+    <pre class="cmd">libraries: [db-helpers]
 functions:
   wait_healthy:
     description: Poll a URL until it returns 200. Usage: wait_healthy URL
     body: |
       until curl -fsS "$1" >/dev/null; do sleep 5; done</pre>
     ${helpTable("library", [["name"], ["description"], ["functions"]])}
-    <p>Every step can call them (commands, checks, every way, background steps), and shells opened from runnr have them too, loaded after your own shell config. Elsewhere: <code>eval "$(runnr lib export aurora-helpers)"</code>. A run fails to start if a library it uses is missing. The run's functions are also in <code>$RUNNR_FUNCTIONS</code> to source by hand.</p>
+    <p>Every step can call them (commands, checks, every way, background steps), and shells opened from runnr have them too, loaded after your own shell config. Elsewhere: <code>eval "$(runnr lib export db-helpers)"</code>. A run fails to start if a library it uses is missing. The run's functions are also in <code>$RUNNR_FUNCTIONS</code> to source by hand.</p>
 
     <h2 id="help-masking">Masking</h2>
     <p>Secret inputs and <code>secret_outputs</code> are hidden wherever they appear: output, commands, errors, state, history and terminals in the browser. When a pattern recognises a secret, only the credential part is hidden (<code>postgres://app:****@db/app</code>); otherwise all of it (<code>****</code>). Built-in patterns cover URL passwords, Bearer tokens and AWS secret keys; add your own with <code>sensitive</code>:</p>
@@ -305,8 +308,12 @@ functions:
       <li><b>Interactive</b>: review the plan (skip steps, pause before or after any of them), then run. It stops for confirmations, manual steps, steps set to ask which way, and failures (retry / another way / skip / force with a reason / abort).</li>
       <li><b>Step through</b>: stop before every step: run, skip, carry on without stopping, or abort.</li>
       <li><b>Unattended</b>: no questions. Confirmations need auto-approve, manual and terminal steps follow <code>unattended</code>, steps with several ways use the preferred one (starting asks you to confirm that for steps set to ask), and any failure stops the run.</li>
-      <li>At any question: open a <b>shell</b> with the run's variables and the step's commands beside it, add a <b>note</b>, see the <b>state</b>, or view a background step.</li>
-      <li><b>Change a step mid-run</b>: <b>✎ edit</b> on the current step or a later one (CLI: <b>[c]hange step</b>). A step waiting on a question starts again with the change. It's only in that run until you <b>Save to runbook</b>.</li>
+      <li>At any question: open a <b>shell</b> with the run's variables and the step's commands beside it, add a <b>note</b>, see the <b>state</b>, or view a background step. In the CLI, <b>b</b> runs a command in the background with the run's environment, and under <code>--tmux</code> <b>p</b> opens a shell in a pane beside the run.</li>
+      <li><b>Go to a step</b> while the run waits for you (<b>↺ Back to step N</b>, <b>Go to step</b>; CLI: <b>g</b>): back to a step that ran (it and the ones after it run again), this one again, or ahead (the ones between are skipped). The step gone to waits for you before it runs; going back past a point of no return asks first.</li>
+      <li><b>Stop a step</b> (<b>■ Stop step</b>; CLI: Ctrl-C, twice to abort the run): its command is interrupted, the step fails, and you choose what's next. The run goes on.</li>
+      <li><b>Change inputs</b> mid-run (<b>✎ Change inputs</b>; CLI: <b>i</b>): checked as at the start; they take effect before the next command, and the change is recorded with the run.</li>
+      <li>Shells opened during a run (the console's Shell panes, the CLI's <code>!</code> and <code>p</code>, the <code>--tmux</code> shell pane) keep up with it: what later steps publish, secrets too, is read again before a prompt (zsh also before each command).</li>
+      <li><b>Change a step mid-run</b>: <b>✎ edit</b> on the current step or a later one (CLI: <b>[m]odify step</b>). A step waiting on a question starts again with the change. It's only in that run until you <b>Save to runbook</b>.</li>
       <li><b>Dangerous steps</b> (<code>dangerous: true</code>) run like any other in sequence. Out of sequence (earlier steps skipped, a later start, Run this, a runbook file) they list what didn't run and wait for you to type the step number; a resume counts the steps the earlier run finished.</li>
       <li><b>Resume</b> continues a stopped run at the step that didn't finish, with the same inputs and state; <b>run again</b> repeats it, comparing each step with last time.</li>
     </ul>

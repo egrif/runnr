@@ -37,7 +37,7 @@ async function viewLibrary(name) {
         </div>
         <div id="validation" class="validation"></div>
         <textarea class="editor" id="yaml" spellcheck="false">${esc(data.raw)}</textarea>
-        <details class="card" style="margin-top:12px"><summary>Format</summary><pre class="cmd">name: aurora-helpers          # lowercase identifier
+        <details class="card" style="margin-top:12px"><summary>Format</summary><pre class="cmd">name: db-helpers              # lowercase identifier
 description: What these are for
 functions:
   kpsql:                        # called as: kpsql URL SQL
