@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 )
 
 // interruptHolds are what Ctrl-C belongs to instead of the run: an
@@ -17,6 +18,41 @@ type interruptHolds struct {
 	next  int
 	hints map[int]string // by hold, in order taken; "" for none
 	out   io.Writer
+	// stopStep, if set, stops the step whose command is running (it
+	// reports whether one was): Ctrl-C stops the step, and a second one
+	// soon after stops the run.
+	stopStep func() bool
+	stopped  time.Time
+}
+
+// stepFirst reports whether a Ctrl-C stopped the running step instead of
+// the run (not when another came just before it).
+func (h *interruptHolds) stepFirst() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	stop, recent := h.stopStep, time.Since(h.stopped) < 3*time.Second
+	h.mu.Unlock()
+	if stop == nil || recent || !stop() {
+		return false
+	}
+	h.mu.Lock()
+	h.stopped = time.Now()
+	h.mu.Unlock()
+	if h.out != nil {
+		fmt.Fprintf(h.out, "\r\n  ■ Ctrl-C: stopping the step (Ctrl-C again to abort the run)\n")
+	}
+	return true
+}
+
+func (h *interruptHolds) setStopStep(f func() bool) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.stopStep = f
+	h.mu.Unlock()
 }
 
 // hold takes Ctrl-C until release is called (more calls do nothing).

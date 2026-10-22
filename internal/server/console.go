@@ -305,3 +305,73 @@ func (s *Server) setRunInputs(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"changed": res.Changed, "stale": res.Stale, "replaces": res.Replaces, "restarted": restarted})
 }
+
+// gotoStep, while the run waits on the operator at a step, goes to step
+// {"step": n} (1-based): back (it and the steps after it run again), the
+// same step again, or ahead (the steps between are skipped). The step gone
+// to waits before it runs. Going back past a point of no return needs
+// "force" (409 without it).
+func (s *Server) gotoStep(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Step  int  `json:"step"`
+		Force bool `json:"force"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	l := s.getLive(r.PathValue("id"))
+	if l == nil || l.session == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	nav, ok := l.session.(engine.Navigator)
+	ed, _ := l.session.(engine.Editor)
+	if !ok || ed == nil {
+		writeErr(w, errors.New("this run can't go to another step"))
+		return
+	}
+	cur := ed.Current()
+	if !l.waitingOn(cur) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the run isn't waiting for you: stop the running step first, or wait for its question"})
+		return
+	}
+	if err := nav.GoTo(req.Step-1, req.Force); err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, engine.ErrPastNoReturn) {
+			code = http.StatusConflict
+		}
+		writeJSON(w, code, map[string]any{"error": err.Error(), "needs_force": errors.Is(err, engine.ErrPastNoReturn)})
+		return
+	}
+	l.withdraw(cur, answerReopen)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// stopStep stops the step whose command is running ({"step": n, 1-based;
+// 0: whichever}, "by"): it fails, and the run asks what to do.
+func (s *Server) stopStep(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Step int    `json:"step"`
+		By   string `json:"by"`
+	}
+	if err := decode(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	l := s.getLive(r.PathValue("id"))
+	if l == nil || l.session == nil {
+		writeErr(w, fmt.Errorf("run not live: %w", store.ErrNotFound))
+		return
+	}
+	st, ok := l.session.(engine.StepStopper)
+	if !ok {
+		writeErr(w, errors.New("this run's steps can't be stopped"))
+		return
+	}
+	if err := st.StopStep(req.Step-1, req.By); err != nil {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

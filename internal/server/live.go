@@ -30,6 +30,8 @@ type Question struct {
 	// Reopenable is the step (1-based) that can be re-opened while this
 	// question waits: the last one that succeeded (0: none).
 	Reopenable int `json:"reopenable,omitempty"`
+	// GoTo: the run can go to another step from here (POST .../goto).
+	GoTo bool `json:"goto,omitempty"`
 }
 
 type Answer struct {
@@ -213,6 +215,9 @@ func (l *liveRun) ask(ctx context.Context, q Question) (Answer, error) {
 	l.mu.Unlock()
 	if r, ok := l.session.(engine.Reopener); ok && q.Step >= 0 {
 		q.Reopenable = r.Reopenable() + 1
+	}
+	if _, ok := l.session.(engine.Navigator); ok && q.Step >= 0 && q.Type != "input" {
+		q.GoTo = true
 	}
 	l.publish(WireEvent{Event: engine.Event{Kind: "question", Step: q.Step}, Question: &q})
 	select {

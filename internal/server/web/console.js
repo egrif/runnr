@@ -195,12 +195,15 @@ function cxToolbar(state, live) {
   }
   const cur = cxCurrent(state);
   const next = cur + 1; // 0-based step after the current one
+  // A step whose command is running (not waiting on a question) can be stopped.
+  const running = state.steps.findIndex((s, i) => s.status === "running" && s.kind !== "background" && q?.step !== i);
   const has = (list, i) => (list || []).includes(i + 1);
   return `${answers}${answers ? `<span class="cx-sep"></span>` : ""}
     ${btn("step-mode", "⏯ Step through", "", "Pause before every remaining step", !!ctl.step_mode)}
     ${next < state.steps.length ? btn("pause-next", "⏸ Pause before next", "", `Pause before step ${next + 1}`, has(ctl.pause_before, next)) : ""}
     ${cur >= 0 ? btn("pause-after", "⏸ Pause after this", "", `Pause after step ${cur + 1} to check its result`, has(ctl.pause_after, cur)) : ""}
     <span class="spacer"></span>
+    ${running >= 0 ? btn("stop-step", `■ Stop step ${running + 1}`, "danger", "Interrupt its command: the step fails and you choose what's next (the run goes on)") : ""}
     ${btn("abort", "■ Abort run", "danger")}`;
 }
 
@@ -231,6 +234,7 @@ function cxBindTop(state, el, live) {
       switch (act) {
         case "focus-question": return main.querySelector(".cx-action .question input, .cx-action .question select, .cx-action .question button")?.focus();
         case "abort": return abortRun(state);
+        case "stop-step": { const i = state.steps.findIndex((s, k) => s.status === "running" && s.kind !== "background" && state.question?.step !== k); return stopRunningStep(state.run.id, i >= 0 ? i : -1, state.steps[i]?.name); }
         case "resume": location.hash = `#/runbooks/${enc(r.runbook)}/console?resume=${enc(r.id)}`; return;
         case "rerun": location.hash = `#/runbooks/${enc(r.runbook)}/console?rerun=${enc(r.id)}`; return;
         case "raw": return cxRawLog(state);

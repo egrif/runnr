@@ -224,7 +224,13 @@ func (t *Terminal) choose(ctx context.Context, prompt string, opts map[string]st
 }
 
 // Bind receives the run's Session (engine.Binder).
-func (t *Terminal) Bind(se engine.Session) { t.session = se }
+func (t *Terminal) Bind(se engine.Session) {
+	t.session = se
+	// Ctrl-C while a step's command runs stops the step, not the run.
+	if st, ok := se.(engine.StepStopper); ok && isTTY(os.Stdin) {
+		t.interrupts.setStopStep(func() bool { return st.StopStep(-1, author()) == nil })
+	}
+}
 
 func (t *Terminal) canShell() bool {
 	return t.session != nil && t.session.CanShell() && isTTY(os.Stdin)
@@ -269,6 +275,10 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 	if len(t.running()) > 0 {
 		extra += " · [w]atch background"
 		all["w"], all["watch"] = "\x00watch", "\x00watch"
+	}
+	if _, ok := t.session.(engine.Navigator); ok && idx >= 0 {
+		extra += " · [g]o to step"
+		all["g"], all["goto"] = "\x00goto", "\x00goto"
 	}
 	if is, ok := t.session.(engine.InputSetter); ok && idx >= 0 && len(is.InputDefs()) > 0 {
 		extra += " · [i]nputs"
@@ -315,6 +325,12 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 			if err := t.watch(ctx); err != nil {
 				return "", err
 			}
+		case "\x00goto":
+			if err := t.goTo(ctx, idx); err != nil {
+				fmt.Fprintln(t.out, t.c("31", "  "+err.Error()))
+				continue
+			}
+			return "", engine.ErrReopen
 		case "\x00inputs":
 			changed, err := t.changeInputs(ctx)
 			if err != nil {
@@ -335,6 +351,41 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 			return a, nil
 		}
 	}
+}
+
+// goTo asks which step to go to (Enter: back one) and asks the run to go
+// there; going back past a point of no return is confirmed first.
+func (t *Terminal) goTo(ctx context.Context, idx int) error {
+	nav := t.session.(engine.Navigator)
+	def := ""
+	if idx > 0 {
+		def = fmt.Sprintf(", Enter = back to %d", idx)
+	}
+	fmt.Fprintf(t.out, "  go to step (1-%d%s; back runs the steps from there again, ahead skips the ones between): ", t.total, def)
+	line, err := t.readLine(ctx)
+	if err != nil {
+		return err
+	}
+	n := idx // back one (1-based idx is the step before)
+	if s := strings.TrimSpace(line); s != "" {
+		if n, err = strconv.Atoi(s); err != nil {
+			return fmt.Errorf("%q isn't a step number", s)
+		}
+	} else if idx == 0 {
+		return errors.New("this is the first step")
+	}
+	err = nav.GoTo(n-1, false)
+	if errors.Is(err, engine.ErrPastNoReturn) {
+		fmt.Fprint(t.out, t.c("33", "  ⚠ "+err.Error()+". Type yes to go back anyway: "))
+		if a, rerr := t.readLine(ctx); rerr != nil || strings.TrimSpace(a) != "yes" {
+			return errors.New("not going back")
+		}
+		err = nav.GoTo(n-1, true)
+	}
+	if err == nil {
+		fmt.Fprintln(t.out, t.c("2", fmt.Sprintf("  going to step %d: it waits for you before running", n)))
+	}
+	return err
 }
 
 // changeInputs asks which inputs to change and their new values. changed
