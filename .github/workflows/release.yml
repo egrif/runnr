@@ -89,6 +89,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/changelog.sh notes "$V" > notes.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$V" -m "runnr $V"
           git push origin "$V"
           gh release create "$V" --verify-tag --title "runnr $V" --notes-file notes.md dist/*.tar.gz dist/checksums.txt
