@@ -180,6 +180,7 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | POST | `/api/runs/{id}/resume` | start request (no `runbook`/`from`); `"new_run": true` for a new run | like `POST /api/runs`: the same run ID (it carries on), unless `new_run` |
 | POST | `/api/runs/{id}/notes` | `{step, text, author?}` (`step` 1-based; `0` = the run) | `201 {time, author, text}` |
 | GET | `/api/runs/{id}/preview` | | `{steps: [StepView]}` with the run's inputs and current state |
+| PUT | `/api/runs/{id}/access` | `{mode: everyone\|only\|except, names?}` | the live run's presence `{viewers, access, started_by}`: who may drive it (the others watch) |
 | GET / PUT | `/api/runs/{id}/controls` | `{step_mode, skip, pause_before, pause_after}` (and, read only, `suspend`: a request to suspend not yet taken) | the live run's controls; changes apply to steps not reached yet |
 
 Start request:
@@ -283,6 +284,20 @@ window carry `window: {target, open_step, close_step, opened, closed}`;
 Starting an unattended run whose steps include ones set to `choose` needs
 `"use_preferred": true` (they'll use their preferred way); otherwise it's
 refused with the step numbers.
+**Who's driving.** Requests say who they're from with `X-Runnr-User`
+(a name) and `X-Runnr-Session` (an id per browser tab); a live run's
+event stream takes them as `?name=&session=`, which is how it knows who's
+watching (`presence` events, not kept in the backlog: `{viewers, access,
+started_by}`; also in `GET /api/runs/{id}` as `presence`). A start request
+can set `access` (`{"mode": "only"}`: just the person starting it). While
+the access leaves a name out, requests from it that drive the run
+(answers, controls, terminal input, stop, go to, inputs, step edits,
+suspend, abort, shells alongside, access) get `403 {code: "read_only"}`;
+`X-Runnr-Override: 1` goes ahead anyway, and the first override from a tab
+adds a note to the run. Names aren't checked: it's a safety catch, not
+access control. A terminal takes the size sent by whoever typed in it
+last.
+
 `controls` events carry the live run's new `controls` after a PUT.
 
 A StepView is `{index, name, section, owner, kind, command, expect, dir, when,

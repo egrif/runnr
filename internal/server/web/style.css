@@ -832,3 +832,10 @@ dialog.timeline-dlg iframe { flex: 1; width: 100%; border: 1px solid var(--borde
 .history-filters { gap: 12px; margin: 4px 0 14px; flex-wrap: wrap; }
 .history-filters input[type=search] { flex: 1; min-width: 220px; max-width: 420px; }
 @media (prefers-color-scheme: dark) { .ident { background: #23352a; } }
+
+.presence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; font-size: 13px; }
+.presence .viewer { padding: 1px 8px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); }
+.presence .viewer.ro { opacity: .65; border-style: dashed; }
+.presence .ro-badge { padding: 1px 8px; border-radius: 10px; background: #fdf1d6; color: #7a5410; font-size: 12px; }
+@media (prefers-color-scheme: dark) { .presence .ro-badge { background: #3b3119; color: #f0d79a; } }
+.cx-top .presence { margin: 2px 0 4px; }

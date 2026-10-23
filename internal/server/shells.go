@@ -55,6 +55,11 @@ func (s *Server) openShell(w http.ResponseWriter, r *http.Request) {
 
 	if req.Run != "" {
 		if l := s.getLive(req.Run); l != nil && l.session != nil {
+			// A shell alongside it can change it: that's driving it.
+			if !s.allowed(w, r, l) {
+				cancel()
+				return
+			}
 			as, ok := l.session.(engine.AsideSheller)
 			if rec, err := s.st.LoadRun(req.Run); ok && err == nil && rec.HasBegun() && rec.Status == engine.StatusRunning && rec.Ended.IsZero() {
 				if req.Step <= 0 {

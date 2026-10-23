@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.7.0 — 2026-10-23
+
+Watching a run together.
+
+### Added
+
+- **Presence**: a live run's page and console show who has it open (the
+  name each tab gives, as for notes), updated as people come and go.
+- **Read-only, with override**: who may drive a live run is set from its
+  header (🔒) or when it starts (**Only I drive it**): everyone, only some
+  people, or everyone except some. The others see it read-only: anything
+  that changes the run asks first and can be overridden, which everyone
+  watching sees and the run notes. A safety catch, not a lock (names
+  aren't checked). API: `PUT /api/runs/{id}/access`, `X-Runnr-User`,
+  `X-Runnr-Session`, `X-Runnr-Override`; `403 {code: "read_only"}`.
+
+### Changed
+
+- A run's terminals take the window size of whoever typed in them last;
+  other viewers' sizes apply once they type.
+
 ## v0.6.0 — 2026-10-23
 
 Suspend a run, to resume it later; identifier inputs in the history.

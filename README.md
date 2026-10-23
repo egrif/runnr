@@ -230,6 +230,16 @@ record notes which version it was resumed with. Steps it ran that the new
 version no longer has stay in the record (and their notes become the
 run's). `--new-run` won't start from a changed runbook.
 
+**Watching together.** Everyone who opens a live run in the GUI sees it
+live, and the run's header shows who's watching (the name each person
+gives, as for notes). Who may drive it is set there (🔒) or when it starts
+(**Only I drive it**): everyone, only some people, or everyone except some.
+The others see it read-only: if they try to change it (answer, pause,
+stop, suspend, type in its terminal…), they're asked first and can
+override; everyone is told, and the run notes it. Names aren't checked,
+so this is a safety catch against driving someone else's run by mistake,
+not a lock. A terminal takes the window size of whoever typed in it last.
+
 **Suspending.** To stop a run on purpose and pick it up later (tomorrow,
 after a change window, once someone else has done their part), suspend it:
 `z` at a prompt in the terminal running it, **‖ Suspend…** on its page or
