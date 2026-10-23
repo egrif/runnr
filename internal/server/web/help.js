@@ -31,6 +31,7 @@ const FIELD_HELP = {
     required: "The run can't start without a value.",
     secret: "Hidden as you type, masked in output and history, and never stored: asked again on resume.",
     type: "A folder or a file on this machine: its field gets a Browse… button. Otherwise text.",
+    identifier: "Says what a run is for (a target: a cluster, a silo, a database). Its value shows with the run in the history and at the top of the run, and the history can be searched by it. Not for secrets.",
   },
   step: {
     kind: "Scripted: a shell script. Manual: instructions for a person. Checks: several commands that must all pass. Add another way to offer several (e.g. Scripted and Manual).",

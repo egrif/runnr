@@ -741,7 +741,7 @@ function renderStruct(ed) {
       <h3>Inputs${helpIcon(H.runbook.inputs)}</h3>
       <table class="inputs"><thead><tr>
         <th>Name${helpIcon(H.input.name)}</th><th>Description${helpIcon(H.input.description)}</th><th>Default${helpIcon(H.input.default)}</th>
-        <th>Type${helpIcon(H.input.type)}</th><th>Choices${helpIcon(H.input.choices)}</th><th>Required${helpIcon(H.input.required)}</th><th>Secret${helpIcon(H.input.secret)}</th><th></th></tr></thead><tbody>
+        <th>Type${helpIcon(H.input.type)}</th><th>Choices${helpIcon(H.input.choices)}</th><th>Required${helpIcon(H.input.required)}</th><th>Secret${helpIcon(H.input.secret)}</th><th>Identifier${helpIcon(H.input.identifier)}</th><th></th></tr></thead><tbody>
       ${d.inputs.map((inp, i) => `<tr>
         <td>${control(`inputs.${i}.name`, "text", inp.name)}</td>
         <td>${control(`inputs.${i}.description`, "text", inp.description)}</td>
@@ -750,6 +750,7 @@ function renderStruct(ed) {
         <td>${control(`inputs.${i}.choices`, "list", inp.choices, { placeholder: "a, b" })}</td>
         <td>${control(`inputs.${i}.required`, "bool", inp.required)}</td>
         <td>${control(`inputs.${i}.secret`, "bool", inp.secret)}</td>
+        <td>${control(`inputs.${i}.identifier`, "bool", inp.identifier)}</td>
         <td><button class="link" data-act="del-input" data-i="${i}">remove</button></td></tr>`).join("")}
       </tbody></table>
       <button data-act="add-input">+ Add input</button>

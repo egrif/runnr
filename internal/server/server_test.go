@@ -630,3 +630,18 @@ func TestSuspendOverHTTP(t *testing.T) {
 		t.Fatalf("resume: %s %+v", again.Status, again.Resumptions)
 	}
 }
+
+func TestRunsByIdentifier(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+	do(t, "POST", ts.URL+"/api/runbooks", "name: silo-op\ninputs: [{name: silo, identifier: true}, {name: why}]\nsteps: [{name: a, run: 'true'}]\n", nil)
+	for _, silo := range []string{"silo-3", "silo-12"} {
+		do(t, "POST", ts.URL+"/api/runs", `{"runbook":"silo-op","unattended":true,"wait":true,"vars":{"silo":"`+silo+`","why":"silo-3 lag"}}`, nil)
+	}
+	var runs []engine.Run
+	json.NewDecoder(do(t, "GET", ts.URL+"/api/runs?runbook=silo-op&q=SILO-3", "", nil).Body).Decode(&runs)
+	if len(runs) != 1 || runs[0].Inputs["silo"] != "silo-3" || strings.Join(runs[0].Identifiers, ",") != "silo" {
+		t.Fatalf("%+v", runs)
+	}
+}

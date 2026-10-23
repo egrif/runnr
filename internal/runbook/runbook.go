@@ -99,6 +99,21 @@ type Input struct {
 	// Type is "dir" or "file" for a path on this machine (the GUI offers to
 	// browse for it), else text.
 	Type string `yaml:"type,omitempty" json:"type,omitempty"`
+	// Identifier marks an input that says what a run is for (a target: a
+	// cluster, a silo, a database): its value is shown with the run in the
+	// history, and the history can be searched by it.
+	Identifier bool `yaml:"identifier,omitempty" json:"identifier,omitempty"`
+}
+
+// IdentifierInputs are the names of the inputs marked identifier, in order.
+func (rb *Runbook) IdentifierInputs() []string {
+	var out []string
+	for _, in := range rb.Inputs {
+		if in.Identifier {
+			out = append(out, in.Name)
+		}
+	}
+	return out
 }
 
 // Step is either an automated command (Run) or a manual instruction (Manual).
@@ -666,6 +681,9 @@ func (rb *Runbook) Validate() error {
 		seen[in.Name] = true
 		if in.Type != "" && in.Type != "dir" && in.Type != "file" && in.Type != "text" {
 			add("inputs[%d] (%s): type %q must be dir, file or text", i, in.Name, in.Type)
+		}
+		if in.Identifier && in.Secret {
+			add("inputs[%d] (%s): a secret can't be an identifier (its value isn't kept)", i, in.Name)
 		}
 		if in.Default != "" && len(in.Choices) > 0 && !contains(in.Choices, in.Default) {
 			add("inputs[%d]: default %q not in choices", i, in.Default)

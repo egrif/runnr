@@ -9,12 +9,12 @@ unattended for cron/CI.
 - **Automated steps** run shell commands with live output, timeouts, retries and captured output.
 - **Manual steps** show instructions and wait for an operator to mark them done, skipped or failed.
 - **Confirmation gates** pause before risky commands.
-- **Inputs** with defaults, choices and secrets (secrets are masked in output and history).
+- **Inputs** with defaults, choices and secrets (secrets are masked in output and history); mark the ones that say what a run is for (a target) as **identifiers** to see and search them in the history.
 - **Shared variables**: a step can publish values (and secrets) for every later step.
 - **Terminal steps** hand the terminal to tools like `terraform apply` or `argocd login --sso`.
 - **Resume** long-running or multi-day procedures from where they stopped; go back to a step, jump ahead, or stop a running step without stopping the run.
 - **Shells and background commands** beside a run, with its variables (secrets too) kept up to date.
-- **Run history** for every run, and **version history** for every runbook save; delete and restore from **Manage**.
+- **Run history** for every run (filter by runbook; search by identifier, e.g. which silo), and **version history** for every runbook save; delete and restore from **Manage**.
 - **Import and export**: a project folder at once (placeholders filled in, references checked), a runbook with its libraries, a run's logs with the runs it resumed.
 - **Tests** that run a runbook with its commands faked and a simulated operator, without touching anything ([docs/TESTING.md](docs/TESTING.md)).
 - **SQLite or Postgres** storage: zero-setup locally, shared for a team.
@@ -78,7 +78,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr abort <run-id> [-m reason] [--force]` | Abort a run running elsewhere (another terminal, the GUI), or one left "running" by a process that's gone |
 | `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open a shell (the runbook's `shell`, else `$SHELL`) with that environment; given a run, with its inputs and what its steps published, as last saved (secrets are asked for or re-derived) |
 | `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
-| `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail (`--raw`: as a plain log, each step's command, output and result in order; **Raw log** on a past run's page in the GUI; `--timeline`: a chart of the run in time, then its key moments; `--timeline=html` for a page) |
+| `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`, `-f <text>`: those whose identifiers, like a target, or ID contain it; a FOR column shows the identifiers), or show one in detail (`--raw`: as a plain log, each step's command, output and result in order; **Raw log** on a past run's page in the GUI; `--timeline`: a chart of the run in time, then its key moments; `--timeline=html` for a page) |
 | `runnr history prune --older-than 90d` | Delete old finished runs |
 | `runnr db info` / `runnr db import <dir>` | Show storage details / import a file-based runnr home |
 | `runnr serve` (alias `ui`) | Serve the GUI and API (`--addr`, `--open`, `--token`, `--no-ui`) |
@@ -360,6 +360,7 @@ inputs:
     description: Target environment
     default: staging
     choices: [staging, production]
+    identifier: true            # what a run is for: shown with it in the history, which can be searched by it
   - name: token
     secret: true                # masked as **** in output and history
     required: true

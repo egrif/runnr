@@ -103,6 +103,9 @@ type Run struct {
 	Removed []StepResult `json:"removed,omitempty"`
 	// Window is the maintenance window, if the runbook has one.
 	Window *WindowRecord `json:"window,omitempty"`
+	// Identifiers are the inputs that say what the run is for (marked
+	// identifier in the runbook); their values are in Inputs.
+	Identifiers []string `json:"identifiers,omitempty"`
 	// Edits are changes made to steps during the run; EditsSaved is the
 	// runbook version they were saved as (0: not saved yet).
 	Edits      []StepEdit `json:"edits,omitempty"`
@@ -520,6 +523,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
 	}
+	x.run.Identifiers = rb.IdentifierInputs()
 
 	if opts.Previous != nil {
 		x.run.Previous = opts.Previous.ID
@@ -1085,4 +1089,21 @@ func (x *executor) command(ctx context.Context, name string, args ...string) *ex
 // tempDir makes a directory for a step's files.
 func (x *executor) tempDir(pattern string) (string, error) {
 	return os.MkdirTemp(x.opts.TempDir, pattern)
+}
+
+// RunIdentifiers are what r is for: its identifier inputs (as recorded,
+// else as rb marks them now: a run from before they were marked) with
+// their values, in order, "name=value".
+func RunIdentifiers(r *Run, rb *runbook.Runbook) []string {
+	names := r.Identifiers
+	if len(names) == 0 && rb != nil {
+		names = rb.IdentifierInputs()
+	}
+	var out []string
+	for _, n := range names {
+		if v, ok := r.Inputs[n]; ok && v != "" {
+			out = append(out, n+"="+v)
+		}
+	}
+	return out
 }

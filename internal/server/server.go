@@ -878,7 +878,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 1000 {
 		limit = n
 	}
-	runs, err := s.st.ListRuns(r.URL.Query().Get("runbook"), limit)
+	runs, err := s.st.FindRuns(r.URL.Query().Get("runbook"), r.URL.Query().Get("q"), limit)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -891,6 +891,12 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if len(run.Identifiers) == 0 {
+		// A run from before its runbook marked identifiers: as it marks them now.
+		if rb, _, err := s.st.Get(run.Runbook); err == nil {
+			run.Identifiers = rb.IdentifierInputs()
+		}
 	}
 	resp := map[string]any{"run": run, "live": false}
 	if l := s.getLive(run.ID); l != nil {

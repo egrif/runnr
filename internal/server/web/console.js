@@ -133,6 +133,7 @@ function cxRenderTop(state) {
     <div class="cx-title">
       <a href="#/runs/${enc(r.id)}" class="cx-back" data-classic title="The classic run page (with the runbooks list)">☰</a>
       <h1><a href="#/runbooks/${enc(r.runbook)}">${esc(r.runbook)}</a></h1>
+      ${identChips(r)}
       <span class="muted">${r.runbook_version ? `v${r.runbook_version} · ` : ""}${esc(r.id)} · ${esc(r.mode)}${r.dry_run ? " · dry run" : ""}</span>
       <span class="spacer"></span>
       <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>

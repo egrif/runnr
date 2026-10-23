@@ -1432,6 +1432,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		single bool
 		only   bool
 		tl     string
+		find   string
 	)
 	cmd := &cobra.Command{
 		Use:   "history [run-id]",
@@ -1502,7 +1503,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				printRun(r)
 				return nil
 			}
-			runs, err := s().ListRuns(filter, limit)
+			runs, err := s().FindRuns(filter, find, limit)
 			if err != nil {
 				return err
 			}
@@ -1510,7 +1511,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				return printJSON(runs)
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "RUN ID\tRUNBOOK\tVER\tSTATUS\tMODE\tSTARTED\tDURATION")
+			fmt.Fprintln(w, "RUN ID\tRUNBOOK\tVER\tSTATUS\tMODE\tSTARTED\tDURATION\tFOR")
 			for _, r := range runs {
 				dur := "-"
 				if !r.Ended.IsZero() {
@@ -1520,7 +1521,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				if r.RunbookVersion > 0 {
 					ver = fmt.Sprint(r.RunbookVersion)
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Runbook, ver, r.Status, r.Mode, r.Started.Local().Format("2006-01-02 15:04:05"), dur)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Runbook, ver, r.Status, r.Mode, r.Started.Local().Format("2006-01-02 15:04:05"), dur, strings.Join(engine.RunIdentifiers(&r, nil), " "))
 			}
 			return w.Flush()
 		},
@@ -1530,6 +1531,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 	cmd.Flags().StringVar(&tl, "timeline", "", "show the run laid out in time: a chart of its steps, then its key moments (--timeline=html: a page to save)")
 	cmd.Flags().Lookup("timeline").NoOptDefVal = "text"
 	cmd.Flags().IntVarP(&limit, "limit", "n", 20, "max runs to list")
+	cmd.Flags().StringVarP(&find, "find", "f", "", "only runs whose identifiers (inputs marked identifier: true, say a target) or ID contain this")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	cmd.AddCommand(pruneCmd(s))
 	cmd.Flags().StringVar(&export, "export", "", "write the run's logs into this folder, with the runs linked to it by resuming")

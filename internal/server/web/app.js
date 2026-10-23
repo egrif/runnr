@@ -377,7 +377,7 @@ function renderRun(state) {
   main.innerHTML = `
     <div class="row">
       <div>
-        <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a></h1>
+        <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a> ${identChips(run, "big")}</h1>
         <div class="muted">${esc(run.id)}${run.runbook_version ? ` · v${run.runbook_version}` : ""} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
           ${duration(run.started, run.ended) ? ` · took ${duration(run.started, run.ended)}` : ""}</div>
       </div>
@@ -997,20 +997,46 @@ function bindQuestion(el, q, runId) {
 
 // ---------- history ----------
 
+// identChips shows what a run is for: its identifier inputs' values.
+function identChips(r, cls = "") {
+  const ids = (r.identifiers || []).filter((n) => r.inputs?.[n]);
+  return ids.map((n) => `<span class="ident ${cls}" title="${esc(n)}"><span class="ident-k">${esc(n)}</span> ${esc(r.inputs[n])}</span>`).join(" ");
+}
+
+// viewHistory lists runs, most recent first: of one runbook (picked, or
+// #/history?runbook=), and those whose identifiers (or ID) match a search
+// (&q=), searched on the server across all of them.
 async function viewHistory() {
-  const filter = new URLSearchParams(location.hash.split("?")[1] || "").get("runbook") || "";
-  const runs = await api("GET", `/api/runs${filter ? `?runbook=${encodeURIComponent(filter)}` : ""}`);
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const filter = params.get("runbook") || "", q = params.get("q") || "";
+  const query = new URLSearchParams({ ...(filter && { runbook: filter }), ...(q && { q }) });
+  const runs = await api("GET", `/api/runs${query.size ? `?${query}` : ""}`);
+  const names = (runbooks || []).map((r) => r.name).sort();
+  const anyIdents = runs.some((r) => (r.identifiers || []).length);
   main.innerHTML = `
     <h1>Run history${filter ? ` · ${esc(filter)}` : ""}</h1>
-    ${filter ? `<p><a href="#/history">Show all</a></p>` : `<p class="muted">Most recent first.</p>`}
-    ${runs.length ? `<table><thead><tr><th>Status</th><th>Runbook</th><th>Mode</th><th>Started</th><th>Duration</th><th>Run ID</th></tr></thead><tbody>
+    <div class="row history-filters">
+      <label>Runbook <select data-hist-rb><option value="">all</option>${names.map((n) => `<option ${n === filter ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+      <input type="search" data-hist-q value="${esc(q)}" placeholder="Search targets (identifier inputs) or run ID…" title="Runs whose identifiers (inputs the runbook marks identifier: true, like a target) or ID contain this">
+      <span class="muted small">Most recent first${runs.length >= 100 ? " (the latest 100)" : ""}.</span>
+    </div>
+    ${runs.length ? `<table class="history"><thead><tr><th>Status</th><th>Runbook</th>${anyIdents ? "<th>For</th>" : ""}<th>Mode</th><th>Started</th><th>Duration</th><th>Run ID</th></tr></thead><tbody>
       ${runs.map((r) => `<tr data-id="${esc(r.id)}">
         <td><span class="s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span></td>
-        <td>${esc(r.runbook)}</td><td>${esc(r.mode)}${r.dry_run ? " (dry)" : ""}</td>
+        <td>${esc(r.runbook)}</td>${anyIdents ? `<td>${identChips(r)}</td>` : ""}<td>${esc(r.mode)}${r.dry_run ? " (dry)" : ""}</td>
         <td>${new Date(r.started).toLocaleString()}</td><td>${duration(r.started, r.ended)}</td>
         <td class="muted"><code>${esc(r.id)}</code></td></tr>`).join("")}
-    </tbody></table>` : `<div class="empty">No runs yet.</div>`}`;
+    </tbody></table>` : `<div class="empty">${filter || q ? "No runs match." : "No runs yet."}</div>`}`;
   main.querySelectorAll("tr[data-id]").forEach((tr) => (tr.onclick = () => (location.hash = `#/runs/${tr.dataset.id}`)));
+  const go = (rb, text) => {
+    const p = new URLSearchParams({ ...(rb && { runbook: rb }), ...(text && { q: text }) });
+    location.hash = `#/history${p.size ? `?${p}` : ""}`;
+  };
+  main.querySelector("[data-hist-rb]").onchange = (e) => go(e.target.value, q);
+  const box = main.querySelector("[data-hist-q]");
+  let t;
+  box.oninput = () => { clearTimeout(t); t = setTimeout(() => go(filter, box.value.trim()), 400); };
+  if (q) { box.focus(); box.setSelectionRange(q.length, q.length); }
 }
 
 const REFERENCE = `name: my-runbook            # lowercase id, used as the filename
@@ -1028,6 +1054,7 @@ inputs:
     required: true
     choices: [staging, production]
     secret: false            # masked in logs and history
+    identifier: true         # what a run is for: shown (and searchable) in the history
 steps:
   - name: Automated step
     run: echo "hello {{.target}}"

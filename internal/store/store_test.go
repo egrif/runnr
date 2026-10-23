@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -269,6 +270,50 @@ func TestMoveRunNotes(t *testing.T) {
 			if len(got.Steps[0].Notes) != 1 || len(got.Steps[3].Notes) != 1 || got.Steps[3].Notes[0].Text != "on c" ||
 				len(got.Notes) != 1 || got.Notes[0].Text != "(on step 2, b, no longer in the runbook) on b" {
 				t.Fatalf("steps %+v, run notes %+v", got.Steps, got.Notes)
+			}
+		})
+	}
+}
+
+func TestFindRuns(t *testing.T) {
+	for name, s := range stores(t) {
+		t.Run(name, func(t *testing.T) {
+			s.db.Exec("DELETE FROM runs")
+			s.db.Exec("DELETE FROM runbooks")
+			s.db.Exec("DELETE FROM runbook_versions")
+			if _, _, err := s.Save([]byte("name: cut\ninputs:\n  - {name: silo, identifier: true}\n  - {name: why}\nsteps: [{name: a, run: 'true'}]\n"), SaveOpts{}); err != nil {
+				t.Fatal(err)
+			}
+			at := time.Now()
+			for i, x := range []struct {
+				id, silo, why string
+				marked        bool
+			}{
+				{"r1", "silo_3", "routine", true}, {"r2", "silo-12", "silo_3 was slow", true}, {"r3", "SILO_3", "", false}, // from before it was marked
+			} {
+				r := &engine.Run{ID: x.id, Runbook: "cut", Status: engine.StatusSucceeded, Started: at.Add(time.Duration(i) * time.Minute), Inputs: map[string]string{"silo": x.silo, "why": x.why}}
+				if x.marked {
+					r.Identifiers = []string{"silo"}
+				}
+				s.SaveRun(r)
+			}
+			s.SaveRun(&engine.Run{ID: "other", Runbook: "else", Status: engine.StatusSucceeded, Started: at, Inputs: map[string]string{"silo": "silo_3"}})
+			ids := func(runs []engine.Run) string {
+				var out []string
+				for _, r := range runs {
+					out = append(out, r.ID+":"+strings.Join(engine.RunIdentifiers(&r, nil), ","))
+				}
+				return strings.Join(out, " ")
+			}
+			// Identifier values only (not other inputs, not runbooks that don't mark them), any case.
+			if runs, err := s.FindRuns("", "silo_3", 10); err != nil || ids(runs) != "r3:silo=SILO_3 r1:silo=silo_3" {
+				t.Fatalf("%v %s", err, ids(runs))
+			}
+			if runs, _ := s.FindRuns("cut", "", 2); ids(runs) != "r3:silo=SILO_3 r2:silo=silo-12" {
+				t.Fatalf("%s", ids(runs))
+			}
+			if runs, _ := s.FindRuns("", "r2", 10); ids(runs) != "r2:silo=silo-12" {
+				t.Fatalf("by id: %s", ids(runs))
 			}
 		})
 	}

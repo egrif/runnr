@@ -157,7 +157,7 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | POST | `/api/runs` | start request | `202 {id}`, or the run record with `wait` |
-| GET | `/api/runs?runbook=&limit=` | | recent runs (no step detail), newest first; limit ≤ 1000, default 100 |
+| GET | `/api/runs?runbook=&q=&limit=` | | recent runs (no step detail), newest first; limit ≤ 1000, default 100. Each has `identifiers` (the inputs its runbook marks `identifier`; values in `inputs`); `q` keeps those whose identifier values or ID contain it |
 | GET | `/api/runs/{id}` | | `{run, live}` |
 | DELETE | `/api/runs/{id}` | | `204`; `409` while it's running |
 | GET | `/api/runs/{id}/plan` | | `{steps: [StepView], version, latest, changed?, shape?, live}`: the steps as this run uses them, and the runbook's newest version (`changed`: steps not run yet that it has differently; `shape`: why it can't be adopted) |
