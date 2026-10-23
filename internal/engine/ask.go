@@ -120,7 +120,9 @@ func (x *executor) askOperator(ctx context.Context, i int, step runbook.Step, ki
 	if !ok || !x.opts.Interactive {
 		return "", errors.New("nobody to ask: this run is unattended")
 	}
-	answer, err := a.AskStep(ctx, i, step, kind, prompt)
+	q, done := x.asking(ctx)
+	answer, err := a.AskStep(q, i, step, kind, prompt)
+	done()
 	if err != nil {
 		return "", err
 	}

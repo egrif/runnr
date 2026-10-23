@@ -588,3 +588,60 @@ func TestRunTimeline(t *testing.T) {
 		t.Fatalf("%d %v %s", r.StatusCode, r.Header, b)
 	}
 }
+
+// Suspend a run this server runs: it stops after the running step, a
+// request can be taken back, and a resume carries the run on.
+func TestSuspendOverHTTP(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+	do(t, "POST", ts.URL+"/api/runbooks", "name: sus\nshell: sh\nsteps:\n  - {name: a, run: 'sleep 2'}\n  - {name: b, run: 'sleep 1.5'}\n  - {name: c, run: 'echo C'}\n", nil)
+	var run engine.Run
+	json.NewDecoder(do(t, "POST", ts.URL+"/api/runs", `{"runbook":"sus","unattended":true}`, nil).Body).Decode(&run)
+	time.Sleep(200 * time.Millisecond)
+
+	// Asked, then taken back: it carries on past step a.
+	do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/suspend", `{"author":"pat"}`, nil)
+	r := do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/suspend", `{"cancel":true}`, nil)
+	if r.StatusCode != http.StatusOK {
+		t.Fatalf("cancel: %d", r.StatusCode)
+	}
+	time.Sleep(2200 * time.Millisecond) // into step b
+	var res store.SuspendResult
+	json.NewDecoder(do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/suspend", `{"author":"pat","reason":"back tomorrow"}`, nil).Body).Decode(&res)
+	if res.Suspended || !strings.Contains(res.Message, "once the step running now finishes") {
+		t.Fatalf("%+v", res)
+	}
+	var got *engine.Run
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+		if got, _ = st.LoadRun(run.ID); got.Status != engine.StatusRunning || time.Now().After(deadline) {
+			break
+		}
+	}
+	if got.Status != engine.StatusSuspended || got.Error != "suspended by pat: back tomorrow" || got.Steps[1].Status != engine.StatusSucceeded || got.Steps[2].Status != engine.StatusPending {
+		t.Fatalf("%s %q %s %s", got.Status, got.Error, got.Steps[1].Status, got.Steps[2].Status)
+	}
+	if r := do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/suspend", `{}`, nil); r.StatusCode == http.StatusOK {
+		t.Fatal("suspended a run that isn't running")
+	}
+	var again engine.Run
+	json.NewDecoder(do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/resume", `{"unattended":true,"wait":true}`, nil).Body).Decode(&again)
+	if again.Status != engine.StatusSucceeded || again.ID != run.ID || len(again.Resumptions) != 1 || again.Resumptions[0].From != 2 {
+		t.Fatalf("resume: %s %+v", again.Status, again.Resumptions)
+	}
+}
+
+func TestRunsByIdentifier(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+	do(t, "POST", ts.URL+"/api/runbooks", "name: silo-op\ninputs: [{name: silo, identifier: true}, {name: why}]\nsteps: [{name: a, run: 'true'}]\n", nil)
+	for _, silo := range []string{"silo-3", "silo-12"} {
+		do(t, "POST", ts.URL+"/api/runs", `{"runbook":"silo-op","unattended":true,"wait":true,"vars":{"silo":"`+silo+`","why":"silo-3 lag"}}`, nil)
+	}
+	var runs []engine.Run
+	json.NewDecoder(do(t, "GET", ts.URL+"/api/runs?runbook=silo-op&q=SILO-3", "", nil).Body).Decode(&runs)
+	if len(runs) != 1 || runs[0].Inputs["silo"] != "silo-3" || strings.Join(runs[0].Identifiers, ",") != "silo" {
+		t.Fatalf("%+v", runs)
+	}
+}

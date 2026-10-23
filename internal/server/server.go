@@ -126,6 +126,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 	mux.HandleFunc("GET /api/runs/{id}/log", s.runLog)
 	mux.HandleFunc("GET /api/runs/{id}/timeline", s.runTimeline)
+	mux.HandleFunc("POST /api/runs/{id}/suspend", s.suspendRun)
 	mux.HandleFunc("GET /api/runbooks/{name}/tests", s.getTests)
 	mux.HandleFunc("POST /api/runbooks/{name}/tests/run", s.runTests)
 	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
@@ -455,6 +456,8 @@ type controlsJSON struct {
 	Skip        []int `json:"skip"`
 	PauseBefore []int `json:"pause_before"`
 	PauseAfter  []int `json:"pause_after"`
+	// Suspend: a request to suspend the run, not yet taken.
+	Suspend *engine.SuspendError `json:"suspend,omitempty"`
 }
 
 func toJSON(cv engine.ControlsView) controlsJSON {
@@ -465,7 +468,7 @@ func toJSON(cv engine.ControlsView) controlsJSON {
 		}
 		return out
 	}
-	return controlsJSON{cv.StepAll, plus(cv.Skip), plus(cv.PauseBefore), plus(cv.PauseAfter)}
+	return controlsJSON{cv.StepAll, plus(cv.Skip), plus(cv.PauseBefore), plus(cv.PauseAfter), cv.Suspend}
 }
 
 func decode(r *http.Request, v any) error {
@@ -604,11 +607,11 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())
 	l := newLiveRun(id, cancel)
-	if !req.test && !req.DryRun {
-		// Another runnr (runnr abort) can ask for it to stop.
-		go s.st.WatchAbort(ctx, id, cancel)
-	}
 	l.ctl = engine.NewControls(cv)
+	if !req.test && !req.DryRun {
+		// Another runnr (runnr abort, runnr suspend) can ask for it to stop.
+		go s.st.WatchAbort(ctx, id, cancel, l.ctl)
+	}
 	var ui engine.Interactor = l
 	if req.Unattended {
 		ui = unattendedWeb{engine.Unattended{OnEvent: l.Notify, AssumeYes: req.Yes}, l}
@@ -774,8 +777,8 @@ func (s *Server) setControls(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	l.ctl.Set(cv)
-	l.publish(WireEvent{Event: engine.Event{Kind: "controls", Step: -1}, Controls: ptr(toJSON(cv))})
-	writeJSON(w, http.StatusOK, toJSON(cv))
+	l.publish(WireEvent{Event: engine.Event{Kind: "controls", Step: -1}, Controls: ptr(toJSON(l.ctl.View()))})
+	writeJSON(w, http.StatusOK, toJSON(l.ctl.View()))
 }
 
 func ptr[T any](v T) *T { return &v }
@@ -875,7 +878,7 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 1000 {
 		limit = n
 	}
-	runs, err := s.st.ListRuns(r.URL.Query().Get("runbook"), limit)
+	runs, err := s.st.FindRuns(r.URL.Query().Get("runbook"), r.URL.Query().Get("q"), limit)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -888,6 +891,12 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if len(run.Identifiers) == 0 {
+		// A run from before its runbook marked identifiers: as it marks them now.
+		if rb, _, err := s.st.Get(run.Runbook); err == nil {
+			run.Identifiers = rb.IdentifierInputs()
+		}
 	}
 	resp := map[string]any{"run": run, "live": false}
 	if l := s.getLive(run.ID); l != nil {
@@ -1149,6 +1158,68 @@ func (s *Server) addNote(w http.ResponseWriter, r *http.Request) {
 		l.note(body.Step-1, n)
 	}
 	writeJSON(w, http.StatusCreated, n)
+}
+
+// suspendRun suspends a run (see engine.SuspendError): one this server is
+// running is asked to (and its viewers told); one running elsewhere is
+// asked through the store. With cancel, a request not yet taken is
+// withdrawn.
+func (s *Server) suspendRun(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Author string `json:"author"`
+		Reason string `json:"reason"`
+		Now    bool   `json:"now"`
+		Cancel bool   `json:"cancel"`
+	}
+	if r.ContentLength != 0 {
+		if err := decode(r, &body); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	id := r.PathValue("id")
+	e := &engine.SuspendError{By: nonEmpty(strings.TrimSpace(body.Author), "anonymous"), Reason: strings.TrimSpace(body.Reason), Now: body.Now}
+	l := s.getLive(id)
+	if l == nil || l.ctl == nil {
+		if body.Cancel {
+			writeErr(w, fmt.Errorf("run not live here: %w", store.ErrNotFound))
+			return
+		}
+		res, err := s.st.SuspendRun(id, e, 8*time.Second)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
+		return
+	}
+	if run, err := s.st.LoadRun(id); err == nil && run.Status != engine.StatusRunning {
+		writeErr(w, fmt.Errorf("run %s isn't running (it %s)", id, run.Status))
+		return
+	}
+	if body.Cancel {
+		l.ctl.CancelSuspend()
+	} else {
+		l.ctl.Suspend(e)
+	}
+	l.publish(WireEvent{Event: engine.Event{Kind: "controls", Step: -1}, Controls: ptr(toJSON(l.ctl.View()))})
+	if body.Cancel {
+		writeJSON(w, http.StatusOK, store.SuspendResult{Message: "it carries on"})
+		return
+	}
+	// Waiting on someone, or now: it stops at once (now: once the step's
+	// command has been stopped).
+	wait := 600 * time.Millisecond
+	if e.Now {
+		wait = 6 * time.Second
+	}
+	for deadline := time.Now().Add(wait); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if run, err := s.st.LoadRun(id); err == nil && run.Status != engine.StatusRunning {
+			writeJSON(w, http.StatusOK, store.SuspendResult{Suspended: run.Status == engine.StatusSuspended, Message: "it stopped: " + string(run.Status)})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, store.SuspendResult{Message: "it will suspend once the step running now finishes"})
 }
 
 // cancelRun aborts a run: one this server is running stops now; one

@@ -184,7 +184,7 @@ func (t *Timeline) Text(width int, color bool) string {
 			line(grey(label("    ┈ "+strings.Join(what, ", "), "")), side)
 		}
 	}
-	b.WriteString(grey("█ ran (green ok, red ▓ failed, yellow forced) ░ earlier try ▒ background ┈ shell/job ▀ window ◆ note ✎ input/edit ↻ resumed ╌ cut short") + "\n")
+	b.WriteString(grey("█ ran (green ok, red ▓ failed, yellow forced) ░ earlier try ▒ background ‖ suspended ┈ shell/job ▀ window ◆ note ✎ input/edit ↻ resumed ╌ cut short") + "\n")
 
 	if len(t.Moments) > 0 {
 		b.WriteString("\nKey moments\n")
@@ -216,6 +216,8 @@ func statusColor(s engine.Status) string {
 		return "34"
 	case engine.StatusBackground:
 		return "36"
+	case engine.StatusSuspended:
+		return "35"
 	}
 	return "90"
 }
@@ -229,6 +231,8 @@ func tryCell(s Span) cell {
 		c.r = '▒'
 	case s.Status == engine.StatusSkipped:
 		c.r = '↷'
+	case s.Status == engine.StatusSuspended:
+		c.r = '‖'
 	}
 	return c
 }

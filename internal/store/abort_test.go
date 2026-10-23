@@ -51,7 +51,7 @@ func TestAbortRun(t *testing.T) {
 			}
 			// ... and the process running it sees the request.
 			ctx, cancel := context.WithCancelCause(context.Background())
-			go s.WatchAbort(ctx, "alive", cancel)
+			go s.WatchAbort(ctx, "alive", cancel, nil)
 			select {
 			case <-ctx.Done():
 				var ae *engine.AbortError
@@ -69,6 +69,52 @@ func TestAbortRun(t *testing.T) {
 			}
 			if res, err = s.AbortRun("far", "cy", "host died", true, 0); err != nil || !res.Aborted {
 				t.Errorf("%+v %v", res, err)
+			}
+		})
+	}
+}
+
+func TestSuspendRun(t *testing.T) {
+	for kind, s := range stores(t) {
+		t.Run(kind, func(t *testing.T) {
+			s.db.Exec("DELETE FROM run_suspends")
+			host, _ := os.Hostname()
+			running := func(id string, owner *engine.Owner) {
+				r := &engine.Run{ID: id, Runbook: "x", Status: engine.StatusRunning, Started: time.Now(), Owner: owner,
+					Steps: []engine.StepResult{{Name: "a", Status: engine.StatusSucceeded}, {Name: "b", Status: engine.StatusRunning}}}
+				if err := s.SaveRun(r); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Its process is gone: marked suspended, the step it was on to do again.
+			running("s-gone", &engine.Owner{Host: host, PID: 1 << 30, Via: "cli"})
+			res, err := s.SuspendRun("s-gone", &engine.SuspendError{By: "ann", Reason: "later"}, time.Second)
+			if r, _ := s.LoadRun("s-gone"); err != nil || !res.Suspended || r.Status != engine.StatusSuspended || r.Error != "suspended by ann: later" || r.Steps[1].Status != engine.StatusSuspended || engine.ResumePoint(r) != 1 {
+				t.Fatalf("%+v %v %s", res, err, r.Status)
+			}
+			// Alive (this process): asked; the process running it passes it on to its controls, once.
+			running("s-alive", &engine.Owner{Host: host, PID: os.Getpid(), Via: "server"})
+			res, err = s.SuspendRun("s-alive", &engine.SuspendError{By: "bo", Now: true}, 300*time.Millisecond)
+			if err != nil || res.Suspended || !strings.Contains(res.Message, "step 2 (b) finishes") {
+				t.Fatalf("%+v %v", res, err)
+			}
+			ctl := engine.NewControls(engine.ControlsView{})
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			go s.WatchAbort(ctx, "s-alive", cancel, ctl)
+			for deadline := time.Now().Add(5 * time.Second); ctl.Suspending() == nil; time.Sleep(50 * time.Millisecond) {
+				if time.Now().After(deadline) {
+					t.Fatal("the request didn't reach the controls")
+				}
+			}
+			if e := ctl.Suspending(); e.By != "bo" || !e.Now {
+				t.Fatalf("%+v", e)
+			}
+			if e, _ := s.takeSuspend("s-alive"); e != nil {
+				t.Fatal("request not cleared")
+			}
+			if _, err := s.SuspendRun("s-gone", &engine.SuspendError{}, 0); err == nil {
+				t.Fatal("suspending a run that isn't running")
 			}
 		})
 	}

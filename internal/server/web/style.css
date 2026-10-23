@@ -122,6 +122,7 @@ button:disabled { opacity: .5; cursor: default; }
 .icon { width: 18px; text-align: center; font-weight: 700; }
 .s-succeeded { color: var(--ok); }
 .s-failed, .s-aborted { color: var(--fail); }
+.s-suspended, .suspended-text { color: #8a4fc0; }
 .s-skipped, .s-forced { color: var(--warn); }
 .s-running { color: var(--run); }
 .s-pending { color: var(--muted); }
@@ -820,3 +821,14 @@ dialog.path-picker { width: min(640px, calc(100vw - 32px)); }
 dialog.timeline-dlg { width: min(1400px, 96vw); height: 92vh; display: flex; flex-direction: column; padding: 12px 16px; }
 dialog.timeline-dlg:not([open]) { display: none; }
 dialog.timeline-dlg iframe { flex: 1; width: 100%; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+
+.banner.suspending, .cx-banner.suspending { background: #f3ecfa; border-color: #c9b2e3; color: #4b2a6b; }
+@media (prefers-color-scheme: dark) { .banner.suspending, .cx-banner.suspending { background: #2c2236; border-color: #5b4475; color: #e2d3f2; } }
+.cx-step.st-suspended .ic { color: #8a4fc0; }
+
+.ident { display: inline-flex; align-items: baseline; gap: 4px; padding: 1px 8px; border-radius: 10px; background: var(--accent-soft, #e7f2ea); color: var(--text); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ident .ident-k { font-weight: normal; color: var(--muted); }
+.ident.big { font-size: 14px; vertical-align: middle; }
+.history-filters { gap: 12px; margin: 4px 0 14px; flex-wrap: wrap; }
+.history-filters input[type=search] { flex: 1; min-width: 220px; max-width: 420px; }
+@media (prefers-color-scheme: dark) { .ident { background: #23352a; } }

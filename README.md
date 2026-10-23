@@ -9,12 +9,12 @@ unattended for cron/CI.
 - **Automated steps** run shell commands with live output, timeouts, retries and captured output.
 - **Manual steps** show instructions and wait for an operator to mark them done, skipped or failed.
 - **Confirmation gates** pause before risky commands.
-- **Inputs** with defaults, choices and secrets (secrets are masked in output and history).
+- **Inputs** with defaults, choices and secrets (secrets are masked in output and history); mark the ones that say what a run is for (a target) as **identifiers** to see and search them in the history.
 - **Shared variables**: a step can publish values (and secrets) for every later step.
 - **Terminal steps** hand the terminal to tools like `terraform apply` or `argocd login --sso`.
 - **Resume** long-running or multi-day procedures from where they stopped; go back to a step, jump ahead, or stop a running step without stopping the run.
 - **Shells and background commands** beside a run, with its variables (secrets too) kept up to date.
-- **Run history** for every run, and **version history** for every runbook save; delete and restore from **Manage**.
+- **Run history** for every run (filter by runbook; search by identifier, e.g. which silo), and **version history** for every runbook save; delete and restore from **Manage**.
 - **Import and export**: a project folder at once (placeholders filled in, references checked), a runbook with its libraries, a run's logs with the runs it resumed.
 - **Tests** that run a runbook with its commands faked and a simulated operator, without touching anything ([docs/TESTING.md](docs/TESTING.md)).
 - **SQLite or Postgres** storage: zero-setup locally, shared for a team.
@@ -74,10 +74,11 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr watch <run-id>` | Follow a run's steps as it goes (the `--tmux` side pane) |
 | `runnr save-edits <run-id>` | Save the step changes made during a run as a new runbook version |
 | `runnr doctor <runbook>` | Check that the programs it needs (its `requires`, and its libraries') are here |
+| `runnr suspend <run-id> [-m reason] [--now]` | Suspend a run, to resume later: it stops once the running step finishes (at once if it's waiting for someone; `--now` stops the step too) and ends `suspended` |
 | `runnr abort <run-id> [-m reason] [--force]` | Abort a run running elsewhere (another terminal, the GUI), or one left "running" by a process that's gone |
 | `runnr shell <runbook\|run-id>` | Run the setup (`always`) steps, then open a shell (the runbook's `shell`, else `$SHELL`) with that environment; given a run, with its inputs and what its steps published, as last saved (secrets are asked for or re-derived) |
 | `runnr note <run-id> [-s step] <text>` | Add a note to a run or step, during or after the run |
-| `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`), or show one in detail (`--raw`: as a plain log, each step's command, output and result in order; **Raw log** on a past run's page in the GUI; `--timeline`: a chart of the run in time, then its key moments; `--timeline=html` for a page) |
+| `runnr history [run-id]` | List runs (`-r <runbook>`, `-n`, `-f <text>`: those whose identifiers, like a target, or ID contain it; a FOR column shows the identifiers), or show one in detail (`--raw`: as a plain log, each step's command, output and result in order; **Raw log** on a past run's page in the GUI; `--timeline`: a chart of the run in time, then its key moments; `--timeline=html` for a page) |
 | `runnr history prune --older-than 90d` | Delete old finished runs |
 | `runnr db info` / `runnr db import <dir>` | Show storage details / import a file-based runnr home |
 | `runnr serve` (alias `ui`) | Serve the GUI and API (`--addr`, `--open`, `--token`, `--no-ui`) |
@@ -119,7 +120,7 @@ runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--pause-before 
 | **Step by step** (`--step`) | Interactive, but pauses before *every* step: run / skip / continue without pausing / abort. |
 | **Unattended** (`-u`, or stdin isn't a TTY) | Never prompts. Inputs from `-v` or defaults. Confirm-gated steps fail unless `-y`. Manual steps follow their `unattended` policy. Any failure aborts. |
 
-`--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted.
+`--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted, `75` suspended (to resume later).
 
 **Review.** Before an interactive run, rerun or resume starts, you get the
 plan: every step with its kind, whether it confirms on its own, and how it
@@ -214,7 +215,7 @@ A failed or aborted run can be continued with `runnr resume <run-id>`: same
 inputs (secret inputs are asked again) and the same state (secrets excepted),
 starting at the step that didn't finish. Steps marked `always` (typically
 environment setup) run again and re-derive the secrets. For
-multi-day procedures, abort at a "wait" step and resume later.
+multi-day procedures, suspend the run and resume it later.
 
 A resume carries the same run on: same run ID, one record and one log
 (`runnr history <id>`, `--raw`). The steps that finished stay as they went,
@@ -228,6 +229,18 @@ new version: steps are matched by name, a new step is still to do, and the
 record notes which version it was resumed with. Steps it ran that the new
 version no longer has stay in the record (and their notes become the
 run's). `--new-run` won't start from a changed runbook.
+
+**Suspending.** To stop a run on purpose and pick it up later (tomorrow,
+after a change window, once someone else has done their part), suspend it:
+`z` at a prompt in the terminal running it, **‖ Suspend…** on its page or
+in its console, or `runnr suspend <run-id> -m "why"` from anywhere. It
+stops once the step running now has finished (a command isn't cut short;
+**Carry on instead** takes the request back until then), or at once if it's
+waiting for someone; `--now` (**Stop the step running now too**) stops
+that step as well, to do again. The run ends `suspended`, with who and
+why, and `runnr resume` (or **Resume…**) carries it on in the same run.
+Background steps stop with it; optional background watchers start again on
+resume.
 
 **Aborting.** In the terminal running it, Ctrl-C or `a` at a prompt aborts
 a run. From anywhere else, `runnr abort <run-id> -m "why"` (or **Abort
@@ -347,6 +360,7 @@ inputs:
     description: Target environment
     default: staging
     choices: [staging, production]
+    identifier: true            # what a run is for: shown with it in the history, which can be searched by it
   - name: token
     secret: true                # masked as **** in output and history
     required: true

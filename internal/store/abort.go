@@ -44,9 +44,10 @@ func (s *Store) AbortRequested(runID string) (*engine.AbortError, error) {
 }
 
 // WatchAbort cancels a run's context (with the request as the cause) when
-// another runnr asks to abort it, checking every few seconds until ctx is
-// done. Run it in its own goroutine for each run this process runs.
-func (s *Store) WatchAbort(ctx context.Context, runID string, cancel context.CancelCauseFunc) {
+// another runnr asks to abort it, and passes on requests to suspend it to
+// ctl, checking every few seconds until ctx is done. Run it in its own
+// goroutine for each run this process runs.
+func (s *Store) WatchAbort(ctx context.Context, runID string, cancel context.CancelCauseFunc, ctl *engine.Controls) {
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
 	for {
@@ -57,6 +58,11 @@ func (s *Store) WatchAbort(ctx context.Context, runID string, cancel context.Can
 			if e, err := s.AbortRequested(runID); err == nil && e != nil {
 				cancel(e)
 				return
+			}
+			if ctl != nil {
+				if e, err := s.takeSuspend(runID); err == nil && e != nil {
+					ctl.Suspend(e)
+				}
 			}
 		}
 	}

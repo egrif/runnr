@@ -157,7 +157,7 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | POST | `/api/runs` | start request | `202 {id}`, or the run record with `wait` |
-| GET | `/api/runs?runbook=&limit=` | | recent runs (no step detail), newest first; limit ≤ 1000, default 100 |
+| GET | `/api/runs?runbook=&q=&limit=` | | recent runs (no step detail), newest first; limit ≤ 1000, default 100. Each has `identifiers` (the inputs its runbook marks `identifier`; values in `inputs`); `q` keeps those whose identifier values or ID contain it |
 | GET | `/api/runs/{id}` | | `{run, live}` |
 | DELETE | `/api/runs/{id}` | | `204`; `409` while it's running |
 | GET | `/api/runs/{id}/plan` | | `{steps: [StepView], version, latest, changed?, shape?, live}`: the steps as this run uses them, and the runbook's newest version (`changed`: steps not run yet that it has differently; `shape`: why it can't be adopted) |
@@ -175,11 +175,12 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | POST | `/api/runs/{id}/steps/{n}/reopen` | | `204`: goes back to step `n`, the last that succeeded (questions carry `reopenable`); `goto` does this and more |
 | POST | `/api/runs/{id}/stop` | `{step?, by?}` | `204`: interrupts the running step's command (`step` 1-based; `0`: whichever). The step fails ("stopped by …") and the run asks what to do; `409` if it isn't running |
 | PUT | `/api/runs/{id}/inputs` | `{values: {name: value}, by?}` | `{changed, stale, replaces, restarted}`: changes a live run's inputs, checked as at the start. They take effect before its next command; a step waiting to run its command starts again (`restarted`). `stale`: per input, the steps (1-based) that already ran with it; `replaces`: inputs a step had published a value for. `400` if a value isn't allowed |
+| POST | `/api/runs/{id}/suspend` | `{author?, reason?, now?, cancel?}` | `{suspended, message}`: suspends it, to resume later. It stops once the running step finishes (at once if it's waiting on someone; `now` stops the step too); until then the live run's `controls` carry the request as `suspend`, and `cancel` takes it back. A run running elsewhere is asked (waits up to 8s); one whose process is gone is marked suspended. The run ends with status `suspended` |
 | POST | `/api/runs/{id}/cancel` | `{author?, reason?, force?}` | `{aborted, message}`: aborts it. A run this server runs stops now; one running elsewhere is asked to stop (waits up to 8s); one whose process is gone, or with `force`, is marked aborted |
 | POST | `/api/runs/{id}/resume` | start request (no `runbook`/`from`); `"new_run": true` for a new run | like `POST /api/runs`: the same run ID (it carries on), unless `new_run` |
 | POST | `/api/runs/{id}/notes` | `{step, text, author?}` (`step` 1-based; `0` = the run) | `201 {time, author, text}` |
 | GET | `/api/runs/{id}/preview` | | `{steps: [StepView]}` with the run's inputs and current state |
-| GET / PUT | `/api/runs/{id}/controls` | `{step_mode, skip, pause_before, pause_after}` | the live run's controls; changes apply to steps not reached yet |
+| GET / PUT | `/api/runs/{id}/controls` | `{step_mode, skip, pause_before, pause_after}` (and, read only, `suspend`: a request to suspend not yet taken) | the live run's controls; changes apply to steps not reached yet |
 
 Start request:
 

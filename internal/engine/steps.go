@@ -74,7 +74,14 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 	confirmed := false
 	// Optional steps aren't required: an interactive run asks first.
 	if _, before, _ := x.ctl.Get(i); (x.takePause(i) || before || (step.Optional && !x.opts.DryRun)) && x.canPause() {
-		d, err := x.ui.(Stepper).BeforeStep(ctx, x.View(i))
+		q, done := x.asking(ctx)
+		d, err := x.ui.(Stepper).BeforeStep(q, x.View(i))
+		done()
+		if se := x.suspension(ctx, err); se != nil {
+			// Suspended before it ran: it's still to do.
+			*res = StepResult{Index: res.Index, Name: res.Name, Section: res.Section, Owner: res.Owner, Kind: res.Kind, Status: StatusPending, Optional: res.Optional, Before: res.Before}
+			return se
+		}
 		if err != nil {
 			return x.fail(i, err)
 		}
@@ -190,7 +197,9 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 func (x *executor) pickWay(ctx context.Context, i int, step runbook.Step, failed int) (int, error) {
 	if len(step.Ways) > 1 && (step.Choose || failed >= 0) && x.opts.Interactive && !x.opts.DryRun {
 		if c, ok := x.ui.(Chooser); ok {
-			w, err := c.ChooseWay(ctx, x.View(i), failed)
+			q, done := x.asking(ctx)
+			w, err := c.ChooseWay(q, x.View(i), failed)
+			done()
 			if err == nil && (w < 0 || w >= len(step.Ways)) {
 				err = fmt.Errorf("no way %d", w+1)
 			}
@@ -265,7 +274,9 @@ func (x *executor) attemptManual(ctx context.Context, i int, step runbook.Step, 
 	if x.opts.DryRun {
 		return attemptResult{kind: outSkipped, note: "dry run"}
 	}
-	outcome, note, err := x.ui.Manual(ctx, i, step, x.mask(text))
+	q, done := x.asking(ctx)
+	outcome, note, err := x.ui.Manual(q, i, step, x.mask(text))
+	done()
 	if err != nil {
 		return attemptResult{hard: err}
 	}
@@ -287,7 +298,9 @@ func (x *executor) confirm(ctx context.Context, i int, step runbook.Step, what s
 	if !step.Confirm || confirmed || x.opts.DryRun {
 		return true, nil
 	}
-	return x.ui.Confirm(ctx, i, step, x.mask(what))
+	q, done := x.asking(ctx)
+	defer done()
+	return x.ui.Confirm(q, i, step, x.mask(what))
 }
 
 func (x *executor) attemptRun(ctx context.Context, i int, step runbook.Step, res *StepResult, confirmed bool) attemptResult {
@@ -592,7 +605,7 @@ func (x *executor) tendBackground(finished int, final bool) {
 		case ended:
 			why = "exited"
 		case final:
-			why = "stopped when the run ended"
+			why = noteStoppedAtEnd
 		case finished >= 0 && b.stopAfter == finished:
 			why = fmt.Sprintf("stopped after step %d", finished+1)
 		default:
@@ -622,6 +635,9 @@ func (x *executor) tendBackground(finished int, final bool) {
 		x.save()
 	}
 }
+
+// noteStoppedAtEnd marks a background step stopped as the run ended.
+const noteStoppedAtEnd = "stopped when the run ended"
 
 func suffix(note string) string {
 	if note == "" {

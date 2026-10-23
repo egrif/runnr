@@ -29,6 +29,8 @@ const (
 	StatusFailed    Status = "failed"
 	StatusSkipped   Status = "skipped"
 	StatusAborted   Status = "aborted"
+	// StatusSuspended: stopped on purpose, to be resumed later.
+	StatusSuspended Status = "suspended"
 	// StatusForced: the step failed but an operator accepted it, with a reason.
 	StatusForced Status = "forced"
 	// StatusBackground: a background step that has started and is still running.
@@ -101,6 +103,9 @@ type Run struct {
 	Removed []StepResult `json:"removed,omitempty"`
 	// Window is the maintenance window, if the runbook has one.
 	Window *WindowRecord `json:"window,omitempty"`
+	// Identifiers are the inputs that say what the run is for (marked
+	// identifier in the runbook); their values are in Inputs.
+	Identifiers []string `json:"identifiers,omitempty"`
 	// Edits are changes made to steps during the run; EditsSaved is the
 	// runbook version they were saved as (0: not saved yet).
 	Edits      []StepEdit `json:"edits,omitempty"`
@@ -458,6 +463,9 @@ type executor struct {
 	masker     *runbook.Masker
 	secretVars map[string]bool
 	ctl        *Controls
+	// cancelRun stops the run (a request to suspend now is its cause).
+	cancelRun context.CancelCauseFunc
+	sus       suspendState
 	// background sessions still running, by step index.
 	background map[int]*bgStep
 	// funcFile holds the run's shell functions (libraries and the runbook's).
@@ -504,6 +512,8 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	if opts.Interactive {
 		mode = "interactive"
 	}
+	ctx, cancelRun := context.WithCancelCause(ctx)
+	defer cancelRun(nil)
 	// A private copy: steps can be edited during the run.
 	own := *rb
 	own.Steps = slices.Clone(rb.Steps)
@@ -513,6 +523,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
 	}
+	x.run.Identifiers = rb.IdentifierInputs()
 
 	if opts.Previous != nil {
 		x.run.Previous = opts.Previous.ID
@@ -531,10 +542,13 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	if opts.ShellOnly {
 		x.opts.StartAt = len(rb.Steps)
 	}
+	x.cancelRun = cancelRun
 	x.ctl = opts.Controls
 	if x.ctl == nil {
 		x.ctl = NewControls(ControlsView{})
 	}
+	x.ctl.setSuspendHook(x.onSuspend)
+	defer x.ctl.setSuspendHook(nil)
 	// Starting later is just skipping the earlier (non-always) steps, so
 	// the review can show it and the operator can change it.
 	for i := 0; i < x.opts.StartAt && i < len(rb.Steps); i++ {
@@ -601,9 +615,19 @@ func (x *executor) finish(ctx context.Context, err error) {
 		os.Remove(x.funcFile)
 	}
 	x.run.Ended = time.Now()
+	se := x.suspension(ctx, err)
 	switch {
 	case err == nil:
 		x.run.Status = StatusSucceeded
+	case se != nil:
+		x.run.Status, x.run.Error = StatusSuspended, x.mask(se.Error())
+		// The step it stopped on (a question cut short, or now) is to do
+		// again; one it hadn't started stays to do.
+		for i := range x.run.Steps {
+			if st := &x.run.Steps[i]; st.Status == StatusAborted || st.Status == StatusRunning {
+				st.Status, st.Error = StatusSuspended, x.run.Error
+			}
+		}
 	case ctx.Err() != nil || errors.Is(err, errAborted):
 		x.run.Status = StatusAborted
 		x.run.Error = x.mask(err.Error())
@@ -654,7 +678,10 @@ func (x *executor) resolveInputs(ctx context.Context) error {
 		v, ok := x.opts.Vars[in.Name]
 		if !ok && x.opts.Interactive {
 			var err error
-			if v, err = x.ui.AskInput(ctx, in); err != nil {
+			q, done := x.asking(ctx)
+			v, err = x.ui.AskInput(q, in)
+			done()
+			if err != nil {
 				return err
 			}
 			ok = v != ""
@@ -695,6 +722,10 @@ func (x *executor) steps(ctx context.Context) error {
 		step := x.def(i)
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		// Asked to suspend: stop before this step.
+		if e := x.ctl.Suspending(); e != nil {
+			return e
 		}
 		if _, adopted := x.background[i]; adopted && x.run.Steps[i].Status == StatusBackground {
 			continue // followed again from the resumed run
@@ -751,7 +782,14 @@ func (x *executor) afterStep(ctx context.Context, i int, step runbook.Step) erro
 		x.stepDone(i)
 		return nil
 	}
-	d, note, err := x.ui.(Stepper).AfterStep(ctx, x.View(i), *x.result(i))
+	q, done := x.asking(ctx)
+	d, note, err := x.ui.(Stepper).AfterStep(q, x.View(i), *x.result(i))
+	done()
+	if se := x.suspension(ctx, err); se != nil {
+		// It ran and succeeded: it stands; the run stops after it.
+		x.stepDone(i)
+		return se
+	}
 	if err != nil {
 		return x.fail(i, err)
 	}
@@ -774,7 +812,14 @@ func (x *executor) afterStep(ctx context.Context, i int, step runbook.Step) erro
 // run it again, nil if the step is settled, or the error that ends the run.
 func (x *executor) onFailure(ctx context.Context, i int, step runbook.Step, out cmdResult) error {
 	res := &x.run.Steps[i]
-	action, reason, err := x.ui.OnFailure(ctx, i, step, *x.result(i))
+	q, done := x.asking(ctx)
+	action, reason, err := x.ui.OnFailure(q, i, step, *x.result(i))
+	done()
+	if se := x.suspension(ctx, err); se != nil {
+		// It failed: it stays failed (with why), to do again on resume.
+		x.stepDone(i)
+		return se
+	}
 	if err != nil {
 		return x.fail(i, err)
 	}
@@ -1044,4 +1089,21 @@ func (x *executor) command(ctx context.Context, name string, args ...string) *ex
 // tempDir makes a directory for a step's files.
 func (x *executor) tempDir(pattern string) (string, error) {
 	return os.MkdirTemp(x.opts.TempDir, pattern)
+}
+
+// RunIdentifiers are what r is for: its identifier inputs (as recorded,
+// else as rb marks them now: a run from before they were marked) with
+// their values, in order, "name=value".
+func RunIdentifiers(r *Run, rb *runbook.Runbook) []string {
+	names := r.Identifiers
+	if len(names) == 0 && rb != nil {
+		names = rb.IdentifierInputs()
+	}
+	var out []string
+	for _, n := range names {
+		if v, ok := r.Inputs[n]; ok && v != "" {
+			out = append(out, n+"="+v)
+		}
+	}
+	return out
 }

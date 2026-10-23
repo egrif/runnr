@@ -20,6 +20,8 @@ import (
 
 // Terminal is an interactive engine.Interactor on stdin/stdout.
 type Terminal struct {
+	// ctl is the run's controls: [z] suspend asks it to suspend.
+	ctl     *engine.Controls
 	window  *engine.WindowRecord // the maintenance window, once it opens
 	out     io.Writer
 	color   bool
@@ -87,6 +89,7 @@ var statusStyle = map[engine.Status]struct{ code, icon string }{
 	engine.StatusFailed:     {"31", "✘"},
 	engine.StatusSkipped:    {"33", "↷"},
 	engine.StatusAborted:    {"31", "■"},
+	engine.StatusSuspended:  {"35", "‖"},
 	engine.StatusForced:     {"33", "⚑"},
 	engine.StatusRunning:    {"36", "▶"},
 	engine.StatusBackground: {"36", "◐"},
@@ -304,6 +307,10 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 		extra += " · [m]odify step"
 		all["m"], all["modify"], all["change"] = "\x00change", "\x00change", "\x00change"
 	}
+	if t.ctl != nil {
+		extra += " · [z] suspend"
+		all["z"], all["suspend"] = "\x00suspend", "\x00suspend"
+	}
 	for k, v := range opts {
 		all[k] = v
 	}
@@ -375,6 +382,18 @@ func (t *Terminal) stepPromptAt(ctx context.Context, idx int, before bool, promp
 			if changed && before {
 				return "", engine.ErrInputsChanged
 			}
+		case "\x00suspend":
+			fmt.Fprint(t.out, "  suspend the run, to resume later? why (optional; Enter to suspend, n to carry on): ")
+			why, err := t.readLine(ctx)
+			if err != nil {
+				return "", err
+			}
+			if w := strings.ToLower(strings.TrimSpace(why)); w == "n" || w == "no" {
+				continue
+			}
+			e := &engine.SuspendError{By: author(), Reason: strings.TrimSpace(why)}
+			t.ctl.Suspend(e)
+			return "", e
 		case "\x00change":
 			changed, err := t.changeStep(ctx, idx)
 			if err != nil {
@@ -684,7 +703,7 @@ func (t *Terminal) BeforeStep(ctx context.Context, v engine.StepView) (engine.St
 var statusIcon = map[engine.Status]string{
 	engine.StatusSucceeded: "✔", engine.StatusFailed: "✘", engine.StatusSkipped: "↷",
 	engine.StatusAborted: "■", engine.StatusForced: "⚑", engine.StatusRunning: "▶", engine.StatusPending: "○",
-	engine.StatusBackground: "◐",
+	engine.StatusBackground: "◐", engine.StatusSuspended: "‖",
 }
 
 // previousStep returns what step i did in the run being compared against.

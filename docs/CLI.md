@@ -78,6 +78,12 @@ step stops after the step it was tied to, and the run ends with a summary.
   again, or ahead (the steps between are skipped). The step you go to waits
   for you before it runs. Going back past a point of no return asks you to
   type `yes`.
+- **Suspend** (`z`, at any step's prompt): stop the run to pick it up
+  later, with an optional reason. It ends `suspended` (exit status 75) and
+  `runnr resume <run-id>` carries it on. From another terminal,
+  `runnr suspend <run-id>` asks the runnr running it: it stops once the
+  step running now finishes (or at once if it's at a prompt); `--now`
+  stops that step too.
 - **Change the inputs** (`i`): new values are checked as at the start and
   take effect before the next command; a step waiting to run starts again
   with them. Each change is recorded, and runnr says which steps already

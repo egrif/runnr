@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.6.0 — 2026-10-23
+
+Suspend a run, to resume it later; identifier inputs in the history.
+
+### Added
+
+- **Suspend**: stop a run on purpose and carry it on later. ‖ Suspend… on
+  a live run's page or console, `z` at a CLI prompt, `runnr suspend
+  <run-id> [-m why] [--now]` from anywhere, or `POST
+  /api/runs/{id}/suspend`. It stops once the step running now finishes
+  (a command isn't cut short; **Carry on instead** takes the request
+  back), or at once if it's waiting for someone; `now` stops the running
+  step too, to do again. The run ends `suspended` (CLI exit status 75)
+  with who and why, and Resume carries it on in the same run ("resumed …
+  (it was suspended by …)"). Optional background watchers stopped by the
+  suspension start again on resume. Aborted and failed runs resume as
+  before.
+- **Identifier inputs**: mark the inputs that say what a run is for (a
+  target: a silo, a cluster) `identifier: true` (an Identifier column in
+  the editor). Their values show with each run in the history (a For
+  column; `runnr history`'s FOR) and at the top of the run and its
+  console, and the history can be searched by them: a search box in the
+  GUI, `runnr history -f <text>`, `GET /api/runs?q=`. Runs from before the
+  inputs were marked show them too.
+- The GUI's run history has a runbook picker.
+
 ## v0.5.0 — 2026-10-22
 
 A run's timeline.

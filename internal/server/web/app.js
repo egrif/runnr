@@ -3,7 +3,7 @@
 const $ = (sel, el = document) => el.querySelector(sel);
 const main = $("#main");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■", running: "▶", pending: "○", forced: "⚑", background: "◐" };
+const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■", suspended: "‖", running: "▶", pending: "○", forced: "⚑", background: "◐" };
 
 let runbooks = [];
 let stream = null; // active EventSource
@@ -299,7 +299,7 @@ async function viewRun(id) {
     applyEvent(state, e);
     renderRun(state);
   };
-  stream.onerror = () => { if (["succeeded", "failed", "aborted"].includes(state.run.status)) stream.close(); };
+  stream.onerror = () => { if (["succeeded", "failed", "aborted", "suspended"].includes(state.run.status)) stream.close(); };
 }
 
 function applyEvent(state, e) {
@@ -366,10 +366,10 @@ function renderRun(state) {
   const { run } = state;
   // Optional steps don't decide where a resume starts (as engine.ResumePoint).
   const stopAt = state.steps.findIndex((s) => !s.optional && !["succeeded", "skipped", "forced"].includes(s.status));
-  state.resumable = ["failed", "aborted"].includes(run.status) && stopAt >= 0 ? stopAt + 1 : 0;
+  state.resumable = ["failed", "aborted", "suspended"].includes(run.status) && stopAt >= 0 ? stopAt + 1 : 0;
   const scroll = {};
   main.querySelectorAll("pre.log").forEach((p) => (scroll[p.dataset.i] = p.scrollHeight - p.scrollTop - p.clientHeight < 8));
-  const active = !["succeeded", "failed", "aborted"].includes(run.status);
+  const active = !["succeeded", "failed", "aborted", "suspended"].includes(run.status);
   const live = active && state.live;
   const ctl = state.controls || { skip: [], pause_before: [], pause_after: [] };
   const has = (list, i) => (list || []).includes(i + 1);
@@ -377,7 +377,7 @@ function renderRun(state) {
   main.innerHTML = `
     <div class="row">
       <div>
-        <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a></h1>
+        <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a> ${identChips(run, "big")}</h1>
         <div class="muted">${esc(run.id)}${run.runbook_version ? ` · v${run.runbook_version}` : ""} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
           ${duration(run.started, run.ended) ? ` · took ${duration(run.started, run.ended)}` : ""}</div>
       </div>
@@ -385,9 +385,10 @@ function renderRun(state) {
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
       <a class="button" href="#/runs/${enc(run.id)}/console" title="One screen: the steps, the selected step's definition, what it's doing, and the background steps">▣ Console</a>
       <button id="timeline" title="The run laid out in time: its steps, tries, shells, resumes and notes">◷ Timeline</button>
-      ${active ? `<button class="danger" id="cancel">Abort run</button>` : `<button id="delete-run" class="danger" title="Delete this run's record">Delete run</button><button id="export-logs" title="Its logs, with the runs linked to it by resuming: to files, or a download">⇩ Export logs…</button><button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
+      ${active ? `<button id="suspend" title="Stop the run to resume it later: once the step running now finishes, or at once if it's waiting for you">‖ Suspend…</button><button class="danger" id="cancel">Abort run</button>` : `<button id="delete-run" class="danger" title="Delete this run's record">Delete run</button><button id="export-logs" title="Its logs, with the runs linked to it by resuming: to files, or a download">⇩ Export logs…</button><button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
-    ${run.error ? `<p class="error-text">${esc(run.error)}</p>` : ""}
+    ${run.error ? `<p class="${run.status === "suspended" ? "suspended-text" : "error-text"}">${esc(run.error)}${run.status === "suspended" && state.resumable ? ` — <b>Resume…</b> carries it on from step ${state.resumable}.` : ""}</p>` : ""}
+    ${active ? suspendingBanner(state.controls) : ""}
     ${editsBanner(run, state)}
     ${windowBanner(run)}
     ${inputs.length ? `<p class="muted">${inputs.map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(" ")}${canChangeInputs(state) ? ` <button class="link" id="change-inputs" title="Change them for the rest of the run">✎ Change inputs</button>` : ""}</p>` : ""}
@@ -474,6 +475,8 @@ function renderRun(state) {
   main.querySelectorAll("[data-edit-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); editRunStep(state, +b.dataset.editStep); }));
   $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
   $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
+  $("#suspend") && ($("#suspend").onclick = () => suspendRun(state));
+  $("[data-carry-on]") && ($("[data-carry-on]").onclick = () => carryOn(state));
   $("#change-inputs") && ($("#change-inputs").onclick = () => changeInputs(state));
   $("#export-logs") && ($("#export-logs").onclick = () => exportLogs(run.id));
   $("#timeline").onclick = () => openTimeline(run.id);
@@ -519,7 +522,7 @@ function windowBanner(run) {
   const target = parseOffset(w.target);
   const tgt = w.target ? ` of ${esc(w.target)} target` : "";
   if (w.opened && !w.closed) {
-    const active = !["succeeded", "failed", "aborted"].includes(run.status);
+    const active = !["succeeded", "failed", "aborted", "suspended"].includes(run.status);
     return `<div class="mw-banner open"><b>🔴 Maintenance window open: production is down</b>
       <span class="mw-clock" data-since="${esc(w.opened)}" data-target="${target ?? ""}"></span><span class="muted">${tgt}</span>
       ${active ? "" : `<b>The run has stopped with the window still open.</b>`}</div>`;
@@ -619,7 +622,7 @@ async function editRunStep(state, i) {
 // started, until they're done.
 function canChangeInputs(state) {
   const r = state.run;
-  return !!state.live && !["succeeded", "failed", "aborted"].includes(r.status) && !!r.begun && !r.begun.startsWith("0001")
+  return !!state.live && !["succeeded", "failed", "aborted", "suspended"].includes(r.status) && !!r.begun && !r.begun.startsWith("0001")
     && (state.inputDefs || []).length > 0 && state.steps.some((s) => ["pending", "running"].includes(s.status));
 }
 
@@ -682,6 +685,57 @@ function changeInputs(state) {
   dlg.querySelector("input, select")?.focus();
 }
 
+// suspendRun asks first: why (optional), and whether to stop the step
+// running now too. The run stops once that step finishes (or at once if
+// it's waiting on someone) and ends suspended, to resume later.
+function suspendRun(state) {
+  const run = state.run;
+  let saved = "";
+  try { saved = localStorage.getItem("runnr.author") || ""; } catch {}
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step abort-dialog";
+  dlg.innerHTML = `<h3>Suspend this run?</h3>
+    <p class="muted small">It stops once the step running now has finished (at once if it's waiting for you), and ends <b>suspended</b>: <b>Resume…</b> (or <code>runnr resume ${esc(run.id)}</code>) carries it on from the next step, in the same run. Background steps stop with it.${state.live ? "" : " This server isn't running it: runnr asks whichever runnr is (or marks it suspended if its process is gone)."}</p>
+    <label>Your name <input name="by" value="${esc(saved)}" autocomplete="name"></label>
+    <label>Why (optional, recorded with the run) <input name="reason" autocomplete="off" placeholder="e.g. waiting for the DBA; back tomorrow"></label>
+    <label class="check"><input type="checkbox" name="now"> Stop the step running now too (it's done again on resume)</label>
+    <div class="error-text"></div>
+    <div class="row"><button class="primary" data-ok>‖ Suspend</button><button data-close>Keep running</button></div>`;
+  document.body.append(dlg);
+  const f = (n) => dlg.querySelector(`[name=${n}]`);
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  dlg.querySelector("[data-ok]").onclick = async (e) => {
+    const ok = e.currentTarget;
+    const by = f("by").value.trim();
+    if (by) try { localStorage.setItem("runnr.author", by); } catch {}
+    ok.disabled = true;
+    ok.textContent = "Asking…";
+    try {
+      const res = await api("POST", `/api/runs/${enc(run.id)}/suspend`, { author: by, reason: f("reason").value.trim(), now: f("now").checked });
+      dlg.close();
+      toast(res.suspended ? "Run suspended" : `Suspending: ${res.message}`);
+      if (!state.live) viewRun(run.id);
+    } catch (err) { dlg.querySelector(".error-text").textContent = err.message; ok.disabled = false; ok.textContent = "‖ Suspend"; }
+  };
+  dlg.showModal();
+  (saved ? f("reason") : f("by")).focus();
+}
+
+// suspendingBanner says a request to suspend is waiting for the running
+// step to finish, with a way to take it back.
+function suspendingBanner(ctl) {
+  const s = ctl?.suspend;
+  if (!s) return "";
+  return `<div class="banner suspending">‖ Suspending once the step running now finishes${s.by ? ` (asked by ${esc(s.by)}${s.reason ? `: ${esc(s.reason)}` : ""})` : ""}. <button data-carry-on>Carry on instead</button></div>`;
+}
+
+// carryOn withdraws a request to suspend.
+async function carryOn(state) {
+  try { await api("POST", `/api/runs/${enc(state.run.id)}/suspend`, { cancel: true }); toast("The run carries on"); }
+  catch (e) { toast(e.message); }
+}
+
 // abortRun asks first, with an optional reason. A run this server isn't
 // running (it's in a terminal, or its process is gone) is asked to stop,
 // or marked aborted when its process is gone (or with "now").
@@ -731,7 +785,7 @@ function thisRun(s, i) {
   const meta = [s.way && `way: ${s.way}`, s.note, s.attempts > 1 && `${s.attempts} attempts`, s.exit_code != null && `exit ${s.exit_code}`, duration(s.started, s.ended)].filter(Boolean);
   return `<p><span class="s-${esc(s.status)}">${ICONS[s.status] || ""} ${esc(s.status)}</span>${meta.length ? ` <span class="muted">${meta.map(esc).join(" · ")}</span>` : ""}</p>
     ${s.log.length ? `<pre class="log" data-i="${i}">${s.log.map((l) => `<span class="${l.stream}">${esc(l.text)}</span>`).join("\n")}</pre>` : s.status === "running" ? `<p class="muted">No output yet.</p>` : ""}
-    ${s.error && s.status !== "succeeded" ? `<div class="error-text">${esc(s.error)}</div>` : ""}
+    ${s.error && s.status !== "succeeded" ? `<div class="${s.status === "suspended" ? "suspended-text" : "error-text"}">${esc(s.error)}</div>` : ""}
     ${renderChecks(s.checks)}${renderSub(s)}
     ${(s.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
     ${earlierTries(s)}`;
@@ -781,11 +835,17 @@ function earlierTries(s) {
     ${b.output ? `<pre class="log">${esc(b.output)}</pre>` : ""}${b.error ? `<div class="error-text">${esc(b.error)}</div>` : ""}</details>`).join("");
 }
 
+// howItEnded says how a run had ended before a resume (engine.Resumption.HowItEnded).
+function howItEnded(r) {
+  if (r.status === "suspended") return `it was ${r.error || "suspended"}`;
+  return `it had ${r.status}${r.error ? `: ${r.error}` : ""}`;
+}
+
 // resumedHTML lists the times a run was resumed (it carried on in the same record).
 function resumedHTML(run) {
   const rs = run.resumptions || [];
   if (!rs.length) return "";
-  return `<p class="muted">${rs.map((r) => `↻ Resumed ${new Date(r.at).toLocaleString()} from step ${r.from + 1} (it had ${esc(r.status)}${r.error ? `: ${esc(r.error)}` : ""})${r.was_version ? ` with runbook version ${r.runbook_version} (it had run version ${r.was_version})` : ""}`).join("<br>")}</p>`;
+  return `<p class="muted">${rs.map((r) => `↻ Resumed ${new Date(r.at).toLocaleString()} from step ${r.from + 1} (${esc(howItEnded(r))})${r.was_version ? ` with runbook version ${r.runbook_version} (it had run version ${r.was_version})` : ""}`).join("<br>")}</p>`;
 }
 
 // removedHTML lists steps the run did that its runbook no longer has.
@@ -937,20 +997,46 @@ function bindQuestion(el, q, runId) {
 
 // ---------- history ----------
 
+// identChips shows what a run is for: its identifier inputs' values.
+function identChips(r, cls = "") {
+  const ids = (r.identifiers || []).filter((n) => r.inputs?.[n]);
+  return ids.map((n) => `<span class="ident ${cls}" title="${esc(n)}"><span class="ident-k">${esc(n)}</span> ${esc(r.inputs[n])}</span>`).join(" ");
+}
+
+// viewHistory lists runs, most recent first: of one runbook (picked, or
+// #/history?runbook=), and those whose identifiers (or ID) match a search
+// (&q=), searched on the server across all of them.
 async function viewHistory() {
-  const filter = new URLSearchParams(location.hash.split("?")[1] || "").get("runbook") || "";
-  const runs = await api("GET", `/api/runs${filter ? `?runbook=${encodeURIComponent(filter)}` : ""}`);
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  const filter = params.get("runbook") || "", q = params.get("q") || "";
+  const query = new URLSearchParams({ ...(filter && { runbook: filter }), ...(q && { q }) });
+  const runs = await api("GET", `/api/runs${query.size ? `?${query}` : ""}`);
+  const names = (runbooks || []).map((r) => r.name).sort();
+  const anyIdents = runs.some((r) => (r.identifiers || []).length);
   main.innerHTML = `
     <h1>Run history${filter ? ` · ${esc(filter)}` : ""}</h1>
-    ${filter ? `<p><a href="#/history">Show all</a></p>` : `<p class="muted">Most recent first.</p>`}
-    ${runs.length ? `<table><thead><tr><th>Status</th><th>Runbook</th><th>Mode</th><th>Started</th><th>Duration</th><th>Run ID</th></tr></thead><tbody>
+    <div class="row history-filters">
+      <label>Runbook <select data-hist-rb><option value="">all</option>${names.map((n) => `<option ${n === filter ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+      <input type="search" data-hist-q value="${esc(q)}" placeholder="Search targets (identifier inputs) or run ID…" title="Runs whose identifiers (inputs the runbook marks identifier: true, like a target) or ID contain this">
+      <span class="muted small">Most recent first${runs.length >= 100 ? " (the latest 100)" : ""}.</span>
+    </div>
+    ${runs.length ? `<table class="history"><thead><tr><th>Status</th><th>Runbook</th>${anyIdents ? "<th>For</th>" : ""}<th>Mode</th><th>Started</th><th>Duration</th><th>Run ID</th></tr></thead><tbody>
       ${runs.map((r) => `<tr data-id="${esc(r.id)}">
         <td><span class="s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span></td>
-        <td>${esc(r.runbook)}</td><td>${esc(r.mode)}${r.dry_run ? " (dry)" : ""}</td>
+        <td>${esc(r.runbook)}</td>${anyIdents ? `<td>${identChips(r)}</td>` : ""}<td>${esc(r.mode)}${r.dry_run ? " (dry)" : ""}</td>
         <td>${new Date(r.started).toLocaleString()}</td><td>${duration(r.started, r.ended)}</td>
         <td class="muted"><code>${esc(r.id)}</code></td></tr>`).join("")}
-    </tbody></table>` : `<div class="empty">No runs yet.</div>`}`;
+    </tbody></table>` : `<div class="empty">${filter || q ? "No runs match." : "No runs yet."}</div>`}`;
   main.querySelectorAll("tr[data-id]").forEach((tr) => (tr.onclick = () => (location.hash = `#/runs/${tr.dataset.id}`)));
+  const go = (rb, text) => {
+    const p = new URLSearchParams({ ...(rb && { runbook: rb }), ...(text && { q: text }) });
+    location.hash = `#/history${p.size ? `?${p}` : ""}`;
+  };
+  main.querySelector("[data-hist-rb]").onchange = (e) => go(e.target.value, q);
+  const box = main.querySelector("[data-hist-q]");
+  let t;
+  box.oninput = () => { clearTimeout(t); t = setTimeout(() => go(filter, box.value.trim()), 400); };
+  if (q) { box.focus(); box.setSelectionRange(q.length, q.length); }
 }
 
 const REFERENCE = `name: my-runbook            # lowercase id, used as the filename
@@ -968,6 +1054,7 @@ inputs:
     required: true
     choices: [staging, production]
     secret: false            # masked in logs and history
+    identifier: true         # what a run is for: shown (and searchable) in the history
 steps:
   - name: Automated step
     run: echo "hello {{.target}}"

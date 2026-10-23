@@ -14,6 +14,9 @@ type Controls struct {
 	skip    map[int]bool
 	before  map[int]bool
 	after   map[int]bool
+	// suspend: a request to suspend the run (suspend.go).
+	suspend   *SuspendError
+	onSuspend func(*SuspendError)
 }
 
 // ControlsView is the JSON form of Controls. Step numbers are 0-based.
@@ -22,6 +25,9 @@ type ControlsView struct {
 	Skip        []int `json:"skip"`
 	PauseBefore []int `json:"pause_before"`
 	PauseAfter  []int `json:"pause_after"`
+	// Suspend is a request to suspend the run not yet taken (read only:
+	// Set leaves it).
+	Suspend *SuspendError `json:"suspend,omitempty"`
 }
 
 func NewControls(v ControlsView) *Controls {
@@ -58,7 +64,7 @@ func (c *Controls) Set(v ControlsView) {
 func (c *Controls) View() ControlsView {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return ControlsView{StepAll: c.stepAll, Skip: list(c.skip), PauseBefore: list(c.before), PauseAfter: list(c.after)}
+	return ControlsView{StepAll: c.stepAll, Skip: list(c.skip), PauseBefore: list(c.before), PauseAfter: list(c.after), Suspend: c.suspend}
 }
 
 // Get reports step i's settings; before includes step-through-all.

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -527,6 +528,92 @@ func (s *Store) ListRuns(runbookName string, limit int) ([]engine.Run, error) {
 	}
 	return out, rows.Err()
 }
+
+// FindRuns lists runs (most recent first, of runbookName if given, up to
+// limit) with their identifiers filled in (engine.RunIdentifiers: runs
+// from before the runbook marked them get its marks now), keeping those
+// whose identifier values or ID contain find (any case; "" keeps all).
+func (s *Store) FindRuns(runbookName, find string, limit int) ([]engine.Run, error) {
+	find = strings.ToLower(strings.TrimSpace(find))
+	// Read before the runs' rows are open (SQLite has one connection).
+	marks, err := s.identifierMarks(runbookName)
+	if err != nil {
+		return nil, err
+	}
+	query, args := `SELECT record FROM runs WHERE 1 = 1`, []any{}
+	if runbookName != "" {
+		query += ` AND runbook = ?`
+		args = append(args, runbookName)
+	}
+	if plainText.MatchString(find) && find != "" {
+		// A coarse cut in the database (the record is JSON, which leaves
+		// plain text as it is); the identifiers decide below.
+		query += ` AND LOWER(record) LIKE ?`
+		args = append(args, "%"+strings.ReplaceAll(find, "%", "_")+"%")
+	}
+	query += ` ORDER BY started_at DESC, id DESC`
+	rows, err := s.db.Query(s.q(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []engine.Run{}
+	for rows.Next() && len(out) < limit {
+		var rec string
+		if err := rows.Scan(&rec); err != nil {
+			return nil, err
+		}
+		var r engine.Run
+		if json.Unmarshal([]byte(rec), &r) != nil {
+			continue
+		}
+		r.Steps = nil
+		if len(r.Identifiers) == 0 {
+			r.Identifiers = marks[r.Runbook]
+		}
+		if find != "" && !strings.Contains(strings.ToLower(r.ID), find) &&
+			!slices.ContainsFunc(engine.RunIdentifiers(&r, nil), func(id string) bool {
+				_, v, _ := strings.Cut(id, "=")
+				return strings.Contains(strings.ToLower(v), find)
+			}) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// identifierMarks are the identifier inputs each runbook (or just name)
+// marks now.
+func (s *Store) identifierMarks(name string) (map[string][]string, error) {
+	query, args := `SELECT name, raw FROM runbooks`, []any{}
+	if name != "" {
+		query += ` WHERE name = ?`
+		args = append(args, name)
+	}
+	rows, err := s.db.Query(s.q(query), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var n, raw string
+		if err := rows.Scan(&n, &raw); err != nil {
+			return nil, err
+		}
+		if rb, err := runbook.Parse([]byte(raw)); err == nil {
+			if ids := rb.IdentifierInputs(); len(ids) > 0 {
+				out[n] = ids
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
+// plainText is text JSON writes as it is ("_" in a LIKE pattern matches
+// any one character, itself included).
+var plainText = regexp.MustCompile(`^[a-z0-9 ._:/@=+,%-]*$`)
 
 // PruneRuns deletes finished runs that started before cutoff.
 func (s *Store) PruneRuns(cutoff time.Time) (int64, error) {
