@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.6.0 — 2026-10-23
+
+Suspend a run, to resume it later.
+
+### Added
+
+- **Suspend**: stop a run on purpose and carry it on later. ‖ Suspend… on
+  a live run's page or console, `z` at a CLI prompt, `runnr suspend
+  <run-id> [-m why] [--now]` from anywhere, or `POST
+  /api/runs/{id}/suspend`. It stops once the step running now finishes
+  (a command isn't cut short; **Carry on instead** takes the request
+  back), or at once if it's waiting for someone; `now` stops the running
+  step too, to do again. The run ends `suspended` (CLI exit status 75)
+  with who and why, and Resume carries it on in the same run ("resumed …
+  (it was suspended by …)"). Optional background watchers stopped by the
+  suspension start again on resume. Aborted and failed runs resume as
+  before.
+
 ## v0.5.0 — 2026-10-22
 
 A run's timeline.

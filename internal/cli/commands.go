@@ -99,7 +99,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s), restoreCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), suspendCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
 		attachCmd(), watchCmd(s), waitRunCmd(s), doctorCmd(s),
 	)
 	return root
@@ -702,8 +702,10 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 	if f.runID != "" {
 		id = f.runID
 	}
+	ctl := engine.NewControls(cv)
+	term.ctl = ctl
 	if !f.noHistory && !f.dry {
-		go st.WatchAbort(ctx, id, abort)
+		go st.WatchAbort(ctx, id, abort, ctl)
 	}
 	if !f.noHistory {
 		term.addNote = func(step int, text string) error {
@@ -717,7 +719,7 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 	}
 	opts := engine.Options{
 		Owner: engine.ThisProcess("cli"), Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt,
-		Controls: engine.NewControls(cv), Review: interactive && !f.noReview, Previous: l.previous,
+		Controls: ctl, Review: interactive && !f.noReview, Previous: l.previous,
 		State: state, Resumes: resumes, RunbookVersion: ver, Libraries: libs,
 		// Only a recorded run of a saved runbook can run dangerous steps
 		// without a double check.
@@ -757,6 +759,8 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 		return nil
 	case engine.StatusAborted:
 		return ExitError{130}
+	case engine.StatusSuspended:
+		return ExitError{75} // EX_TEMPFAIL: to be done later
 	}
 	return ExitError{1}
 }
@@ -857,7 +861,7 @@ func resumeCmd(s func() *store.Store) *cobra.Command {
 	var f runFlags
 	cmd := &cobra.Command{
 		Use:   "resume <run-id>",
-		Short: "Continue a failed or aborted run from where it stopped",
+		Short: "Continue a failed, aborted or suspended run from where it stopped",
 		Long: `Carry on the run from the first step that didn't succeed, with the same
 inputs, in the same run: its record and log go on (runnr history <id>),
 with the steps that finished as they went, and the earlier tries of the
@@ -1250,6 +1254,39 @@ for a run left "running" by a process on another machine that's gone.`,
 	}
 	cmd.Flags().StringVarP(&reason, "reason", "m", "", "why (recorded with the run)")
 	cmd.Flags().BoolVar(&force, "force", false, "mark it aborted now, without waiting for the process running it")
+	return cmd
+}
+
+func suspendCmd(s func() *store.Store) *cobra.Command {
+	var reason string
+	var now bool
+	cmd := &cobra.Command{
+		Use:   "suspend <run-id>",
+		Short: "Suspend a run, to resume it later (runnr resume)",
+		Long: `Asks the runnr running a run (a runnr run in another terminal, or runnr
+serve) to suspend it: it stops once the step running now has finished (or
+at once if it's waiting for someone), and ends "suspended", ready for
+runnr resume to carry it on. --now stops the running step too (it's done
+again on resume). In the terminal running it, [z] at a prompt suspends.
+
+When the process that ran it is gone (it exited on this machine), the run
+is marked suspended straight away.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			res, err := s().SuspendRun(args[0], &engine.SuspendError{By: author(), Reason: reason, Now: now}, 10*time.Second)
+			if err != nil {
+				return err
+			}
+			if res.Suspended {
+				fmt.Printf("‖ run %s suspended: %s (resume with: runnr resume %s)\n", args[0], res.Message, args[0])
+				return nil
+			}
+			fmt.Printf("run %s: %s\n", args[0], res.Message)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&reason, "reason", "m", "", "why (recorded with the run)")
+	cmd.Flags().BoolVar(&now, "now", false, "stop the step running now too, rather than waiting for it to finish")
 	return cmd
 }
 

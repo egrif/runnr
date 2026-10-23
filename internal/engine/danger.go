@@ -69,7 +69,10 @@ func (x *executor) restartWatchers() {
 		if !s.Optional || !s.Background {
 			continue
 		}
-		if st := prev.Steps[i].Status; st == StatusFailed || st == StatusAborted {
+		st := prev.Steps[i].Status
+		// Or one the run stopped when it was suspended.
+		stopped := prev.Status == StatusSuspended && prev.Steps[i].Note == noteStoppedAtEnd
+		if st == StatusFailed || st == StatusAborted || stopped {
 			if skip, _, _ := x.ctl.Get(i); skip {
 				x.ctl.Toggle("skip", i)
 			}
@@ -174,7 +177,9 @@ func (x *executor) checkDanger(ctx context.Context, i int, step runbook.Step) (r
 	if !can || !x.opts.Interactive {
 		return false, false, fmt.Errorf("step %q is dangerous and not running in sequence, so it needs a person to double-check it (run interactively)\n%s", step.Name, why)
 	}
-	run, err = dc.ConfirmDanger(ctx, i, step, x.mask(x.View(i).Command), why)
+	q, done := x.asking(ctx)
+	run, err = dc.ConfirmDanger(q, i, step, x.mask(x.View(i).Command), why)
+	done()
 	if err != nil {
 		return false, false, err
 	}

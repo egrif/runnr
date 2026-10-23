@@ -65,11 +65,7 @@ func RawLog(r *Run) string {
 	}
 
 	for _, rs := range r.Resumptions {
-		w("resumed %s from step %d (it had %s", rs.At.Local().Format("2006-01-02 15:04:05"), rs.From+1, rs.Status)
-		if rs.Error != "" {
-			w(": %s", rs.Error)
-		}
-		w(")")
+		w("resumed %s from step %d (%s)", rs.At.Local().Format("2006-01-02 15:04:05"), rs.From+1, rs.HowItEnded())
 		if rs.Was != 0 {
 			w(" with runbook version %d (it had run version %d)", rs.RunbookVersion, rs.Was)
 		}
@@ -168,6 +164,6 @@ func RawLog(r *Run) string {
 }
 
 var statusMark = map[Status]string{
-	StatusSucceeded: "✔", StatusFailed: "✘", StatusSkipped: "↷", StatusAborted: "■",
+	StatusSucceeded: "✔", StatusFailed: "✘", StatusSkipped: "↷", StatusAborted: "■", StatusSuspended: "‖",
 	StatusForced: "⚑", StatusRunning: "▶", StatusPending: "○", StatusBackground: "◐",
 }

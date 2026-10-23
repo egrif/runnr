@@ -274,7 +274,7 @@ h1{font-size:22px;margin:0 0 4px}h2{font-size:15px;margin:28px 0 10px}
 .bar.k-run{top:9px;height:4px;background:var(--muted);opacity:.5}
 .bar.b-stopped{top:3px;height:16px;background:var(--stop);border:1px dashed var(--muted)}
 .bar.s-succeeded{background:var(--ok)}.bar.s-failed,.bar.s-aborted{background:var(--bad)}.bar.s-forced{background:var(--warn)}
-.bar.s-running{background:var(--run)}.bar.s-skipped{background:transparent;border:1px dashed var(--muted)}
+.bar.s-running{background:var(--run)}.bar.s-suspended{background:var(--shell);opacity:.6}.badge.s-suspended{color:var(--shell)}.bar.s-skipped{background:transparent;border:1px dashed var(--muted)}
 .bar.k-earlier{opacity:.45;background-image:repeating-linear-gradient(135deg,#ffffff55 0 2px,transparent 2px 5px)}
 .bar.k-background,.bar.s-background{background:var(--bgk);background-image:repeating-linear-gradient(90deg,#ffffff40 0 2px,transparent 2px 6px)}
 .bar.k-shell{top:15px;height:4px;background:var(--shell)}.bar.k-job{top:15px;height:4px;background:var(--bgk)}

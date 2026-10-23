@@ -31,7 +31,9 @@ func (x *executor) confirmTyped(ctx context.Context, i int, step runbook.Step, w
 	if !ok || !x.opts.Interactive {
 		return false, fmt.Errorf("step %q needs a person to type %q to run it (run interactively)", step.Name, want)
 	}
-	yes, err := tc.ConfirmTyped(ctx, i, step, x.mask(what), want)
+	q, done := x.asking(ctx)
+	yes, err := tc.ConfirmTyped(q, i, step, x.mask(what), want)
+	done()
 	if err == nil && yes {
 		if x.typed == nil {
 			x.typed = map[int]bool{}

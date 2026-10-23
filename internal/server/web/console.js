@@ -9,7 +9,7 @@
 // the panes, not the drawer.
 
 const CX_DONE = ["succeeded", "skipped", "forced"];
-const CX_ENDED = ["succeeded", "failed", "aborted"];
+const CX_ENDED = ["succeeded", "failed", "aborted", "suspended"];
 
 function cxSizes() {
   let s = {};
@@ -81,7 +81,7 @@ function cxCurrent(state) {
   const r = state.steps.findIndex((s) => s.status === "running");
   if (r >= 0) return r;
   if (CX_ENDED.includes(state.run.status)) {
-    const f = state.steps.findIndex((s) => ["failed", "aborted"].includes(s.status));
+    const f = state.steps.findIndex((s) => ["failed", "aborted", "suspended"].includes(s.status));
     return f >= 0 ? f : -1;
   }
   return state.steps.findIndex((s) => s.status === "pending");
@@ -155,7 +155,7 @@ function cxRenderTop(state) {
 // version), and steps it ran that the runbook no longer has.
 function cxResumedChips(r) {
   const rs = r.resumptions || [], rm = r.removed || [];
-  const tip = rs.map((x) => `Resumed ${new Date(x.at).toLocaleString()} from step ${x.from + 1} (it had ${x.status})${x.was_version ? ` with runbook version ${x.runbook_version} (it had run version ${x.was_version})` : ""}`).join("\n");
+  const tip = rs.map((x) => `Resumed ${new Date(x.at).toLocaleString()} from step ${x.from + 1} (${howItEnded(x)})${x.was_version ? ` with runbook version ${x.runbook_version} (it had run version ${x.was_version})` : ""}`).join("\n");
   const ver = rs.filter((x) => x.was_version).pop();
   return (rs.length ? `<span class="cx-chip" title="${esc(tip)}">↻ resumed${rs.length > 1 ? ` ${rs.length}×` : ""}${ver ? ` · runbook v${ver.was_version} → v${ver.runbook_version}` : ""}</span>` : "")
     + (rm.length ? `<a class="cx-chip" href="#/runs/${enc(r.id)}" data-classic title="${esc(rm.map((x) => x.name).join(", "))}: on the classic run page">${rm.length} step${rm.length === 1 ? "" : "s"} no longer in the runbook</a>` : "");
@@ -185,7 +185,7 @@ function cxToolbar(state, live) {
     // Optional steps don't decide where a resume starts (engine.ResumePoint).
     const stop = state.steps.findIndex((s) => !s.optional && !CX_DONE.includes(s.status));
     return [
-      ["failed", "aborted"].includes(r.status) && stop >= 0 ? btn("resume", "▶ Resume…", "primary", `Continue from step ${stop + 1}`) : "",
+      ["failed", "aborted", "suspended"].includes(r.status) && stop >= 0 ? btn("resume", "▶ Resume…", "primary", `Continue from step ${stop + 1}`) : "",
       btn("rerun", "↻ Run again…"),
       btn("raw", "Raw log", "", "The whole run as a plain log"),
       btn("timeline", "◷ Timeline", "", "The run laid out in time: its steps, tries, shells, resumes and notes"),
@@ -217,12 +217,17 @@ function cxToolbar(state, live) {
     ${cur >= 0 ? btn("pause-after", "⏸ Pause after this", "", `Pause after step ${cur + 1} to check its result`, has(ctl.pause_after, cur)) : ""}
     <span class="spacer"></span>
     ${running >= 0 ? btn("stop-step", `■ Stop step ${running + 1}`, "danger", "Interrupt its command: the step fails and you choose what's next (the run goes on)") : ""}
+    ${btn("suspend", "‖ Suspend…", "", "Stop the run to resume it later: once the step running now finishes, or at once if it's waiting for you")}
     ${btn("abort", "■ Abort run", "danger")}`;
 }
 
 function cxBanners(state, live) {
   const r = state.run, p = state.plan;
   let out = "";
+  if (live && state.controls?.suspend) {
+    const s = state.controls.suspend;
+    out += `<div class="cx-banner suspending">‖ Suspending once the step running now finishes${s.by ? ` (asked by ${esc(s.by)}${s.reason ? `: ${esc(s.reason)}` : ""})` : ""}. <button data-act="carry-on">Carry on instead</button></div>`;
+  }
   const edits = r.edits || [];
   if (edits.length && !r.edits_saved) {
     const steps = [...new Set(edits.map((e) => e.step + 1))].sort((a, b) => a - b);
@@ -247,6 +252,8 @@ function cxBindTop(state, el, live) {
       switch (act) {
         case "focus-question": return main.querySelector(".cx-action .question input, .cx-action .question select, .cx-action .question button")?.focus();
         case "abort": return abortRun(state);
+        case "suspend": return suspendRun(state);
+        case "carry-on": return carryOn(state);
         case "stop-step": { const i = state.steps.findIndex((s, k) => s.status === "running" && s.kind !== "background" && state.question?.step !== k); return stopRunningStep(state.run.id, i >= 0 ? i : -1, state.steps[i]?.name); }
         case "resume": location.hash = `#/runbooks/${enc(r.runbook)}/console?resume=${enc(r.id)}`; return;
         case "rerun": location.hash = `#/runbooks/${enc(r.runbook)}/console?rerun=${enc(r.id)}`; return;

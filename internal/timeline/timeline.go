@@ -154,7 +154,7 @@ func Build(r *engine.Run, now time.Time) *Timeline {
 		}
 	}
 	for _, rs := range r.Resumptions {
-		text := fmt.Sprintf("resumed from step %d (it had %s)", rs.From+1, rs.Status)
+		text := fmt.Sprintf("resumed from step %d (%s)", rs.From+1, rs.HowItEnded())
 		if rs.Was != 0 {
 			text += fmt.Sprintf(" with runbook version %d (it had run version %d)", rs.RunbookVersion, rs.Was)
 		}
