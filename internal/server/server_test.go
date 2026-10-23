@@ -595,7 +595,7 @@ func TestSuspendOverHTTP(t *testing.T) {
 	st, _ := store.Open(t.TempDir(), "")
 	ts := httptest.NewServer(New(st, Config{}).Handler())
 	defer ts.Close()
-	do(t, "POST", ts.URL+"/api/runbooks", "name: sus\nshell: sh\nsteps:\n  - {name: a, run: 'sleep 2'}\n  - {name: b, run: 'sleep 1.5'}\n  - {name: c, run: 'echo C'}\n", nil)
+	do(t, "POST", ts.URL+"/api/runbooks", "name: sus\nshell: sh\nsteps:\n  - {name: a, run: 'sleep 2'}\n  - {name: b, run: 'sleep 4'}\n  - {name: c, run: 'echo C'}\n", nil)
 	var run engine.Run
 	json.NewDecoder(do(t, "POST", ts.URL+"/api/runs", `{"runbook":"sus","unattended":true}`, nil).Body).Decode(&run)
 	time.Sleep(200 * time.Millisecond)
@@ -606,14 +606,16 @@ func TestSuspendOverHTTP(t *testing.T) {
 	if r.StatusCode != http.StatusOK {
 		t.Fatalf("cancel: %d", r.StatusCode)
 	}
-	time.Sleep(2200 * time.Millisecond) // into step b
+	// Into step b, well before it ends (the server waits a moment for a
+	// run that's waiting on someone).
+	time.Sleep(2200 * time.Millisecond)
 	var res store.SuspendResult
 	json.NewDecoder(do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/suspend", `{"author":"pat","reason":"back tomorrow"}`, nil).Body).Decode(&res)
 	if res.Suspended || !strings.Contains(res.Message, "once the step running now finishes") {
 		t.Fatalf("%+v", res)
 	}
 	var got *engine.Run
-	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(100 * time.Millisecond) {
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(100 * time.Millisecond) {
 		if got, _ = st.LoadRun(run.ID); got.Status != engine.StatusRunning || time.Now().After(deadline) {
 			break
 		}
