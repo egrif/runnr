@@ -856,3 +856,9 @@ dialog.timeline-dlg iframe { flex: 1; width: 100%; border: 1px solid var(--borde
 .diff .d-file { font-weight: 600; }
 @media (prefers-color-scheme: dark) { .diff .d-add { background: #173322; color: #7fd39a; } .diff .d-rm { background: #3a1d1b; color: #f19a92; } .diff .d-hunk { color: #7fb0e6; } }
 .imp-diff-row td { border-top: 0; padding-top: 0; }
+dialog.run-inputs { width: min(480px, calc(100vw - 32px)); }
+dialog.run-inputs h3 { margin: 0 0 12px; }
+dialog.run-inputs .ri-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 10px; align-items: center; margin-bottom: 12px; }
+dialog.run-inputs .ri-grid > label { font-family: ui-monospace, Menlo, monospace; text-align: right; }
+dialog.run-inputs .ri-grid input, dialog.run-inputs .ri-grid select, dialog.run-inputs .ri-grid .path-field { width: 100%; }
+dialog.run-inputs label.check { display: block; margin: 4px 0; }

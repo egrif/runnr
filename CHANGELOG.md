@@ -27,6 +27,11 @@ Watching a run together; seeing what an import would change; showing a secret as
 
 ### Changed
 
+- **Run this** (in the editor) asks for all the runbook's inputs in one
+  dialog first, filled with the values used last (or the test values), and
+  can save them as the runbook's test values, or not ask again (Test
+  values turns asking back on). A required input with no
+  default no longer fails with "missing required input".
 - A run's terminals take the window size of whoever typed in them last;
   other viewers' sizes apply once they type.
 

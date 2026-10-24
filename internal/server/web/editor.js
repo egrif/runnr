@@ -517,8 +517,62 @@ function runPane(ed, s, i) {
   </div>`;
 }
 
+// runInputs asks for the inputs to Run this with, all at once, filled
+// with the last ones used (or the test values). What's entered is kept in
+// this tab for the next Run this, and saved as the test values if asked
+// (secrets never are). "Don't ask again" runs with them from then on
+// (until a required one is blank, or Test values says to ask). Resolves
+// to the values, or null if cancelled.
+function runInputs(ed) {
+  const defs = (ed.doc.inputs || []).filter((x) => x.name);
+  const val = (d) => (d.secret ? ed.secretVars : ed.test.vars)[d.name] ?? "";
+  const needed = (d) => d.required && !d.default;
+  if (!defs.length || (ed.noAsk && !defs.some((d) => needed(d) && !val(d))))
+    return Promise.resolve(Object.fromEntries(defs.map((d) => [d.name, val(d)])));
+  const field = (d) => {
+    const v = val(d), tip = d.description ? ` title="${esc(d.description)}"` : "";
+    if (d.choices?.length) return `<select name="${esc(d.name)}"${tip}>${(needed(d) ? [] : [""]).concat(d.choices).map((c) => `<option ${c === v ? "selected" : ""} value="${esc(c)}">${esc(c || `(default${d.default ? ": " + d.default : ""})`)}</option>`).join("")}</select>`;
+    return withPathPick(d, `<input name="${esc(d.name)}"${tip} ${d.secret ? 'type="password"' : ""} value="${esc(v)}" placeholder="${esc(d.default || "")}" spellcheck="false" autocomplete="off">`);
+  };
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step run-inputs";
+  dlg.innerHTML = `<h3>Run this with</h3>
+    <div class="ri-grid">${defs.map((d) => `<label for="ri-${esc(d.name)}"${d.description ? ` title="${esc(d.description)}"` : ""}>${esc(d.name)}${needed(d) ? " *" : ""}:</label>${field(d).replace(`name="${esc(d.name)}"`, `name="${esc(d.name)}" id="ri-${esc(d.name)}"`)}`).join("")}</div>
+    ${ed.name ? `<label class="check small"><input type="checkbox" name="__save"> Save as the runbook's test values</label>` : ""}
+    <label class="check small"><input type="checkbox" name="__noask"> Don't ask again (change them in Test values)</label>
+    <div class="error-text"></div>
+    <div class="row"><button class="primary" data-ok>Run</button><button data-close>Cancel</button></div>`;
+  document.body.append(dlg);
+  return new Promise((done) => {
+    let out = null;
+    dlg.querySelector("[data-close]").onclick = () => dlg.close();
+    dlg.onclose = () => { dlg.remove(); done(out); };
+    const ok = () => {
+      const vars = {}, missing = [];
+      for (const d of defs) {
+        const v = dlg.querySelector(`[name="${CSS.escape(d.name)}"]`).value;
+        if (!v && needed(d)) missing.push(d.name);
+        (d.secret ? ed.secretVars : ed.test.vars)[d.name] = v;
+        vars[d.name] = v;
+      }
+      if (missing.length) return (dlg.querySelector(".error-text").textContent = `Needs ${missing.join(", ")}`);
+      if (dlg.querySelector("[name=__save]")?.checked)
+        api("PUT", `/api/runbooks/${enc(ed.name)}/test-values`, ed.test).then(() => toast("Saved the test values (not secrets)")).catch((e) => toast(e.message));
+      if (dlg.querySelector("[name=__noask]").checked) ed.noAsk = true;
+      out = vars;
+      dlg.close();
+    };
+    dlg.querySelector("[data-ok]").onclick = ok;
+    dlg.onkeydown = (e) => { if (e.key === "Enter" && e.target.matches("input:not([type=checkbox])")) { e.preventDefault(); ok(); } };
+    dlg.showModal();
+    dlg.querySelector(".ri-grid input, .ri-grid select")?.focus();
+  });
+}
+
 async function runThis(ed, i) {
   const s = ed.doc.steps[i];
+  const vars = await runInputs(ed);
+  if (!vars) return;
   const old = ed.runs.get(s);
   old?.es?.close();
   const y = await formatDoc(ed);
@@ -526,12 +580,6 @@ async function runThis(ed, i) {
   ed.runs.set(s, r);
   if (!y.ok) { r.status = "failed"; return renderStruct(ed); }
   try {
-    // Inputs without a test value use their default (blank secrets are asked for).
-    const vars = {};
-    for (const inp of ed.doc.inputs || []) {
-      const v = (inp.secret ? ed.secretVars : ed.test.vars)[inp.name];
-      if (v || !inp.secret) vars[inp.name] = v || "";
-    }
     const res = await api("POST", "/api/test-run", {
       raw: y.raw, step: i + 1, vars, extra: ed.test.extra, setup: ed.test.setup,
     });
@@ -577,19 +625,21 @@ function updateRunPane(ed, s) {
   const log = el.querySelector(".run-log");
   if (log) log.scrollTop = log.scrollHeight;
   const q = el.querySelector(".question");
-  if (q) bindQuestion(q, ed.runs.get(s).question, ed.runs.get(s).id);
+  const r = ed.runs.get(s);
+  if (q) bindQuestion(q, r.question, r.id);
   termMountAll();
 }
 
 // testValuesCard: inputs and extra variables used by Run this.
 function testValuesCard(ed, d) {
   const t = ed.test;
-  return `<details class="card test-values" ${ed.testOpen ? "open" : ""}><summary><b>Test values</b> <span class="muted small">used by “Run this”${ed.name ? "" : " (save the runbook to keep them)"}</span>${helpIcon("Inputs and extra variables for trying steps out while editing. Saved with this runbook, except secret inputs, which are kept only in this browser tab.")}</summary>
+  return `<details class="card test-values" ${ed.testOpen ? "open" : ""}><summary><b>Test values</b> <span class="muted small">used by “Run this”${ed.name ? "" : " (save the runbook to keep them)"}</span>${helpIcon("Inputs and extra variables for trying steps out while editing. Saved with this runbook, except secret inputs, which are kept only in this browser tab. Run this asks for all of them at once, filled with these (unless you told it not to ask); what you enter there fills in here too.")}</summary>
     <div class="fgroup-rows">
       ${(d.inputs || []).filter((x) => x.name).map((x) => row(x.name + (x.secret ? " (secret)" : ""), x.description || "",
         withPathPick(x, `<input data-test-var="${esc(x.name)}" ${x.secret ? 'type="password"' : ""} value="${esc((x.secret ? ed.secretVars : t.vars)[x.name] ?? "")}" placeholder="${esc(x.default || "")}">`))).join("")}
       ${row("Extra variables", "Variables an earlier step would normally publish (KEY=value per line), so a step can run on its own.",
         `<textarea data-test-extra rows="3" spellcheck="false" placeholder="region=use1">${esc(Object.entries(t.extra || {}).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea>`)}
+      ${row("Ask before Run this", "Ask for the inputs each time, filled with these.", `<input type="checkbox" data-test-ask ${ed.noAsk ? "" : "checked"}>`)}
       ${row("Run setup first", "Run the steps marked “always” before the step, to build its environment.", `<input type="checkbox" data-test-setup ${t.setup ? "checked" : ""}>`)}
     </div>
     ${ed.name ? `<button data-act="save-test">Save test values</button>` : ""}
@@ -806,6 +856,7 @@ function renderStruct(ed) {
       return;
     }
     if (t.matches("[data-test-setup]")) { ed.test.setup = t.checked; return; }
+    if (t.matches("[data-test-ask]")) { ed.noAsk = !t.checked; return; }
     if (t.matches("[data-sec]")) {
       d.sections ||= [];
       let sec = d.sections.find((x) => x.name === t.dataset.sec);
