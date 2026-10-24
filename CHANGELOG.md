@@ -2,7 +2,7 @@
 
 ## v0.7.0 — 2026-10-23
 
-Watching a run together.
+Watching a run together; showing a secret as you type it.
 
 ### Added
 
@@ -15,6 +15,10 @@ Watching a run together.
   watching sees and the run notes. A safety catch, not a lock (names
   aren't checked). API: `PUT /api/runs/{id}/access`, `X-Runnr-User`,
   `X-Runnr-Session`, `X-Runnr-Override`; `403 {code: "read_only"}`.
+
+- Secret fields in the GUI (run forms, the console, the editor's test
+  values, questions, changing inputs) have an 👁 to show what's typed and
+  hide it again.
 
 ### Changed
 

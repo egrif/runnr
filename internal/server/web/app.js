@@ -1190,3 +1190,36 @@ steps:
 Template helpers: default, upper, lower, trim, contains, quote`;
 
 loadRunbooks().then(route);
+
+// Secret fields (wherever they're drawn: run forms, the console, the
+// editor's test values, questions, changing inputs) get an eye to show
+// what's typed, and hide it again.
+function addEyes(root) {
+  root?.querySelectorAll?.("input[type=password]:not([data-eye])").forEach((inp) => {
+    inp.dataset.eye = "1";
+    const wrap = document.createElement("span");
+    wrap.className = "secret-field";
+    // The field's width limit becomes the wrapper's, so the eye sits in it.
+    const mw = getComputedStyle(inp).maxWidth;
+    if (mw && mw !== "none") wrap.style.maxWidth = mw;
+    inp.replaceWith(wrap);
+    wrap.append(inp);
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "eye";
+    eye.textContent = "👁";
+    const show = (on) => {
+      inp.type = on ? "text" : "password";
+      eye.classList.toggle("on", on);
+      eye.title = on ? "Hide it" : "Show it";
+      eye.setAttribute("aria-label", eye.title);
+      eye.setAttribute("aria-pressed", on);
+    };
+    show(false);
+    eye.onclick = () => { show(inp.type === "password"); inp.focus(); };
+    wrap.append(eye);
+  });
+}
+addEyes(document.body);
+new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => n.nodeType === 1 && addEyes(n.matches("input") ? n.parentNode : n))))
+  .observe(document.body, { childList: true, subtree: true });

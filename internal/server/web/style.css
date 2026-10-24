@@ -839,3 +839,8 @@ dialog.timeline-dlg iframe { flex: 1; width: 100%; border: 1px solid var(--borde
 .presence .ro-badge { padding: 1px 8px; border-radius: 10px; background: #fdf1d6; color: #7a5410; font-size: 12px; }
 @media (prefers-color-scheme: dark) { .presence .ro-badge { background: #3b3119; color: #f0d79a; } }
 .cx-top .presence { margin: 2px 0 4px; }
+
+.secret-field { position: relative; display: inline-flex; align-items: center; width: 100%; }
+.secret-field input { flex: 1; min-width: 0; max-width: none !important; padding-right: 34px; }
+.secret-field .eye { position: absolute; right: 4px; padding: 0 6px; height: 24px; border: 0; background: transparent; opacity: .45; cursor: pointer; filter: grayscale(1); }
+.secret-field .eye:hover, .secret-field .eye.on { opacity: 1; filter: none; }

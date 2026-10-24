@@ -29,7 +29,7 @@ const FIELD_HELP = {
     default: "Used when nothing is given.",
     choices: "If set, the value must be one of these (comma-separated). Shown as a dropdown.",
     required: "The run can't start without a value.",
-    secret: "Hidden as you type, masked in output and history, and never stored: asked again on resume.",
+    secret: "Hidden as you type (👁 shows it), masked in output and history, and never stored: asked again on resume.",
     type: "A folder or a file on this machine: its field gets a Browse… button. Otherwise text.",
     identifier: "Says what a run is for (a target: a cluster, a silo, a database). Its value shows with the run in the history and at the top of the run, and the history can be searched by it. Not for secrets.",
   },
