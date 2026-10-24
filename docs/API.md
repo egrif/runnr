@@ -50,9 +50,9 @@ Paths are on the machine runnr runs on.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/api/import/check?set=NAME=VALUE` | a runbook or library's YAML | `{kind, name, exists, version?, updated_at?, same?, builtin?, placeholders?, unset?, error?}` |
+| POST | `/api/import/check?set=NAME=VALUE` | a runbook or library's YAML | `{kind, name, exists, version?, updated_at?, same?, diff?, builtin?, placeholders?, unset?, error?}`; `diff`: what saving over the stored one would change (unified diff) |
 | POST | `/api/import?as=&replace=1&collection=&set=NAME=VALUE` | YAML | `201 {kind, name, version, replaced?, collection?}`; `409 {error, check}` if the name is taken (unless `as` or `replace`); `400 {error, unset}` for placeholders without a value |
-| POST | `/api/import/scan` | `{dir, values?, renames?, include?, skip?}` | the plan for a project folder: `{dir, repo_root, docs, values, unset, ignored}` |
+| POST | `/api/import/scan` | `{dir, values?, renames?, include?, skip?}` | the plan for a project folder: `{dir, repo_root, docs, values, unset, ignored}` (a doc whose name is taken has `diff`: what saving over it would change) |
 | POST | `/api/import/project` | as scan, `+ {replace?, replace_all?, collection?}` | `{plan, results: [{rel, kind, name, status, version?, replaced?, error?}]}` |
 | GET | `/api/fs?path=&hidden=1` | | `{path, parent, home, entries: [{name, dir, size?}], asked, exists, is_dir}`: the folder at `path` (or holding it, or the nearest that exists) |
 | POST | `/api/runbooks/{name}/files/plan` | `{path}` | `{files: [{kind, name, path, version?, exists?, builtin?, missing?}]}`: the runbook and the libraries it uses (beside it as `<name>.yaml`) |

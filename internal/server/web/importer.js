@@ -50,6 +50,8 @@ async function openImport(files, opts = {}) {
     <div class="error-text imp-error"></div>
     <div class="row"><button class="primary" data-ok>Import</button><button data-close>Cancel</button></div>`;
   document.body.append(dlg);
+  const openDiffs = new Set();
+  keepDiffsOpen(dlg, openDiffs);
   const col = dlg.querySelector("#imp-col");
   if (col) {
     if (opts.collection) col.value = opts.collection;
@@ -74,6 +76,7 @@ async function openImport(files, opts = {}) {
         <label class="check small"><input type="radio" name="ch${k}" value="add" ${it.choice !== "skip" ? "checked" : ""}> Import as <input data-as="${k}" value="${esc(it.as)}" spellcheck="false"></label>
         <label class="check small"><input type="radio" name="ch${k}" value="skip" ${it.choice === "skip" ? "checked" : ""}> Skip</label>`;
       else body = `<div class="warn-text small">⚠ ${noun} <b>${esc(c.name)}</b> already exists: version ${c.version}, saved ${esc(when(c.updated_at))}.</div>
+        ${diffHTML(c.diff, `f${k}`, openDiffs)}
         <label class="check small"><input type="radio" name="ch${k}" value="replace" ${it.choice === "replace" ? "checked" : ""}> Save as version ${c.version + 1} of <b>${esc(c.name)}</b> (its earlier versions are kept)</label>
         <label class="check small"><input type="radio" name="ch${k}" value="rename" ${it.choice === "rename" ? "checked" : ""}> Import as <input data-as="${k}" value="${esc(it.as)}" spellcheck="false"></label>
         <label class="check small"><input type="radio" name="ch${k}" value="skip" ${it.choice === "skip" ? "checked" : ""}> Skip</label>`;
@@ -143,7 +146,7 @@ const KIND_LABEL = { runbook: "runbook", library: "library", fakes: "fake librar
 
 function openFolderImport(dir = "") {
   const recent = impLoad(IMP_DIRS, []);
-  const st = { dir: dir || recent[0] || "", values: {}, renames: {}, include: [], skip: [], replace: new Set(), plan: null, results: null, autoIncluded: false };
+  const st = { dir: dir || recent[0] || "", values: {}, renames: {}, include: [], skip: [], replace: new Set(), plan: null, results: null, autoIncluded: false, openDiffs: new Set() };
   const dlg = document.createElement("dialog");
   dlg.className = "edit-step import-dialog folder-import";
   dlg.innerHTML = `<h3>Import a project folder</h3>
@@ -157,6 +160,7 @@ function openFolderImport(dir = "") {
       <div class="row"><button type="button" data-add-file>📄 Add a file…</button><button type="button" data-add-dir>📁 Add a folder…</button></div></div>
     <div class="row imp-actions" hidden>${colPicker("imp-col2", "No collection")}<span class="spacer"></span><button class="primary" data-ok>Import</button><button data-close>Cancel</button></div>`;
   document.body.append(dlg);
+  keepDiffsOpen(dlg, st.openDiffs);
   const $d = (s) => dlg.querySelector(s);
   const err = (m) => ($d(".imp-error").textContent = m || "");
   $d("[data-upload]").onclick = () => { dlg.close(); pickImportFiles(); };
@@ -239,7 +243,8 @@ function openFolderImport(dir = "") {
         <td class="small">${esc(KIND_LABEL[d.kind] || "")}</td>
         <td>${d.kind === "run" ? `<code>${esc(d.name)}</code>` : d.error && !d.name ? "" : `<input class="imp-name" data-rename="${esc(key)}" value="${esc(st.renames[key] ?? d.name)}" spellcheck="false" ${d.kind === "suite" && !d.original ? "" : ""}>`}
           <div class="muted small">${esc(d.rel)}${d.included ? (neededBy[`${d.kind}:${d.name}`] ? ` · from the repository, needed by ${esc(neededBy[`${d.kind}:${d.name}`].join(", "))}` : " · added from elsewhere") : ""}</div>${refs}</td>
-        <td class="small">${r ? `<b class="${["failed", "exists"].includes(r.status) ? "error-text" : "ok-text"}">${esc(r.status)}${r.version ? ` · v${r.version}` : ""}</b>${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}${r.status === "exists" ? `<div>${replaceBox}</div>` : ""}` : state}</td></tr>`;
+        <td class="small">${r ? `<b class="${["failed", "exists"].includes(r.status) ? "error-text" : "ok-text"}">${esc(r.status)}${r.version ? ` · v${r.version}` : ""}</b>${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}${r.status === "exists" ? `<div>${replaceBox}</div>` : ""}` : state}</td></tr>
+        ${d.diff && !skipped && (!r || r.status === "exists") ? `<tr class="imp-diff-row"><td></td><td colspan="3">${diffHTML(d.diff, d.path, st.openDiffs)}</td></tr>` : ""}`;
     };
     const blocked = p.docs.filter((d) => !d.error && !st.skip.includes(d.path) && (d.placeholders || []).some((k) => p.unset?.includes(k)));
     $d(".imp-plan").innerHTML = `
@@ -277,4 +282,24 @@ function openFolderImport(dir = "") {
   };
   dlg.showModal();
   if (st.dir) scan(true); else $d(".imp-dir").focus();
+}
+
+// diffHTML shows what saving over a stored runbook (or library) would
+// change: a unified diff, folded until asked for. open keeps which are
+// unfolded across redraws (keyed by key).
+function diffHTML(diff, key, open) {
+  if (!diff) return "";
+  const lines = diff.replace(/\n$/, "").split("\n");
+  const add = lines.filter((l) => l.startsWith("+") && !l.startsWith("+++")).length;
+  const rm = lines.filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
+  const cls = (l) => l.startsWith("+++") || l.startsWith("---") ? "d-file" : l.startsWith("@@") ? "d-hunk" : l.startsWith("+") ? "d-add" : l.startsWith("-") ? "d-rm" : "";
+  return `<details class="imp-diff" data-diff="${esc(key)}" ${open?.has(key) ? "open" : ""}><summary>Show what it changes <span class="d-add">+${add}</span> <span class="d-rm">−${rm}</span></summary><pre class="diff">${lines.map((l) => `<span class="${cls(l)}">${esc(l) || " "}</span>`).join("\n")}</pre></details>`;
+}
+
+// keepDiffsOpen remembers which diffs in root are unfolded.
+function keepDiffsOpen(root, open) {
+  root.addEventListener("toggle", (e) => {
+    const k = e.target.dataset?.diff;
+    if (k) e.target.open ? open.add(k) : open.delete(k);
+  }, true);
 }

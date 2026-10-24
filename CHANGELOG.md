@@ -2,7 +2,7 @@
 
 ## v0.7.0 — 2026-10-23
 
-Watching a run together; showing a secret as you type it.
+Watching a run together; seeing what an import would change; showing a secret as you type it.
 
 ### Added
 
@@ -16,6 +16,11 @@ Watching a run together; showing a secret as you type it.
   aren't checked). API: `PUT /api/runs/{id}/access`, `X-Runnr-User`,
   `X-Runnr-Session`, `X-Runnr-Override`; `403 {code: "read_only"}`.
 
+- **Import shows what it would change**: a runbook (or library) whose
+  name is taken shows a diff of the stored version against the file
+  (**Show what it changes +N −M** in the GUI's import; `runnr import
+  --diff` prints them and imports nothing; `diff` in the API's scan and
+  check results).
 - Secret fields in the GUI (run forms, the console, the editor's test
   values, questions, changing inputs) have an 👁 to show what's typed and
   hide it again.

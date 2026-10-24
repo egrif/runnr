@@ -30,7 +30,7 @@ func TestImport(t *testing.T) {
 	if code, m := post("/api/import", v1); code != http.StatusCreated || m["version"] != 1.0 {
 		t.Fatalf("first import %d %v", code, m)
 	}
-	if _, m := post("/api/import/check", v2); m["kind"] != "runbook" || m["exists"] != true || m["version"] != 1.0 || m["same"] == true {
+	if _, m := post("/api/import/check", v2); m["kind"] != "runbook" || m["exists"] != true || m["version"] != 1.0 || m["same"] == true || !strings.Contains(fmt.Sprint(m["diff"]), "(version 1, stored)") {
 		t.Fatalf("check %v", m)
 	}
 	if _, m := post("/api/import/check", v1); m["same"] != true {
