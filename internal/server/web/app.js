@@ -8,8 +8,27 @@ const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■",
 let runbooks = [];
 let stream = null; // active EventSource
 
+// whoAmI is this tab: the name it goes by (as for notes) and an id of its
+// own, sent with every request so a live run knows who's watching and
+// driving it.
+function whoAmI() {
+  let name = "", session = "";
+  try { name = localStorage.getItem("runnr.author") || ""; } catch {}
+  try {
+    session = sessionStorage.getItem("runnr.session") || "";
+    if (!session) { session = Math.random().toString(36).slice(2, 10); sessionStorage.setItem("runnr.session", session); }
+  } catch { session ||= (whoAmI.s ||= Math.random().toString(36).slice(2, 10)); }
+  return { name, session };
+}
+
+// overriding: the live runs this tab has chosen to drive though they're
+// read-only for it (a safety catch, not a lock).
+const overriding = new Set();
+const runOf = (path, body) => path.match(/^\/api\/runs\/([^/?]+)/)?.[1] || (path === "/api/shells" && body?.run) || "";
+
 async function api(method, path, body, raw = false, headers = {}) {
-  const opts = { method, headers: { "X-Runnr": "1", ...headers } };
+  const me = whoAmI(), run = runOf(path, body);
+  const opts = { method, headers: { "X-Runnr": "1", "X-Runnr-User": me.name, "X-Runnr-Session": me.session, ...(run && overriding.has(decodeURIComponent(run)) && { "X-Runnr-Override": "1" }), ...headers } };
   if (body !== undefined) {
     opts.body = raw ? body : JSON.stringify(body);
     opts.headers["Content-Type"] = raw ? "application/yaml" : "application/json";
@@ -21,8 +40,85 @@ async function api(method, path, body, raw = false, headers = {}) {
   }
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
+  if (res.status === 403 && data.code === "read_only" && !overriding.has(data.run)) {
+    // Read-only for this tab: a safety catch. Going ahead is told to everyone watching.
+    if (confirm(`${data.error}\n\nOverride and go ahead? Everyone watching is told, and the run notes it.`)) {
+      overriding.add(data.run);
+      return api(method, path, body, raw, headers);
+    }
+    throw new Error("Read-only: not changed");
+  }
   if (!res.ok) throw new Error(data.error || res.statusText);
   return data;
+}
+
+// watchURL is a live run's event stream, saying who's watching.
+function watchURL(id) {
+  const me = whoAmI();
+  return `/api/runs/${encodeURIComponent(id)}/events?${new URLSearchParams({ name: me.name, session: me.session })}`;
+}
+
+// presenceHTML: who's watching a live run and who may drive it, with a
+// way to change that.
+function presenceHTML(state) {
+  const p = state.presence;
+  if (!p || !state.live) return "";
+  const me = whoAmI();
+  const a = p.access || { mode: "everyone" };
+  const same = (x, y) => (x || "").trim().toLowerCase() === (y || "").trim().toLowerCase();
+  const drives = (n) => a.mode === "only" ? !!n && (a.names || []).some((x) => same(x, n)) : a.mode === "except" ? !(a.names || []).some((x) => same(x, n)) : true;
+  const people = p.viewers.map((v) => {
+    const you = v.session === me.session;
+    const label = `${esc(v.name || "someone")}${you ? " (you)" : ""}`;
+    return `<span class="viewer ${drives(v.name) ? "" : "ro"}" title="${esc(`${v.name || "No name given"}${you ? " — you" : ""} · watching since ${new Date(v.since).toLocaleTimeString()}${drives(v.name) ? "" : " · read-only"}${v.typed ? " · typed last in a terminal (its size is theirs)" : ""}`)}">${v.typed ? "⌨ " : ""}${label}</span>`;
+  }).join("");
+  const mine = drives(me.name) || overriding.has(state.run.id);
+  const what = a.mode === "only" ? `Only ${esc((a.names || []).join(", "))} drive${(a.names || []).length === 1 ? "s" : ""}` : a.mode === "except" ? `${esc((a.names || []).join(", "))} only watch${(a.names || []).length === 1 ? "es" : ""}` : "Everyone can drive";
+  return `<div class="presence">
+    <span class="muted small">👁</span>${people}
+    <button class="link small access-btn" data-access title="Who may drive this run (a safety catch, not a lock)${a.by ? ` · set by ${esc(a.by)}` : ""}">${a.mode === "everyone" ? "🔓" : "🔒"} ${what}</button>
+    ${!drives(me.name) ? `<span class="ro-badge" title="Changes ask first; you can override">${overriding.has(state.run.id) ? "⚠ overriding read-only" : "read-only for you"}</span>` : ""}
+    ${!me.name ? `<button class="link small" data-myname>Set your name</button>` : ""}
+  </div>`;
+}
+
+function bindPresence(state, root, rerender) {
+  root.querySelector("[data-myname]") && (root.querySelector("[data-myname]").onclick = () => { if (author()) location.reload(); });
+  root.querySelector("[data-access]") && (root.querySelector("[data-access]").onclick = () => accessDialog(state, rerender));
+}
+
+// accessDialog sets who may drive a live run: everyone, only some people
+// (the others watch), or everyone but some.
+function accessDialog(state, rerender) {
+  const p = state.presence || { viewers: [], access: { mode: "everyone" } };
+  const a = p.access || { mode: "everyone" };
+  const me = whoAmI();
+  const known = [...new Set([me.name, ...p.viewers.map((v) => v.name), ...(a.names || []), p.started_by].filter(Boolean))];
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step access-dialog";
+  dlg.innerHTML = `<h3>Who drives this run?</h3>
+    <p class="muted small">Everyone who opens it can watch. Those who can't drive it see it read-only: if they try to change it, they're asked first and can override (everyone watching is told, and the run notes it). Names are what people give, so this is a safety catch against driving someone else's run by mistake, not a lock.</p>
+    <label class="check"><input type="radio" name="mode" value="everyone" ${a.mode === "everyone" ? "checked" : ""}> Everyone</label>
+    <label class="check"><input type="radio" name="mode" value="only" ${a.mode === "only" ? "checked" : ""}> Only these people (the others watch)</label>
+    <label class="check"><input type="radio" name="mode" value="except" ${a.mode === "except" ? "checked" : ""}> Everyone except these people (they watch)</label>
+    <label>People <input name="names" value="${esc((a.names?.length ? a.names : a.mode === "everyone" && me.name ? [me.name] : []).join(", "))}" placeholder="names, comma-separated" list="access-names"></label>
+    <datalist id="access-names">${known.map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+    <p class="muted small">Watching now: ${p.viewers.map((v) => esc(v.name || "someone")).join(", ") || "nobody else"}.${me.name ? "" : " You haven't given your name: “only” lists can't include you."}</p>
+    <div class="error-text"></div>
+    <div class="row"><button class="primary" data-ok>Save</button><button data-close>Cancel</button></div>`;
+  document.body.append(dlg);
+  dlg.querySelector("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => dlg.remove();
+  dlg.querySelector("[data-ok]").onclick = async () => {
+    const mode = dlg.querySelector("[name=mode]:checked").value;
+    const names = dlg.querySelector("[name=names]").value.split(",").map((s) => s.trim()).filter(Boolean);
+    try {
+      state.presence = await api("PUT", `/api/runs/${enc(state.run.id)}/access`, { mode, names });
+      dlg.close();
+      rerender();
+    } catch (e) { dlg.querySelector(".error-text").textContent = e.message; }
+  };
+  dlg.showModal();
 }
 
 async function login() {
@@ -257,8 +353,8 @@ function runView(set) {
 }
 
 async function viewRun(id) {
-  const { run, live, controls } = await api("GET", `/api/runs/${encodeURIComponent(id)}`);
-  const state = { run, live, controls, steps: run.steps.map((s) => ({ ...s, log: [] })), question: null, open: new Set() };
+  const { run, live, controls, presence } = await api("GET", `/api/runs/${encodeURIComponent(id)}`);
+  const state = { run, live, controls, presence, steps: run.steps.map((s) => ({ ...s, log: [] })), question: null, open: new Set() };
   // What steps will do (with this run's inputs and state), and the run it's compared against.
   const loadPreview = async () => {
     try { state.preview = (await api("GET", `/api/runs/${enc(id)}/preview`)).steps; renderRun(state); } catch {}
@@ -284,7 +380,7 @@ async function viewRun(id) {
   renderRun(state);
   if (!live) return;
 
-  stream = new EventSource(`/api/runs/${encodeURIComponent(id)}/events`);
+  stream = new EventSource(watchURL(id));
   let first = true;
   stream.onmessage = (msg) => {
     const e = JSON.parse(msg.data);
@@ -304,6 +400,9 @@ async function viewRun(id) {
 
 function applyEvent(state, e) {
   switch (e.kind) {
+    case "presence":
+      state.presence = e.presence;
+      break;
     case "run_started":
     case "run_finished":
       state.run = e.run;
@@ -387,6 +486,7 @@ function renderRun(state) {
       <button id="timeline" title="The run laid out in time: its steps, tries, shells, resumes and notes">◷ Timeline</button>
       ${active ? `<button id="suspend" title="Stop the run to resume it later: once the step running now finishes, or at once if it's waiting for you">‖ Suspend…</button><button class="danger" id="cancel">Abort run</button>` : `<button id="delete-run" class="danger" title="Delete this run's record">Delete run</button><button id="export-logs" title="Its logs, with the runs linked to it by resuming: to files, or a download">⇩ Export logs…</button><button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
     </div>
+    ${active ? presenceHTML(state) : ""}
     ${run.error ? `<p class="${run.status === "suspended" ? "suspended-text" : "error-text"}">${esc(run.error)}${run.status === "suspended" && state.resumable ? ` — <b>Resume…</b> carries it on from step ${state.resumable}.` : ""}</p>` : ""}
     ${active ? suspendingBanner(state.controls) : ""}
     ${editsBanner(run, state)}
@@ -475,6 +575,7 @@ function renderRun(state) {
   main.querySelectorAll("[data-edit-step]").forEach((b) => (b.onclick = (ev) => { ev.stopPropagation(); editRunStep(state, +b.dataset.editStep); }));
   $("#save-edits") && ($("#save-edits").onclick = () => saveRunEdits(state));
   $("#cancel") && ($("#cancel").onclick = () => abortRun(state));
+  bindPresence(state, main, () => renderRun(state));
   $("#suspend") && ($("#suspend").onclick = () => suspendRun(state));
   $("[data-carry-on]") && ($("[data-carry-on]").onclick = () => carryOn(state));
   $("#change-inputs") && ($("#change-inputs").onclick = () => changeInputs(state));
@@ -1089,3 +1190,36 @@ steps:
 Template helpers: default, upper, lower, trim, contains, quote`;
 
 loadRunbooks().then(route);
+
+// Secret fields (wherever they're drawn: run forms, the console, the
+// editor's test values, questions, changing inputs) get an eye to show
+// what's typed, and hide it again.
+function addEyes(root) {
+  root?.querySelectorAll?.("input[type=password]:not([data-eye])").forEach((inp) => {
+    inp.dataset.eye = "1";
+    const wrap = document.createElement("span");
+    wrap.className = "secret-field";
+    // The field's width limit becomes the wrapper's, so the eye sits in it.
+    const mw = getComputedStyle(inp).maxWidth;
+    if (mw && mw !== "none") wrap.style.maxWidth = mw;
+    inp.replaceWith(wrap);
+    wrap.append(inp);
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.className = "eye";
+    eye.textContent = "👁";
+    const show = (on) => {
+      inp.type = on ? "text" : "password";
+      eye.classList.toggle("on", on);
+      eye.title = on ? "Hide it" : "Show it";
+      eye.setAttribute("aria-label", eye.title);
+      eye.setAttribute("aria-pressed", on);
+    };
+    show(false);
+    eye.onclick = () => { show(inp.type === "password"); inp.focus(); };
+    wrap.append(eye);
+  });
+}
+addEyes(document.body);
+new MutationObserver((ms) => ms.forEach((m) => m.addedNodes.forEach((n) => n.nodeType === 1 && addEyes(n.matches("input") ? n.parentNode : n))))
+  .observe(document.body, { childList: true, subtree: true });

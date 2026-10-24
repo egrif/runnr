@@ -49,6 +49,7 @@ type WireEvent struct {
 	Note     *engine.Note  `json:"note,omitempty"`
 	Controls *controlsJSON `json:"controls,omitempty"`
 	Term     *TermEvent    `json:"term,omitempty"`
+	Presence *Presence     `json:"presence,omitempty"`
 }
 
 // liveRun is an in-progress (or recently finished) run driven by the GUI.
@@ -75,6 +76,8 @@ type liveRun struct {
 	qtype map[string]string
 	done  bool
 	qseq  int
+	// pres: who's watching, who may drive, terminal sizes (presence.go).
+	pres presence
 }
 
 func newLiveRun(id string, cancel context.CancelCauseFunc) *liveRun {
@@ -98,6 +101,18 @@ func (l *liveRun) publish(e WireEvent) {
 			close(ch)
 		}
 		l.subs = map[chan WireEvent]struct{}{}
+	}
+}
+
+// broadcast sends e to everyone watching now, without keeping it.
+func (l *liveRun) broadcast(e WireEvent) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for ch := range l.subs {
+		select {
+		case ch <- e:
+		default:
+		}
 	}
 }
 

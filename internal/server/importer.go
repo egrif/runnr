@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -31,6 +32,8 @@ type importCheck struct {
 	Version   int       `json:"version,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
 	Same      bool      `json:"same,omitempty"`
+	// Diff: what replacing the stored one would change (a unified diff).
+	Diff string `json:"diff,omitempty"`
 	// Builtin: a library runnr ships with that name (the import would
 	// take its place).
 	Builtin bool `json:"builtin,omitempty"`
@@ -52,6 +55,7 @@ func (s *Server) checkImport(raw []byte) importCheck {
 		c.Name = rb.Name
 		if d, err := s.st.Load(rb.Name); err == nil {
 			c.Exists, c.Version, c.UpdatedAt, c.Same = true, d.Version, d.UpdatedAt, string(d.Raw) == string(raw)
+			c.Diff = project.Diff(string(d.Raw), string(raw), fmt.Sprintf("%s (version %d, stored)", rb.Name, d.Version), "this file", 3)
 		}
 	case "library":
 		lib, err := runbook.ParseLibrary(raw)
@@ -65,6 +69,7 @@ func (s *Server) checkImport(raw []byte) importCheck {
 				c.Builtin = true
 			} else {
 				c.Exists, c.Version, c.UpdatedAt, c.Same = true, d.Version, d.UpdatedAt, string(d.Raw) == string(raw)
+				c.Diff = project.Diff(string(d.Raw), string(raw), fmt.Sprintf("%s (version %d, stored)", lib.Name, d.Version), "this file", 3)
 			}
 		}
 	default:

@@ -19,9 +19,9 @@ function cxSizes() {
 function cxSaveSizes(z) { try { localStorage.setItem("runnr.console", JSON.stringify(z)); } catch {} }
 
 async function viewConsole(id) {
-  const { run, live, controls } = await api("GET", `/api/runs/${enc(id)}`);
+  const { run, live, controls, presence } = await api("GET", `/api/runs/${enc(id)}`);
   const state = {
-    run, live, controls, console: true,
+    run, live, controls, presence, console: true,
     steps: run.steps.map((s) => ({ ...s, log: s.output ? s.output.replace(/\n$/, "").split("\n").map((t) => ({ stream: "stdout", text: t })) : [] })),
     question: null, open: new Set(), selected: null, follow: true, editing: null, sizes: cxSizes(),
     plan: null, versionDismissed: 0, fg: null, bgActive: null,
@@ -42,7 +42,7 @@ async function viewConsole(id) {
   cxRender(state);
   if (!live) return;
 
-  stream = new EventSource(`/api/runs/${enc(id)}/events`);
+  stream = new EventSource(watchURL(id));
   let first = true;
   stream.onmessage = (msg) => {
     const e = JSON.parse(msg.data);
@@ -147,9 +147,11 @@ function cxRenderTop(state) {
       ${cxResumedChips(r)}
       ${(state.messages || []).slice(-1).map((m) => `<span class="muted small">ℹ ${esc(m)}</span>`).join("")}
     </div>
+    ${live ? presenceHTML(state) : ""}
     <div class="cx-toolbar">${cxToolbar(state, live)}</div>
     ${cxBanners(state, live)}`;
   cxBindTop(state, el, live);
+  bindPresence(state, el, () => cxRenderTop(state));
 }
 
 // cxResumedChips: the times the run was resumed (and with which runbook
@@ -1091,6 +1093,7 @@ function cxLaunchRenderTop(state) {
       ${tog("step", "⏯ Step through", "Pause before every step", opts.unattended)}
       ${tog("yes", "Auto-approve", "Approve confirm-gated steps (unattended runs)", !opts.unattended)}
       ${tog("dry", "Dry run", "Show what each step would run, without running it")}
+      ${tog("solo", "🔒 Only I drive", "Others who open the run can watch it; if they try to change it, they're asked first (they can override)")}
     </div>`;
   el.querySelectorAll("[data-opt]").forEach((b) => (b.onclick = () => { opts[b.dataset.opt] = !opts[b.dataset.opt]; cxLaunchRenderTop(state); }));
   el.querySelector("[data-reset-layout]").onclick = () => cxResetLayout(state);
@@ -1166,6 +1169,10 @@ async function cxLaunchStart(state) {
     vars: cxLaunchVars(state), unattended: opts.unattended, yes: opts.yes, dry_run: opts.dry, step_mode: opts.step && !opts.unattended,
     skip: nums((i) => !state.include[i]), pause_before: nums((i) => state.before.has(i)), pause_after: nums((i) => state.after.has(i)),
   };
+  if (opts.solo) {
+    if (!author()) return toast("Give your name to drive it alone");
+    body.access = { mode: "only" };
+  }
   if (opts.unattended) {
     const ch = rb.steps.map((s, i) => i).filter((i) => state.include[i] && rb.steps[i].choose && (rb.steps[i].ways || []).length > 1);
     if (ch.length) {

@@ -187,7 +187,8 @@ jobs on a row under it), the run's row with the maintenance window, notes
   test suites and run records, filling in `@PROJECT_DIR@`-style
   placeholders (`--set`), checking references and finding missing
   libraries in the repository. A taken name needs `-f` (next version) or
-  `--rename`; `-n` shows what it would do.
+  `--rename`; `-n` shows what it would do, and `--diff` also what saving
+  over each taken name would change.
 - `runnr export <runbook> -o file.yaml` writes the runbook with the
   libraries it uses beside it. `runnr history <run-id> --export <folder>`
   writes a run's logs, with the runs linked to it by resuming (`--as raw`,

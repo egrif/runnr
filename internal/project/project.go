@@ -98,6 +98,8 @@ type Doc struct {
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
 	Same      bool      `json:"same,omitempty"`
 	Builtin   bool      `json:"builtin,omitempty"`
+	// Diff is what replacing the stored one would change (a unified diff).
+	Diff string `json:"diff,omitempty"`
 }
 
 // Ref is a reference from one file to another: Kind and Name, found in
@@ -368,6 +370,7 @@ func (p *Plan) check(lookup Lookup) {
 					d.Builtin = true
 				} else {
 					d.Exists, d.Version, d.UpdatedAt, d.Same = true, s.Version, s.UpdatedAt, bytes.Equal(s.Raw, d.Raw)
+					d.Diff = Diff(string(s.Raw), string(d.Raw), fmt.Sprintf("%s (version %d, stored)", d.Name, s.Version), d.Rel, 3)
 				}
 			}
 		}
