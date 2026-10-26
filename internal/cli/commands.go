@@ -285,7 +285,7 @@ func editLoop(st *store.Store, name string) error {
 }
 
 func importCmd(s func() *store.Store) *cobra.Command {
-	var force, dry, noFound bool
+	var force, dry, noFound, showDiff bool
 	var collection, as string
 	var sets, renames []string
 	cmd := &cobra.Command{
@@ -306,7 +306,8 @@ imported too (--no-found leaves it out).
 A file whose name is taken is refused, unless --force (it's saved as the
 next version of that one; earlier versions are kept) or --rename
 NAME=NEW (imported as NEW; references to it in the other files follow).
---as NEW renames a single file. Files are saved libraries first, then
+--as NEW renames a single file. --diff shows what saving over each taken
+name would change (and imports nothing). Files are saved libraries first, then
 fakes, runbooks and suites; one that can't go in (an error, a placeholder
 without a value, a missing reference) is reported and left out.`,
 		Args: cobra.MinimumNArgs(1),
@@ -330,6 +331,9 @@ without a value, a missing reference) is reported and left out.`,
 				o.Values[strings.Trim(k, "@")] = v
 			}
 			if len(args) == 1 && args[0] == "-" {
+				if showDiff {
+					return errors.New("--diff takes files or a folder, not stdin")
+				}
 				return importStdin(s(), force, collection, o.Values)
 			}
 			rn := map[string]string{}
@@ -373,8 +377,8 @@ without a value, a missing reference) is reported and left out.`,
 					fmt.Printf("also importing %s (%s %s, needed here)\n", d.Rel, d.Kind, d.Name)
 				}
 			}
-			if dry {
-				return printPlan(p)
+			if dry || showDiff {
+				return printPlan(p, showDiff)
 			}
 			res := project.Apply(p, func(project.Doc) bool { return force }, project.StoreSaver(s()))
 			var failed bool
@@ -413,12 +417,14 @@ without a value, a missing reference) is reported and left out.`,
 	cmd.Flags().StringArrayVar(&sets, "set", nil, "a placeholder's value (NAME=VALUE, for @NAME@)")
 	cmd.Flags().BoolVar(&noFound, "no-found", false, "don't import missing libraries found elsewhere in the repository")
 	cmd.Flags().BoolVarP(&dry, "dry-run", "n", false, "say what would be imported, and change nothing")
+	cmd.Flags().BoolVar(&showDiff, "diff", false, "as --dry-run, with what saving over each taken name would change (a diff)")
 	cmd.Flags().StringVarP(&collection, "collection", "c", "", "add the imported runbooks to this collection")
 	return cmd
 }
 
-// printPlan says what an import would do.
-func printPlan(p *project.Plan) error {
+// printPlan says what an import would do; with diffs, what saving over
+// each taken name would change.
+func printPlan(p *project.Plan, diffs bool) error {
 	fmt.Printf("folder %s", p.Dir)
 	if p.RepoRoot != "" {
 		fmt.Printf(" (repository %s)", p.RepoRoot)
@@ -434,7 +440,14 @@ func printPlan(p *project.Plan) error {
 		case d.Exists:
 			state = fmt.Sprintf("name taken (version %d)", d.Version)
 		}
+		if d.Diff != "" {
+			add, rm := project.DiffStat(d.Diff)
+			state += fmt.Sprintf(": -f saves it as version %d (+%d −%d lines)", d.Version+1, add, rm)
+		}
 		fmt.Printf("  %-8s %-28s %s  %s\n", d.Kind, d.Name, d.Rel, state)
+		if diffs && d.Diff != "" {
+			printDiff(d.Diff, "      ")
+		}
 		for _, r := range d.Refs {
 			if r.Found == "" {
 				fmt.Printf("           needs %s %s%s\n", r.Kind, r.Name, map[bool]string{true: " (found: " + strings.Join(r.Candidates, ", ") + ")"}[len(r.Candidates) > 0])
@@ -445,6 +458,28 @@ func printPlan(p *project.Plan) error {
 		fmt.Printf("placeholders without a value: %s\n", strings.Join(p.Unset, ", "))
 	}
 	return p.OK()
+}
+
+// printDiff prints a unified diff, indented, in colour on a terminal.
+func printDiff(d, indent string) {
+	color := isTTY(os.Stdout) && os.Getenv("NO_COLOR") == ""
+	for _, l := range strings.Split(strings.TrimSuffix(d, "\n"), "\n") {
+		c := ""
+		switch {
+		case strings.HasPrefix(l, "+++"), strings.HasPrefix(l, "---"):
+			c = "1"
+		case strings.HasPrefix(l, "@@"):
+			c = "36"
+		case strings.HasPrefix(l, "+"):
+			c = "32"
+		case strings.HasPrefix(l, "-"):
+			c = "31"
+		}
+		if color && c != "" {
+			l = "\x1b[" + c + "m" + l + "\x1b[0m"
+		}
+		fmt.Println(indent + l)
+	}
 }
 
 // importStdin imports one runbook from standard input.

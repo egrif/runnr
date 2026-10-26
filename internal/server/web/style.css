@@ -832,3 +832,33 @@ dialog.timeline-dlg iframe { flex: 1; width: 100%; border: 1px solid var(--borde
 .history-filters { gap: 12px; margin: 4px 0 14px; flex-wrap: wrap; }
 .history-filters input[type=search] { flex: 1; min-width: 220px; max-width: 420px; }
 @media (prefers-color-scheme: dark) { .ident { background: #23352a; } }
+
+.presence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; font-size: 13px; }
+.presence .viewer { padding: 1px 8px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); }
+.presence .viewer.ro { opacity: .65; border-style: dashed; }
+.presence .ro-badge { padding: 1px 8px; border-radius: 10px; background: #fdf1d6; color: #7a5410; font-size: 12px; }
+@media (prefers-color-scheme: dark) { .presence .ro-badge { background: #3b3119; color: #f0d79a; } }
+.cx-top .presence { margin: 2px 0 4px; }
+
+.secret-field { position: relative; display: inline-flex; align-items: center; width: 100%; }
+.secret-field input { flex: 1; min-width: 0; max-width: none !important; padding-right: 34px; }
+.secret-field .eye { position: absolute; right: 4px; padding: 0 6px; height: 24px; border: 0; background: transparent; opacity: .45; cursor: pointer; filter: grayscale(1); }
+.secret-field .eye:hover, .secret-field .eye.on { opacity: 1; filter: none; }
+
+.imp-diff { margin: 6px 0; font-size: 12px; }
+.imp-diff summary { cursor: pointer; color: var(--muted); }
+.imp-diff pre.diff { margin: 6px 0 0; padding: 8px 10px; max-height: 360px; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; line-height: 1.4; }
+.diff .d-add, .imp-diff summary .d-add { color: #1f7a3a; }
+.diff .d-add { background: #e6f4ea; display: inline-block; min-width: 100%; }
+.diff .d-rm, .imp-diff summary .d-rm { color: #b42318; }
+.diff .d-rm { background: #fdecea; display: inline-block; min-width: 100%; }
+.diff .d-hunk { color: #2266aa; }
+.diff .d-file { font-weight: 600; }
+@media (prefers-color-scheme: dark) { .diff .d-add { background: #173322; color: #7fd39a; } .diff .d-rm { background: #3a1d1b; color: #f19a92; } .diff .d-hunk { color: #7fb0e6; } }
+.imp-diff-row td { border-top: 0; padding-top: 0; }
+dialog.run-inputs { width: min(480px, calc(100vw - 32px)); }
+dialog.run-inputs h3 { margin: 0 0 12px; }
+dialog.run-inputs .ri-grid { display: grid; grid-template-columns: max-content 1fr; gap: 8px 10px; align-items: center; margin-bottom: 12px; }
+dialog.run-inputs .ri-grid > label { font-family: ui-monospace, Menlo, monospace; text-align: right; }
+dialog.run-inputs .ri-grid input, dialog.run-inputs .ri-grid select, dialog.run-inputs .ri-grid .path-field { width: 100%; }
+dialog.run-inputs label.check { display: block; margin: 4px 0; }

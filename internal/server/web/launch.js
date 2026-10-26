@@ -59,6 +59,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
           <label><input type="radio" name="mode" value="unattended"> Unattended</label>
           <label title="Stop before every step to choose: run, skip, open a shell, or carry on"><input type="checkbox" name="stepmode"> Step through every step</label>
           <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
+          <label title="Others who open the run can watch it; if they try to change it, they're asked first (they can override)"><input type="checkbox" name="solo"> Only I drive it</label>
           <label><input type="checkbox" name="dry"> Dry run</label>
         </div>
       </div>
@@ -133,6 +134,10 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
       step_mode: form.stepmode.checked, skip: nums((i) => !st.include[i]),
       pause_before: nums((i) => st.before.has(i)), pause_after: nums((i) => st.after.has(i)),
     };
+    if (form.solo.checked) {
+      if (!author()) return toast("Give your name to drive it alone");
+      body.access = { mode: "only" };
+    }
     if (body.unattended) {
       const ch = rb.steps.map((s, i) => i).filter((i) => st.include[i] && rb.steps[i].choose && (rb.steps[i].ways || []).length > 1);
       if (ch.length) {

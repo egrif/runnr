@@ -126,21 +126,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/runs/{id}/events", s.runEvents)
 	mux.HandleFunc("GET /api/runs/{id}/log", s.runLog)
 	mux.HandleFunc("GET /api/runs/{id}/timeline", s.runTimeline)
-	mux.HandleFunc("POST /api/runs/{id}/suspend", s.suspendRun)
+	mux.HandleFunc("POST /api/runs/{id}/suspend", s.driving(s.suspendRun))
 	mux.HandleFunc("GET /api/runbooks/{name}/tests", s.getTests)
 	mux.HandleFunc("POST /api/runbooks/{name}/tests/run", s.runTests)
-	mux.HandleFunc("POST /api/runs/{id}/answer", s.answer)
+	mux.HandleFunc("POST /api/runs/{id}/answer", s.driving(s.answer))
 	mux.HandleFunc("GET /api/runs/{id}/steps/{n}", s.getRunStep)
-	mux.HandleFunc("PUT /api/runs/{id}/steps/{n}", s.editRunStep)
-	mux.HandleFunc("PUT /api/runs/{id}/inputs", s.setRunInputs)
-	mux.HandleFunc("POST /api/runs/{id}/steps/{n}/reopen", s.reopenRunStep)
-	mux.HandleFunc("POST /api/runs/{id}/goto", s.gotoStep)
-	mux.HandleFunc("POST /api/runs/{id}/stop", s.stopStep)
+	mux.HandleFunc("PUT /api/runs/{id}/steps/{n}", s.driving(s.editRunStep))
+	mux.HandleFunc("PUT /api/runs/{id}/inputs", s.driving(s.setRunInputs))
+	mux.HandleFunc("POST /api/runs/{id}/steps/{n}/reopen", s.driving(s.reopenRunStep))
+	mux.HandleFunc("POST /api/runs/{id}/goto", s.driving(s.gotoStep))
+	mux.HandleFunc("POST /api/runs/{id}/stop", s.driving(s.stopStep))
 	mux.HandleFunc("POST /api/runs/{id}/save-edits", s.saveRunEdits)
 	mux.HandleFunc("GET /api/runs/{id}/plan", s.getRunPlan)
 	mux.HandleFunc("GET /api/runbooks/{name}/steps/{n}", s.getRunbookStep)
 	mux.HandleFunc("PUT /api/runbooks/{name}/steps/{n}", s.putRunbookStep)
-	mux.HandleFunc("POST /api/runs/{id}/adopt-version", s.adoptVersion)
+	mux.HandleFunc("POST /api/runs/{id}/adopt-version", s.driving(s.adoptVersion))
 	mux.HandleFunc("POST /api/shells", s.openShell)
 	mux.HandleFunc("POST /api/import/check", s.importCheck)
 	mux.HandleFunc("POST /api/import", s.importDoc)
@@ -154,13 +154,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/import/project", s.importProject)
 	mux.HandleFunc("GET /api/shells/{id}/events", s.shellEvents)
 	mux.HandleFunc("POST /api/shells/{id}/term", s.shellInput)
-	mux.HandleFunc("POST /api/runs/{id}/cancel", s.cancelRun)
+	mux.HandleFunc("POST /api/runs/{id}/cancel", s.driving(s.cancelRun))
 	mux.HandleFunc("POST /api/runs/{id}/resume", s.resumeRun)
 	mux.HandleFunc("POST /api/runs/{id}/notes", s.addNote)
 	mux.HandleFunc("GET /api/runs/{id}/preview", s.runPreview)
-	mux.HandleFunc("POST /api/runs/{id}/term", s.termInput)
+	mux.HandleFunc("POST /api/runs/{id}/term", s.driving(s.termInput))
 	mux.HandleFunc("GET /api/runs/{id}/controls", s.getControls)
-	mux.HandleFunc("PUT /api/runs/{id}/controls", s.setControls)
+	mux.HandleFunc("PUT /api/runs/{id}/controls", s.driving(s.setControls))
+	// Who may drive a live run (presence.go); changing it is driving it.
+	mux.HandleFunc("PUT /api/runs/{id}/access", s.driving(s.setAccess))
 	mux.HandleFunc("POST /api/preview", s.preview)
 	mux.HandleFunc("POST /api/parse", s.parse)
 	mux.HandleFunc("POST /api/parse-step", s.parseStep)
@@ -399,7 +401,10 @@ type startReq struct {
 	Runbook    string            `json:"runbook"`
 	Vars       map[string]string `json:"vars"`
 	Unattended bool              `json:"unattended"`
-	Yes        bool              `json:"yes"`
+	// Access: who may drive it (only, except); "only" with no names: the
+	// person starting it.
+	Access *Access `json:"access,omitempty"`
+	Yes    bool    `json:"yes"`
 	// UsePreferred acknowledges that steps set to ask which way will use
 	// their preferred way in an unattended run (required if there are any).
 	UsePreferred bool `json:"use_preferred"`
@@ -608,6 +613,15 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	ctx, cancel := context.WithCancelCause(context.Background())
 	l := newLiveRun(id, cancel)
 	l.ctl = engine.NewControls(cv)
+	l.pres.startedBy = strings.TrimSpace(r.Header.Get(hdrUser))
+	if a := req.Access; a != nil && (a.Mode == "only" || a.Mode == "except") {
+		// e.g. only the person starting it drives it; the others watch.
+		a.By, a.At = nonEmpty(l.pres.startedBy, "someone"), time.Now()
+		if a.Mode == "only" && len(a.Names) == 0 && l.pres.startedBy != "" {
+			a.Names = []string{l.pres.startedBy}
+		}
+		l.pres.access = *a
+	}
 	if !req.test && !req.DryRun {
 		// Another runnr (runnr abort, runnr suspend) can ask for it to stop.
 		go s.st.WatchAbort(ctx, id, cancel, l.ctl)
@@ -817,7 +831,10 @@ func termTo(w http.ResponseWriter, r *http.Request, l *liveRun) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	c.SetSize(req.Rows, req.Cols)
+	// Whoever typed last sets the size (others' are kept for when they type).
+	if rows, cols, ok := l.sizeFor(req.ID, r.Header.Get(hdrSession), req.Data != "", req.Rows, req.Cols); ok {
+		c.SetSize(rows, cols)
+	}
 	if req.Data != "" {
 		c.Input([]byte(req.Data))
 	}
@@ -901,6 +918,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{"run": run, "live": false}
 	if l := s.getLive(run.ID); l != nil {
 		resp["live"] = true
+		resp["presence"] = l.presenceNow()
 		if ed, ok := l.session.(engine.Editor); ok && ed != nil {
 			// The record may not have the latest edits yet.
 			if e := ed.Edits(); len(e) > len(run.Edits) {
@@ -949,12 +967,19 @@ func (s *Server) runEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("run %q is not live: %w", r.PathValue("id"), store.ErrNotFound))
 		return
 	}
-	streamEvents(w, r, l)
+	// Watching it: the others are told; this viewer hears who's there.
+	session := r.URL.Query().Get("session")
+	l.join(session, r.URL.Query().Get("name"))
+	defer l.leave(session)
+	streamEvents(w, r, l, func() *WireEvent {
+		p := l.presenceNow()
+		return &WireEvent{Seq: -1, Event: engine.Event{Kind: "presence", Step: -1}, Presence: &p}
+	})
 }
 
 // streamEvents sends l's events (those so far, then as they come) as
 // server-sent events.
-func streamEvents(w http.ResponseWriter, r *http.Request, l *liveRun) {
+func streamEvents(w http.ResponseWriter, r *http.Request, l *liveRun, hello ...func() *WireEvent) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -969,6 +994,9 @@ func streamEvents(w http.ResponseWriter, r *http.Request, l *liveRun) {
 	backlog, ch := l.subscribe()
 	for _, e := range backlog {
 		send(e)
+	}
+	for _, h := range hello {
+		send(*h())
 	}
 	flusher.Flush()
 	if ch == nil {

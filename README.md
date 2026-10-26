@@ -59,7 +59,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**); `-f yaml` (or `-o file.yaml`) writes the runbook as written with the libraries it uses beside it (`--lib`, `--no-libs`), so the folder imports again (**⇩ Export…** on the runbook's page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export db-helpers)"` |
-| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (saved as its next version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do. In the GUI: **⇪ Import…** in the sidebar does the same for a folder |
+| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (saved as its next version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
 | `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
 | `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
 | `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
@@ -229,6 +229,16 @@ new version: steps are matched by name, a new step is still to do, and the
 record notes which version it was resumed with. Steps it ran that the new
 version no longer has stay in the record (and their notes become the
 run's). `--new-run` won't start from a changed runbook.
+
+**Watching together.** Everyone who opens a live run in the GUI sees it
+live, and the run's header shows who's watching (the name each person
+gives, as for notes). Who may drive it is set there (🔒) or when it starts
+(**Only I drive it**): everyone, only some people, or everyone except some.
+The others see it read-only: if they try to change it (answer, pause,
+stop, suspend, type in its terminal…), they're asked first and can
+override; everyone is told, and the run notes it. Names aren't checked,
+so this is a safety catch against driving someone else's run by mistake,
+not a lock. A terminal takes the window size of whoever typed in it last.
 
 **Suspending.** To stop a run on purpose and pick it up later (tomorrow,
 after a change window, once someone else has done their part), suspend it:
