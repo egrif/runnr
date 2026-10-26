@@ -303,3 +303,95 @@ function keepDiffsOpen(root, open) {
     if (k) e.target.open ? open.add(k) : open.delete(k);
   }, true);
 }
+
+// importRunsDialog imports runs another runnr exported as records (the
+// .json files, a zip of them, or a folder of them): picked on this machine
+// or sent from the browser's. They're checked first: a run already here is
+// left as it is, and one exported while still going comes in aborted.
+function importRunsDialog(onDone) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step run-import";
+  dlg.innerHTML = `<h3>Import runs</h3>
+    <p class="muted small">Runs exported as <b>records (JSON)</b> from another runnr (or a backup): the <code>.json</code> files, the zip the export downloads, or a folder of them. Raw logs can't be imported.</p>
+    <div class="row"><button data-files>Choose files…</button><button data-folder>Choose a folder…</button><button data-upload title="Files on the computer this browser runs on">From this computer…</button></div>
+    <div class="ri-found"></div>
+    <div class="error-text"></div>
+    <div class="row"><button class="primary" data-ok disabled>Import</button><button data-close>Cancel</button></div>`;
+  document.body.append(dlg);
+  const $d = (q) => dlg.querySelector(q);
+  const src = { paths: [], uploads: [] };
+  let found = [];
+  const sel = new Set();
+  let imported = false;
+  const check = async () => {
+    $d(".error-text").textContent = "";
+    try {
+      const res = await api("POST", "/api/runs/import", { ...src, check: true });
+      found = res.runs;
+      sel.clear();
+      found.forEach((r) => !r.exists && sel.add(r.id));
+      draw(res.errors);
+    } catch (e) { $d(".error-text").textContent = e.message; }
+  };
+  const draw = (errors = []) => {
+    const where = [...src.paths, ...src.uploads.map((u) => u.name)];
+    $d(".ri-found").innerHTML = `${where.length ? `<p class="small muted">From ${where.map((p) => `<code title="${esc(p)}">${esc(p.split("/").pop() || p)}${src.paths.includes(p) && !/\.(json|zip)$/i.test(p) ? "/" : ""}</code>`).join(", ")}</p>` : ""}
+      ${found.length ? `<table class="history ri-table"><thead><tr><th><input type="checkbox" data-all ${sel.size && sel.size === found.filter((r) => !r.exists).length ? "checked" : ""}></th><th>Status</th><th>Runbook</th><th>Started</th><th>Run ID</th><th></th></tr></thead><tbody>
+        ${found.map((r) => `<tr class="${r.exists ? "muted" : ""}"><td><input type="checkbox" data-id="${esc(r.id)}" ${sel.has(r.id) ? "checked" : ""} ${r.exists ? "disabled" : ""}></td>
+          <td><span class="s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span></td><td>${esc(r.runbook)}</td><td>${new Date(r.started).toLocaleString()}</td>
+          <td><code>${esc(r.id)}</code></td><td class="small">${r.exists ? "already here" : r.unfinished ? "was still going: comes in aborted" : ""}</td></tr>`).join("")}</tbody></table>` : where.length ? `<p class="muted">No runs to import.</p>` : ""}
+      ${errors.length ? `<ul class="error-text small">${errors.map((e) => `<li><code>${esc(e.from)}</code>: ${esc(e.error)}</li>`).join("")}</ul>` : ""}`;
+    $d("[data-ok]").disabled = !sel.size;
+    $d("[data-ok]").textContent = sel.size ? `Import ${sel.size} run${sel.size === 1 ? "" : "s"}` : "Import";
+  };
+  dlg.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.matches("[data-all]")) { found.forEach((r) => !r.exists && (t.checked ? sel.add(r.id) : sel.delete(r.id))); draw(); }
+    else if (t.matches("[data-id]")) { t.checked ? sel.add(t.dataset.id) : sel.delete(t.dataset.id); draw(); }
+  });
+  const start = () => impLoad("runnr.importRunsDir", "~");
+  const remember = (p) => { try { localStorage.setItem("runnr.importRunsDir", JSON.stringify(p.replace(/\/[^/]*$/, "") || "/")); } catch {} };
+  $d("[data-files]").onclick = async () => {
+    const ps = await pickPath({ kind: "file", multi: true, accept: [".json", ".zip"], start: start(), title: "Choose run records to import" });
+    if (!ps?.length) return;
+    remember(ps[0]);
+    src.paths.push(...ps.filter((p) => !src.paths.includes(p)));
+    check();
+  };
+  $d("[data-folder]").onclick = async () => {
+    const p = await pickPath({ kind: "dir", start: start(), title: "Choose a folder of run records" });
+    if (!p) return;
+    try { localStorage.setItem("runnr.importRunsDir", JSON.stringify(p)); } catch {}
+    if (!src.paths.includes(p)) src.paths.push(p);
+    check();
+  };
+  $d("[data-upload]").onclick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = ".json,.zip,application/json,application/zip";
+    input.onchange = async () => {
+      for (const f of input.files) {
+        const b = new Uint8Array(await f.arrayBuffer());
+        let bin = "";
+        for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+        src.uploads.push({ name: f.name, data: btoa(bin) });
+      }
+      check();
+    };
+    input.click();
+  };
+  $d("[data-ok]").onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const res = await api("POST", "/api/runs/import", { ...src, ids: [...sel] });
+      const n = res.runs.filter((r) => r.imported).length;
+      imported = n > 0;
+      toast(`Imported ${n} run${n === 1 ? "" : "s"}`);
+      dlg.close();
+    } catch (x) { $d(".error-text").textContent = x.message; e.currentTarget.disabled = false; }
+  };
+  $d("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => { dlg.remove(); if (imported) onDone?.(); };
+  dlg.showModal();
+}

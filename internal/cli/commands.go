@@ -1455,6 +1455,53 @@ again; secret values can't be restored).`,
 	return cmd
 }
 
+// importRuns imports exported run records (only the runs in ids, if any).
+func importRuns(st *store.Store, paths, ids []string, check bool) error {
+	files, bad := project.ReadRunPaths(paths)
+	for _, b := range bad {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", b.From, b.Error)
+	}
+	out, err := project.ImportRuns(st, files, ids, check)
+	if err != nil {
+		return err
+	}
+	if len(out) == 0 {
+		if len(bad) == 0 {
+			return errors.New("no runs to import")
+		}
+		return ExitError{1}
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "RUN\tRUNBOOK\tSTARTED\tSTATUS\tRESULT")
+	n := 0
+	for _, r := range out {
+		what := "imported"
+		switch {
+		case r.Exists:
+			what = "already here, left as it is"
+		case check:
+			what = "would import"
+		}
+		if r.Unfinished && !r.Exists {
+			what += " (it was still going: as aborted)"
+		}
+		if r.Imported || check && !r.Exists {
+			n++
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", r.ID, r.Runbook, r.Started.Local().Format("2006-01-02 15:04"), r.Status, what)
+	}
+	tw.Flush()
+	verb := "imported"
+	if check {
+		verb = "would import"
+	}
+	fmt.Printf("%s %d of %d run(s)\n", verb, n, len(out))
+	if len(bad) > 0 {
+		return ExitError{1}
+	}
+	return nil
+}
+
 func historyCmd(s func() *store.Store) *cobra.Command {
 	var (
 		filter string
@@ -1468,12 +1515,17 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		only   bool
 		tl     string
 		find   string
+		imp    []string
+		check  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "history [run-id]",
 		Short: "List past runs, or show one in detail (--delete removes it)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(imp) > 0 {
+				return importRuns(s(), imp, args, check)
+			}
 			if export != "" {
 				if len(args) != 1 {
 					return errors.New("--export takes a run id")
@@ -1573,6 +1625,8 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 	cmd.Flags().StringVar(&as, "as", "raw", "--export: raw (logs to read), json (records to import), both, and/or timeline (a page per run laying it out in time), comma-separated")
 	cmd.Flags().BoolVar(&single, "one-file", false, "--export: all the runs in one file (per format)")
 	cmd.Flags().BoolVar(&only, "only", false, "--export: just this run, not those linked by resuming")
+	cmd.Flags().StringArrayVar(&imp, "import", nil, "import exported runs (records: --as json files, a zip of them, or a folder of them), repeatable; with a run id, just that run")
+	cmd.Flags().BoolVar(&check, "check", false, "--import: say what it would import, and import nothing")
 	cmd.Flags().BoolVar(&del, "delete", false, "delete the run's record (not a running one)")
 	return cmd
 }

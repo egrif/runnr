@@ -148,6 +148,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runbooks/{name}/files/plan", s.exportPlan)
 	mux.HandleFunc("POST /api/runbooks/{name}/files", s.exportFiles)
 	mux.HandleFunc("GET /api/runs/{id}/chain", s.runChain)
+	mux.HandleFunc("POST /api/runs/import", s.importRuns)
 	mux.HandleFunc("GET /api/runs/{id}/logs", s.downloadLogs)
 	mux.HandleFunc("POST /api/runs/{id}/logs", s.writeLogs)
 	mux.HandleFunc("POST /api/import/scan", s.importScan)
