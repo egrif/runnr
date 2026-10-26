@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.9.2 — 2026-10-26
+
+Terraform's imported passwords are masked.
 
 ### Fixed
 
