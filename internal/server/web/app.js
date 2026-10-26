@@ -478,7 +478,7 @@ function renderRun(state) {
       <div>
         <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a> ${identChips(run, "big")}</h1>
         <div class="muted">${esc(run.id)}${run.runbook_version ? ` · v${run.runbook_version}` : ""} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
-          ${duration(run.started, run.ended) ? ` · took ${duration(run.started, run.ended)}` : ""}</div>
+          ${duration(run.started, run.ended) ? ` · took ${duration(run.started, run.ended)}` : ""}${run.imported ? ` · <span title="${esc(new Date(run.imported).toLocaleString())}${run.from_log ? ": rebuilt from its text, so times are to the second, and sections and state aren't there" : ""}">⇪ imported${run.from_log ? " from a raw log" : ""}</span>` : ""}</div>
       </div>
       <span class="spacer"></span>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
@@ -1115,7 +1115,7 @@ async function viewHistory() {
   const names = (runbooks || []).map((r) => r.name).sort();
   const anyIdents = runs.some((r) => (r.identifiers || []).length);
   main.innerHTML = `
-    <div class="row"><h1>Run history${filter ? ` · ${esc(filter)}` : ""}</h1><span class="spacer"></span><button data-import-runs title="Bring in runs another runnr exported as records (JSON)">⇪ Import runs…</button></div>
+    <div class="row"><h1>Run history${filter ? ` · ${esc(filter)}` : ""}</h1><span class="spacer"></span><button data-import-runs title="Bring in runs another runnr exported (records or raw logs)">⇪ Import runs…</button></div>
     <div class="row history-filters">
       <label>Runbook <select data-hist-rb><option value="">all</option>${names.map((n) => `<option ${n === filter ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
       <input type="search" data-hist-q value="${esc(q)}" placeholder="Search targets (identifier inputs) or run ID…" title="Runs whose identifiers (inputs the runbook marks identifier: true, like a target) or ID contain this">
@@ -1123,7 +1123,7 @@ async function viewHistory() {
     </div>
     ${runs.length ? `<table class="history"><thead><tr><th>Status</th><th>Runbook</th>${anyIdents ? "<th>For</th>" : ""}<th>Mode</th><th>Started</th><th>Duration</th><th>Run ID</th></tr></thead><tbody>
       ${runs.map((r) => `<tr data-id="${esc(r.id)}">
-        <td><span class="s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span>${r.imported ? ` <span class="muted small" title="Imported ${esc(new Date(r.imported).toLocaleString())}">⇪</span>` : ""}</td>
+        <td><span class="s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span>${r.imported ? ` <span class="muted small" title="Imported ${esc(new Date(r.imported).toLocaleString())}${r.from_log ? " from a raw log (rebuilt from its text: close, not exact)" : ""}">⇪</span>` : ""}</td>
         <td>${esc(r.runbook)}</td>${anyIdents ? `<td>${identChips(r)}</td>` : ""}<td>${esc(r.mode)}${r.dry_run ? " (dry)" : ""}</td>
         <td>${new Date(r.started).toLocaleString()}</td><td>${duration(r.started, r.ended)}</td>
         <td class="muted"><code>${esc(r.id)}</code></td></tr>`).join("")}

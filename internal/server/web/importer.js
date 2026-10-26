@@ -304,15 +304,16 @@ function keepDiffsOpen(root, open) {
   }, true);
 }
 
-// importRunsDialog imports runs another runnr exported as records (the
-// .json files, a zip of them, or a folder of them): picked on this machine
-// or sent from the browser's. They're checked first: a run already here is
-// left as it is, and one exported while still going comes in aborted.
+// importRunsDialog imports runs another runnr exported: records (.json),
+// raw logs (.log), a zip of them, or a folder of them, picked on this
+// machine or sent from the browser's. They're checked first: a run already
+// here is left as it is, one exported while still going comes in aborted,
+// and one from a raw log is rebuilt from its text (close, not exact).
 function importRunsDialog(onDone) {
   const dlg = document.createElement("dialog");
   dlg.className = "edit-step run-import";
   dlg.innerHTML = `<h3>Import runs</h3>
-    <p class="muted small">Runs exported as <b>records (JSON)</b> from another runnr (or a backup): the <code>.json</code> files, the zip the export downloads, or a folder of them. Raw logs can't be imported.</p>
+    <p class="muted small">Runs exported from another runnr (or a backup): records (<code>.json</code>), raw logs (<code>.log</code>), the zip the export downloads, or a folder of them. A run from a raw log is rebuilt from its text: close, not exact (times to the second; no sections or state). Where there's both for a run, the record is used.</p>
     <div class="row"><button data-files>Choose files…</button><button data-folder>Choose a folder…</button><button data-upload title="Files on the computer this browser runs on">From this computer…</button></div>
     <div class="ri-found"></div>
     <div class="error-text"></div>
@@ -335,11 +336,11 @@ function importRunsDialog(onDone) {
   };
   const draw = (errors = []) => {
     const where = [...src.paths, ...src.uploads.map((u) => u.name)];
-    $d(".ri-found").innerHTML = `${where.length ? `<p class="small muted">From ${where.map((p) => `<code title="${esc(p)}">${esc(p.split("/").pop() || p)}${src.paths.includes(p) && !/\.(json|zip)$/i.test(p) ? "/" : ""}</code>`).join(", ")}</p>` : ""}
+    $d(".ri-found").innerHTML = `${where.length ? `<p class="small muted">From ${where.map((p) => `<code title="${esc(p)}">${esc(p.split("/").pop() || p)}${src.paths.includes(p) && !/\.(json|log|txt|zip)$/i.test(p) ? "/" : ""}</code>`).join(", ")}</p>` : ""}
       ${found.length ? `<table class="history ri-table"><thead><tr><th><input type="checkbox" data-all ${sel.size && sel.size === found.filter((r) => !r.exists).length ? "checked" : ""}></th><th>Status</th><th>Runbook</th><th>Started</th><th>Run ID</th><th></th></tr></thead><tbody>
         ${found.map((r) => `<tr class="${r.exists ? "muted" : ""}"><td><input type="checkbox" data-id="${esc(r.id)}" ${sel.has(r.id) ? "checked" : ""} ${r.exists ? "disabled" : ""}></td>
           <td><span class="s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span></td><td>${esc(r.runbook)}</td><td>${new Date(r.started).toLocaleString()}</td>
-          <td><code>${esc(r.id)}</code></td><td class="small">${r.exists ? "already here" : r.unfinished ? "was still going: comes in aborted" : ""}</td></tr>`).join("")}</tbody></table>` : where.length ? `<p class="muted">No runs to import.</p>` : ""}
+          <td><code>${esc(r.id)}</code></td><td class="small">${r.exists ? "already here" : [r.unfinished && "was still going: comes in aborted", r.from_log && "from a raw log"].filter(Boolean).join("; ")}</td></tr>`).join("")}</tbody></table>` : where.length ? `<p class="muted">No runs to import.</p>` : ""}
       ${errors.length ? `<ul class="error-text small">${errors.map((e) => `<li><code>${esc(e.from)}</code>: ${esc(e.error)}</li>`).join("")}</ul>` : ""}`;
     $d("[data-ok]").disabled = !sel.size;
     $d("[data-ok]").textContent = sel.size ? `Import ${sel.size} run${sel.size === 1 ? "" : "s"}` : "Import";
@@ -352,14 +353,14 @@ function importRunsDialog(onDone) {
   const start = () => impLoad("runnr.importRunsDir", "~");
   const remember = (p) => { try { localStorage.setItem("runnr.importRunsDir", JSON.stringify(p.replace(/\/[^/]*$/, "") || "/")); } catch {} };
   $d("[data-files]").onclick = async () => {
-    const ps = await pickPath({ kind: "file", multi: true, accept: [".json", ".zip"], start: start(), title: "Choose run records to import" });
+    const ps = await pickPath({ kind: "file", multi: true, accept: [".json", ".log", ".txt", ".zip"], start: start(), title: "Choose runs to import" });
     if (!ps?.length) return;
     remember(ps[0]);
     src.paths.push(...ps.filter((p) => !src.paths.includes(p)));
     check();
   };
   $d("[data-folder]").onclick = async () => {
-    const p = await pickPath({ kind: "dir", start: start(), title: "Choose a folder of run records" });
+    const p = await pickPath({ kind: "dir", start: start(), title: "Choose a folder of exported runs" });
     if (!p) return;
     try { localStorage.setItem("runnr.importRunsDir", JSON.stringify(p)); } catch {}
     if (!src.paths.includes(p)) src.paths.push(p);
@@ -369,7 +370,7 @@ function importRunsDialog(onDone) {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.accept = ".json,.zip,application/json,application/zip";
+    input.accept = ".json,.log,.txt,.zip,application/json,application/zip,text/plain";
     input.onchange = async () => {
       for (const f of input.files) {
         const b = new Uint8Array(await f.arrayBuffer());

@@ -193,10 +193,14 @@ jobs on a row under it), the run's row with the maintenance window, notes
   libraries it uses beside it. `runnr history <run-id> --export <folder>`
   writes a run's logs, with the runs linked to it by resuming (`--as raw`,
   `json` or `both`, and/or `timeline` for a page per run, comma-separated;
-  `--one-file`). `runnr history --import <file|zip|folder>` brings runs
-  exported as records (`json`) into this runnr (repeatable; `--check`
-  says what it would do; a run already here is left alone, one exported
-  while still going comes in aborted). Raw logs can't be imported.
+  `--one-file`). `runnr history --import <file|zip|folder>` brings
+  exported runs into this runnr: records (`.json`) or raw logs (`.log`,
+  as `--raw` or the GUI's Raw log writes them), zips and folders of them
+  (repeatable; `--check` says what it would do). A run already here is
+  left alone; one exported while still going comes in aborted. A run from
+  a raw log is rebuilt from its text: close, not exact (times to the
+  second; no sections, state, jobs or step edits). Where there's both for
+  a run, the record is used.
 - `runnr delete` keeps every version: `runnr restore` lists what was
   deleted and brings it back. `runnr history --delete <run-id>` removes a
   run.

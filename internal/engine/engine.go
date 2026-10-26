@@ -137,6 +137,9 @@ type Run struct {
 	// Imported is when it was imported from another runnr's export (zero
 	// for a run made here).
 	Imported time.Time `json:"imported,omitzero"`
+	// FromLog: imported from a raw log, so rebuilt from its text (see
+	// ParseRawLog for what that leaves out).
+	FromLog bool `json:"from_log,omitempty"`
 }
 
 // Owner identifies the runnr process running a run, so another runnr can
