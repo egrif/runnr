@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.9.0 — 2026-10-26
+
+A step's checks can run all at once.
+
+### Added
+
+- **`parallel_checks: true`** runs a step's checks all at once rather
+  than one after another (results still show in order; `retry_checks:
+  failed` and `all` work as before, `each` is refused). Questions from
+  checks (`runnr_ask`) come one at a time.
+
 ## v0.8.0 — 2026-10-26
 
 Importing runs from another runnr (records or raw logs); keeping credentials out of the history and everything exported from it.

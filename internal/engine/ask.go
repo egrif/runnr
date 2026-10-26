@@ -115,6 +115,8 @@ func openWhenRead(ctx context.Context, path string) *os.File {
 }
 
 func (x *executor) askOperator(ctx context.Context, i int, step runbook.Step, kind, prompt string) (string, error) {
+	x.askMu.Lock()
+	defer x.askMu.Unlock()
 	x.notify(Event{Kind: EventOutput, Step: i, Stream: "info", Text: "? " + x.mask(prompt)})
 	a, ok := x.ui.(StepAsker)
 	if !ok || !x.opts.Interactive {

@@ -80,6 +80,7 @@ function stepConfig(s) {
     ["Repeat", H.repeat_every, s.repeat && `every ${s.repeat.every}, give up after ${s.repeat.timeout}`],
     ["Checks", H.checks, s.checks?.map((c) => c.name).join("\n")],
     ["Retry checks", H.retry_checks, s.retry_checks && { failed: "only the failed ones", each: "each in turn, until it passes", all: "all of them" }[s.retry_checks]],
+    ["Checks run", H.parallel_checks, s.parallel_checks && "all at once"],
     ["Ways", H.ways, (s.ways || []).length > 1 && s.ways.map((w) => `${w.name} (${w.manual ? "manual" : w.checks ? "checks" : "scripted"})${w.preferred ? " ★ preferred" : ""}`).join("\n")],
     ["Asks which way", H.choose, s.choose && yes],
     ["Maintenance window", H.window, s.window && (s.window === "open" ? "opens here" : "closes here")],

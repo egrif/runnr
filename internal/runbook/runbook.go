@@ -187,6 +187,9 @@ type Step struct {
 	// RetryChecks is what a retry of the checks runs: all of them (the
 	// default), only the failed ones, or each in turn until it passes.
 	RetryChecks string `yaml:"retry_checks,omitempty" json:"retry_checks,omitempty"`
+	// ParallelChecks runs the checks of an attempt all at once rather than
+	// one after another (so not with retry_checks: each).
+	ParallelChecks bool `yaml:"parallel_checks,omitempty" json:"parallel_checks,omitempty"`
 
 	// Ways are different ways to do the step (e.g. Scripted, Manual, or a
 	// named alternative); the preferred one is used unless Choose is set,
@@ -1003,6 +1006,14 @@ func validateStep(where string, s Step) []error {
 		}
 	default:
 		add("retry_checks must be all, failed or each")
+	}
+	if s.ParallelChecks {
+		if !hasKind("checks") {
+			add("parallel_checks only applies to checks")
+		}
+		if s.RetryChecks == RetryEach {
+			add("parallel_checks can't go with retry_checks: each (which runs them in turn)")
+		}
 	}
 	if s.Repeat != nil {
 		if !hasKind("checks") {
