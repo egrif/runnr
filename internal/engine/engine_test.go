@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"slices"
@@ -720,6 +721,30 @@ steps:
 	st := ResumeState(run)
 	if st["db"] != "****" || len(ResumeInputs(run)) != 0 {
 		t.Fatalf("resume state %v inputs %v", st, ResumeInputs(run))
+	}
+}
+
+// A value published (or captured) under a name that says it's a
+// credential is kept secret, as if published to $RUNNR_SECRET.
+func TestCredentialNamesStaySecret(t *testing.T) {
+	rb := mustParse(t, `
+name: t
+steps:
+  - {name: make, run: 'echo "db_password=Gen3ratedPw99" >> "$RUNNR_OUTPUT"; echo "region=use1" >> "$RUNNR_OUTPUT"'}
+  - {name: grab, run: 'echo Capt0redPw', capture: admin_token}
+  - {name: use, run: 'echo "$db_password $admin_token $region"'}
+`)
+	ui := &scripted{}
+	run := Execute(context.Background(), rb, ui, "", Options{})
+	if run.Status != StatusSucceeded {
+		t.Fatal(run.Error)
+	}
+	b, _ := json.Marshal(run)
+	if strings.Contains(string(b), "Gen3ratedPw99") || strings.Contains(string(b), "Capt0redPw") || !strings.Contains(string(b), "use1") {
+		t.Fatalf("record %s", b)
+	}
+	if !slices.Equal(run.Secrets, []string{"admin_token", "db_password"}) {
+		t.Fatalf("secrets %v", run.Secrets)
 	}
 }
 

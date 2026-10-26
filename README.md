@@ -706,8 +706,14 @@ with `!` are interactive and load your config as usual.
 part when a pattern recognises it: a secret database URL shows as
 `postgres://app:****@db.internal:5432/app`, while a bare password shows as
 `****`. Patterns also catch credentials that were never declared secret.
-Built in: URL passwords (only the password in `scheme://u:****@`), `Bearer` tokens, and AWS
-secret keys and session tokens. Add your own with `sensitive`: name →
+Built in: URL passwords (only the password in `scheme://u:****@`), `Bearer` tokens, AWS
+secret keys and session tokens, credential settings (`password=…`,
+`PGPASSWORD=…`, `"api_key": "…"`, `client_secret: …`: a name with
+password, passphrase, secret, token, api key, access key, private key or
+credential in it, then `=` or `:`), and credential flags (`--password …`).
+A value published (`outputs`, `$RUNNR_OUTPUT` or `capture`) under such a
+name (`db_password`, `api_token`, `dbpass`) is kept secret as if it were
+published with `secret_outputs`. Add your own with `sensitive`: name →
 regular expression, with `{{SENSITIVE}}` where the credential is (it matches
 a run of non-space, non-quote characters). Masking applies to output,
 commands, errors, state, history and terminal sessions in the GUI. Secrets
