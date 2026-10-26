@@ -29,7 +29,10 @@ See it in action: tours of **[the GUI](docs/TOUR.md)** and **[the CLI](docs/CLI.
 make install        # or: go install github.com/egrif/runnr/cmd/runnr@latest
 ```
 
-Requires Go 1.24+. Produces a single binary with the GUI embedded.
+Requires Go 1.24+. Produces a single binary with the GUI embedded. Or
+download a built binary (macOS and Linux, arm64 and amd64) from the
+[releases](https://github.com/egrif/runnr/releases); every merge to main is
+one. `runnr version` says which you have (and the commit it was built from).
 
 ## Quick start
 

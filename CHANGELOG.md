@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.9.1 — 2026-10-26
+
+`runnr version`, and every build knows its version.
+
+### Added
+
+- **`runnr version`** prints the version, the commit it was built from
+  (and whether that checkout had changes), and the Go and platform it was
+  built for.
+
+### Fixed
+
+- A runnr built with `go install ./cmd/runnr` or `go build` said `dev`:
+  only the release build and `make` stamped the version. It now uses the
+  version Go records from the checkout's tags (`v0.9.0`, or a development
+  version between releases), or the module's version for `go install
+  github.com/egrif/runnr/cmd/runnr@v0.9.0`.
+
 ## v0.9.0 — 2026-10-26
 
 A step's checks can run all at once.
