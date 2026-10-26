@@ -225,6 +225,9 @@ func ImportRuns(st *store.Store, files []RunFile, ids []string, dry bool) ([]Run
 			if ri.Unfinished {
 				markUnfinished(r)
 			}
+			// Hidden before it's kept (it may have been recorded before
+			// runnr knew to hide it).
+			r = MaskedRun(st, r)
 			r.Imported = time.Now()
 			r.Owner = nil
 			if err := st.SaveRun(r); err != nil {

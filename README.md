@@ -713,7 +713,11 @@ password, passphrase, secret, token, api key, access key, private key or
 credential in it, then `=` or `:`), and credential flags (`--password …`).
 A value published (`outputs`, `$RUNNR_OUTPUT` or `capture`) under such a
 name (`db_password`, `api_token`, `dbpass`) is kept secret as if it were
-published with `secret_outputs`. Add your own with `sensitive`: name →
+published with `secret_outputs`. Everything that leaves runnr (exports,
+raw logs, timelines, `history --json`) and every imported run is scanned
+again with these patterns and the runbook's own, and the values of inputs
+and variables with such names are hidden wherever they appear, so a run
+recorded before runnr knew to hide something doesn't pass it on. Add your own with `sensitive`: name →
 regular expression, with `{{SENSITIVE}}` where the credential is (it matches
 a run of non-space, non-quote characters). Masking applies to output,
 commands, errors, state, history and terminal sessions in the GUI. Secrets
