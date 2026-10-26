@@ -716,7 +716,9 @@ Built in: URL passwords (only the password in `scheme://u:****@`), `Bearer` toke
 secret keys and session tokens, credential settings (`password=…`,
 `PGPASSWORD=…`, `"api_key": "…"`, `client_secret: …`: a name with
 password, passphrase, secret, token, api key, access key, private key or
-credential in it, then `=` or `:`), and credential flags (`--password …`).
+credential in it, then `=` or `:`), credential flags (`--password …`), and
+the IDs in Terraform's status lines for `random_password` resources
+(`Importing... [id=****]`: an imported password's ID is the password).
 A value published (`outputs`, `$RUNNR_OUTPUT` or `capture`) under such a
 name (`db_password`, `api_token`, `dbpass`) is kept secret as if it were
 published with `secret_outputs`. Everything that leaves runnr (exports,
