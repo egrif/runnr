@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`parallel_checks: true`** runs a step's checks all at once rather
+  than one after another (results still show in order; `retry_checks:
+  failed` and `all` work as before, `each` is refused). Questions from
+  checks (`runnr_ask`) come one at a time.
+
 ## v0.7.0 — 2026-10-23
 
 Watching a run together; seeing what an import would change; showing a secret as you type it.

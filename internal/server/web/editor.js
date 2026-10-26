@@ -425,6 +425,7 @@ const MORE_FIELDS = [
   ["retry_delay", "Retry delay", "text", H.step.retry_delay, (k, s) => hasKind(s, "run"), "Conditions & timing"],
   ["repeat", "Repeat until all pass", "repeat", H.step.repeat_every, (k, s) => hasKind(s, "checks"), "Conditions & timing"],
   ["retry_checks", "Retry checks", "retry", H.step.retry_checks, (k, s) => hasKind(s, "checks"), "Conditions & timing"],
+  ["parallel_checks", "Run checks at once", "bool", H.step.parallel_checks, (k, s) => hasKind(s, "checks"), "Conditions & timing"],
   ["dir", "Directory", "text", H.step.dir, (k) => k !== "manual", "Where it runs"],
   ["shell", "Shell", "text", H.step.step_shell, (k) => k !== "manual", "Where it runs"],
   ["env", "Environment", "kv", H.step.step_env, (k) => k !== "manual", "Where it runs"],

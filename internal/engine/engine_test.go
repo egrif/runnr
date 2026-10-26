@@ -1039,6 +1039,49 @@ steps:
 	}
 }
 
+func TestParallelChecks(t *testing.T) {
+	// Each check waits for the others to have started (a file each), so
+	// they only pass if they run at once; b fails its first attempt, and
+	// with retry_checks: failed only b runs again.
+	dir := t.TempDir()
+	wait := "touch $1\nfor i in $(seq 100); do [ -e a ] && [ -e b ] && [ -e c ] && exit 0; sleep 0.05; done\nexit 1\n"
+	if err := os.WriteFile(dir+"/wait.sh", []byte(wait), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rb := mustParse(t, `
+name: t
+steps:
+  - name: gate
+    dir: `+dir+`
+    parallel_checks: true
+    retry_checks: failed
+    repeat: {every: 10ms, timeout: 10s}
+    ways:
+      - name: gate
+        checks:
+          - {name: a, run: 'echo x >> runs-a; sh wait.sh a'}
+          - {name: b, run: 'echo x >> runs-b; [ -e b-failed ] || { touch b-failed; sh wait.sh b; exit 1; }'}
+          - {name: c, run: 'echo x >> runs-c; sh wait.sh c'}
+`)
+	run := Execute(context.Background(), rb, &scripted{}, "", Options{})
+	if run.Status != StatusSucceeded || run.Steps[0].Attempts != 2 {
+		t.Fatalf("%s attempts=%d: %s", run.Status, run.Steps[0].Attempts, run.Steps[0].Output)
+	}
+	var got []string
+	for _, f := range []string{"a", "b", "c"} {
+		b, _ := os.ReadFile(dir + "/runs-" + f)
+		got = append(got, strconv.Itoa(strings.Count(string(b), "x")))
+	}
+	if strings.Join(got, " ") != "1 2 1" {
+		t.Fatalf("runs %v, want 1 2 1", got)
+	}
+	for j, r := range run.Steps[0].Checks {
+		if r.Name != []string{"a", "b", "c"}[j] || !r.Passed {
+			t.Errorf("checks[%d] = %+v", j, r)
+		}
+	}
+}
+
 func TestAbortCauseRecorded(t *testing.T) {
 	rb := mustParse(t, `name: ab
 steps:

@@ -77,6 +77,7 @@ const FIELD_HELP = {
     secret_outputs: "Like Publishes, but masked everywhere and never stored (re-derived on resume).",
     capture: "Save the command's standard output (trimmed) as this variable.",
     unattended: "What a manual or terminal step does when nobody is there: fail (default), skip, or pass.",
+    parallel_checks: "Run each attempt's checks all at once rather than one after another, for checks that wait on something (a connection timing out, a quiet period). Their results still show in order. Not with retry_checks: each; checks that must run in order belong in one check.",
     retry_checks: "What a retry runs (by repeat, or when you choose retry): all (default) reruns every check; failed reruns only the ones that haven't passed (passed ones stay passed); each runs the checks in order and retries the first failing one until it passes before going on to the next.",
     repeat_every: "With repeat: how long to wait between attempts, e.g. 20s.",
     repeat_timeout: "With repeat: give up (and fail) after this long, e.g. 10m.",
@@ -242,8 +243,9 @@ runbooks: [orders-db-migration, orders-db-rollback]</pre>
   repeat:
     every: 20s
     timeout: 10m
-  retry_checks: failed   # all (default) | failed | each</pre>
-    <p>${esc(FIELD_HELP.step.checks)} <code>retry_checks</code>: ${esc(FIELD_HELP.step.retry_checks)} Without <code>repeat</code>, a failing group asks what to do: retry re-runs every check. With it, the group re-runs on its own every <code>every</code> until all pass, giving up after <code>timeout</code>.</p>
+  retry_checks: failed   # all (default) | failed | each
+  parallel_checks: true  # all at once</pre>
+    <p>${esc(FIELD_HELP.step.checks)} <code>retry_checks</code>: ${esc(FIELD_HELP.step.retry_checks)} <code>parallel_checks</code>: ${esc(FIELD_HELP.step.parallel_checks)} Without <code>repeat</code>, a failing group asks what to do: retry re-runs every check. With it, the group re-runs on its own every <code>every</code> until all pass, giving up after <code>timeout</code>.</p>
     ${helpTable("check", [["name"], ["run"]])}
 
     <h3>Several ways</h3>

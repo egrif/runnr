@@ -563,6 +563,9 @@ passes or times out; otherwise a failure offers retry, skip, force or abort.
 `retry_checks` says what a retry runs: `all` (default), only the `failed`
 ones (passed ones stay passed), or `each` in turn, retrying the first
 failing check until it passes before going on to the next.
+`parallel_checks: true` runs an attempt's checks all at once (not with
+`each`), which helps when checks wait on something; checks that must run in
+order belong in one check.
 
 **Ways** are different ways to do one step: Scripted, Manual, Checks, or
 any you name. The preferred way runs (always, in unattended runs) unless the

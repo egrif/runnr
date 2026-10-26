@@ -472,6 +472,9 @@ type executor struct {
 	funcFile  string
 	functions []FuncInfo
 	mu        sync.Mutex
+	// askMu puts questions from checks running at once (parallel_checks)
+	// to the operator one at a time.
+	askMu sync.Mutex
 	// em guards the step definitions (editable during the run), the
 	// current step and the edits.
 	em         sync.Mutex

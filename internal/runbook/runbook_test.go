@@ -115,6 +115,8 @@ func TestValidateNewKinds(t *testing.T) {
 		"way tty manual":     "name: a\nsteps: [{name: a, ways: [{name: x, manual: y, tty: true}, {name: z, run: q}]}]",
 		"retry_checks bad":   "name: a\nsteps: [{name: a, checks: [{name: c, run: y}], retry_checks: some}]",
 		"retry_checks run":   "name: a\nsteps: [{name: a, run: y, retry_checks: failed}]",
+		"parallel run":       "name: a\nsteps: [{name: a, run: y, parallel_checks: true}]",
+		"parallel each":      "name: a\nsteps: [{name: a, checks: [{name: c, run: y}], parallel_checks: true, retry_checks: each}]",
 		"outputs no run":     "name: a\nsteps: [{name: a, outputs: [v], ways: [{name: x, manual: y}, {name: c, checks: [{name: c, run: z}]}]}]",
 	}
 	for name, y := range bad {

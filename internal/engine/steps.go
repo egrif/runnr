@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
@@ -382,6 +383,16 @@ func (x *executor) attemptChecks(ctx context.Context, i int, step runbook.Step, 
 	for {
 		res.Attempts++
 		results := make([]CheckResult, len(step.Checks))
+		run := func(j int, cmd string) {
+			out := x.execStream(ctx, i, checkStep(step, cmd), cmd, false)
+			r := CheckResult{Name: step.Checks[j].Name, Attempt: res.Attempts}
+			r.Passed, r.ExitCode, r.Output = out.err == nil, out.exitCode, x.mask(lastLines(out.combined, 20))
+			if out.err != nil {
+				r.Error = x.mask(out.err.Error())
+			}
+			results[j] = r
+		}
+		var wg sync.WaitGroup
 		blocked := false
 		for j, c := range step.Checks {
 			if prev != nil && prev[j].Passed {
@@ -392,23 +403,26 @@ func (x *executor) attemptChecks(ctx context.Context, i int, step runbook.Step, 
 				results[j] = CheckResult{Name: c.Name, NotRun: true}
 				continue
 			}
-			r := CheckResult{Name: c.Name, Attempt: res.Attempts}
 			cmd, err := x.render(c.Run)
 			if err != nil {
+				wg.Wait()
 				return attemptResult{hard: fmt.Errorf("check %q: %w", c.Name, err)}
 			}
-			cs := checkStep(step, cmd)
-			out := x.execStream(ctx, i, cs, cmd, false)
+			if step.ParallelChecks {
+				wg.Add(1)
+				go func() { defer wg.Done(); run(j, cmd) }()
+				continue
+			}
+			run(j, cmd)
 			if ctx.Err() != nil {
 				return attemptResult{kind: outFailed, err: ctx.Err().Error()}
 			}
-			r.Passed, r.ExitCode, r.Output = out.err == nil, out.exitCode, x.mask(lastLines(out.combined, 20))
-			if out.err != nil {
-				r.Error = x.mask(out.err.Error())
-				// Each in turn: the ones after it wait for it to pass.
-				blocked = mode == runbook.RetryEach
-			}
-			results[j] = r
+			// Each in turn: the ones after it wait for it to pass.
+			blocked = mode == runbook.RetryEach && !results[j].Passed
+		}
+		wg.Wait()
+		if ctx.Err() != nil {
+			return attemptResult{kind: outFailed, err: ctx.Err().Error()}
 		}
 		if mode == runbook.RetryFailed || mode == runbook.RetryEach {
 			prev = results

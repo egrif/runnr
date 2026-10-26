@@ -314,6 +314,9 @@ func buildStep(p *engine.Previewer, sc *scripter, rb *runbook.Runbook, i int, st
 	if st.RetryChecks != "" {
 		m("A retry reruns", st.RetryChecks+" checks")
 	}
+	if st.ParallelChecks {
+		m("Checks run", "all at once")
+	}
 	if st.ContinueOnError {
 		m("If it fails", "the run carries on")
 	}
