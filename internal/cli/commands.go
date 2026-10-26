@@ -1540,7 +1540,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				if only {
 					runs = slices.DeleteFunc(runs, func(r *engine.Run) bool { return r.ID != args[0] })
 				}
-				files, err := project.LogFiles(runs, as, single, "")
+				files, err := project.LogFiles(project.Masked(s(), runs), as, single, "")
 				if err != nil {
 					return err
 				}
@@ -1568,6 +1568,8 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				if err != nil {
 					return err
 				}
+				// What leaves runnr is scanned for credentials again.
+				r = project.MaskedRun(s(), r)
 				if asJSON {
 					return printJSON(r)
 				}
@@ -1598,7 +1600,11 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				return err
 			}
 			if asJSON {
-				return printJSON(runs)
+				ps := make([]*engine.Run, len(runs))
+				for i := range runs {
+					ps[i] = &runs[i]
+				}
+				return printJSON(project.Masked(s(), ps))
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintln(w, "RUN ID\tRUNBOOK\tVER\tSTATUS\tMODE\tSTARTED\tDURATION\tFOR")

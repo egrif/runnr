@@ -88,7 +88,7 @@ func (s *Server) logFiles(id string, ids []string, format string, single bool) (
 			runs = append(runs, x)
 		}
 	}
-	return project.LogFiles(runs, format, single, "")
+	return project.LogFiles(project.Masked(s.st, runs), format, single, "")
 }
 
 func (s *Server) downloadLogs(w http.ResponseWriter, r *http.Request) {

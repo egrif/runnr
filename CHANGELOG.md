@@ -44,6 +44,13 @@ Watching a run together; importing runs from another runnr; seeing what an impor
   credential name (`db_password`, `api_token`, `dbpass`), which are now
   kept secret. Before, these were saved in plain text in run records and
   logs unless declared secret.
+- **Exports are scanned for credentials** again as they leave runnr: export
+  files and zips (raw logs, records, timelines), Raw log, the timeline
+  page, `runnr history --raw/--json/--timeline`, and imported runs before
+  they're kept. They're masked with the built-in patterns and the
+  runbook's own, and the values of inputs and variables named as
+  credentials are hidden wherever they appear. So a run recorded before
+  runnr knew to hide something doesn't pass it on.
 - The SQLite database (it holds every run's commands and output) is now
   readable by its owner only (it was readable by everyone on the machine),
   and a new runnr home folder is too.
