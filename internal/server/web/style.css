@@ -810,6 +810,12 @@ dialog.path-picker { width: min(640px, calc(100vw - 32px)); }
 .pp-list li:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .pp-list li.on { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .pp-list li.dim { opacity: .45; cursor: default; }
+.pp-list li[data-name] { display: grid; grid-template-columns: minmax(0, 1fr) 70px 140px; gap: 8px; align-items: baseline; }
+.pp-list .pp-name-col { overflow: hidden; text-overflow: ellipsis; }
+.pp-list li > .small:not(.pp-date) { text-align: right; }
+.path-picker .pp-sort { margin: 0 0 4px; }
+.path-picker .pp-sort button.on { font-weight: 600; text-decoration: none; }
+@media (max-width: 560px) { .pp-list li[data-name] { grid-template-columns: minmax(0, 1fr) 90px; } .pp-list li > .small:not(.pp-date) { display: none; } }
 .path-field { display: flex; gap: 6px; align-items: center; }
 .path-field > input { flex: 1; min-width: 0; }
 .path-pick { white-space: nowrap; }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Browsing this machine's folders and files, for inputs that are paths
@@ -19,6 +20,8 @@ type fsEntry struct {
 	Name string `json:"name"`
 	Dir  bool   `json:"dir"`
 	Size int64  `json:"size,omitempty"`
+	// Mod: when it was last changed (for sorting by date).
+	Mod time.Time `json:"mod,omitzero"`
 }
 
 func (s *Server) listFS(w http.ResponseWriter, r *http.Request) {
@@ -58,12 +61,15 @@ func (s *Server) listFS(w http.ResponseWriter, r *http.Request) {
 		if info, err := e.Info(); err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
 				if st, err := os.Stat(filepath.Join(p, e.Name())); err == nil {
+					info = st // what the link points to
 					fe.Dir = st.IsDir()
 				}
 			}
+			fe.Mod = info.ModTime()
 			if !fe.Dir {
 				fe.Size = info.Size()
 			}
+
 		}
 		out = append(out, fe)
 	}

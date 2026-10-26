@@ -134,6 +134,9 @@ type Run struct {
 	Secrets []string `json:"secrets,omitempty"`
 	// Owner is the runnr process running it (while it runs).
 	Owner *Owner `json:"owner,omitempty"`
+	// Imported is when it was imported from another runnr's export (zero
+	// for a run made here).
+	Imported time.Time `json:"imported,omitzero"`
 }
 
 // Owner identifies the runnr process running a run, so another runnr can
