@@ -51,6 +51,12 @@ Watching a run together; importing runs from another runnr; seeing what an impor
   runbook's own, and the values of inputs and variables named as
   credentials are hidden wherever they appear. So a run recorded before
   runnr knew to hide something doesn't pass it on.
+- **Scrub the history**: `runnr history --scrub [run-id]` (or **Scrub
+  credentials…** on the history page) masks credentials in the stored runs,
+  all of them or one: their output, commands, notes and reasons, as exports
+  are masked. `--check` shows what it would change. Runs still going are
+  left alone, and the database is compacted afterwards so the old text
+  isn't left in it. API: `POST /api/runs/scrub`.
 - The SQLite database (it holds every run's commands and output) is now
   readable by its owner only (it was readable by everyone on the machine),
   and a new runnr home folder is too.

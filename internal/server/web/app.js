@@ -1115,7 +1115,7 @@ async function viewHistory() {
   const names = (runbooks || []).map((r) => r.name).sort();
   const anyIdents = runs.some((r) => (r.identifiers || []).length);
   main.innerHTML = `
-    <div class="row"><h1>Run history${filter ? ` · ${esc(filter)}` : ""}</h1><span class="spacer"></span><button data-import-runs title="Bring in runs another runnr exported (records or raw logs)">⇪ Import runs…</button></div>
+    <div class="row"><h1>Run history${filter ? ` · ${esc(filter)}` : ""}</h1><span class="spacer"></span><button data-scrub title="Mask passwords, tokens and keys in the stored runs">Scrub credentials…</button><button data-import-runs title="Bring in runs another runnr exported (records or raw logs)">⇪ Import runs…</button></div>
     <div class="row history-filters">
       <label>Runbook <select data-hist-rb><option value="">all</option>${names.map((n) => `<option ${n === filter ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
       <input type="search" data-hist-q value="${esc(q)}" placeholder="Search targets (identifier inputs) or run ID…" title="Runs whose identifiers (inputs the runbook marks identifier: true, like a target) or ID contain this">
@@ -1135,6 +1135,7 @@ async function viewHistory() {
   };
   main.querySelector("[data-hist-rb]").onchange = (e) => go(e.target.value, q);
   main.querySelector("[data-import-runs]").onclick = () => importRunsDialog(viewHistory);
+  main.querySelector("[data-scrub]").onclick = () => scrubDialog(viewHistory);
   const box = main.querySelector("[data-hist-q]");
   let t;
   box.oninput = () => { clearTimeout(t); t = setTimeout(() => go(filter, box.value.trim()), 400); };
