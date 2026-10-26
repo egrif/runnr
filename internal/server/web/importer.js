@@ -303,3 +303,135 @@ function keepDiffsOpen(root, open) {
     if (k) e.target.open ? open.add(k) : open.delete(k);
   }, true);
 }
+
+// importRunsDialog imports runs another runnr exported: records (.json),
+// raw logs (.log), a zip of them, or a folder of them, picked on this
+// machine or sent from the browser's. They're checked first: a run already
+// here is left as it is, one exported while still going comes in aborted,
+// and one from a raw log is rebuilt from its text (close, not exact).
+function importRunsDialog(onDone) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step run-import";
+  dlg.innerHTML = `<h3>Import runs</h3>
+    <p class="muted small">Runs exported from another runnr (or a backup): records (<code>.json</code>), raw logs (<code>.log</code>), the zip the export downloads, or a folder of them. A run from a raw log is rebuilt from its text: close, not exact (times to the second; no sections or state). Where there's both for a run, the record is used.</p>
+    <div class="row"><button data-files>Choose files…</button><button data-folder>Choose a folder…</button><button data-upload title="Files on the computer this browser runs on">From this computer…</button></div>
+    <div class="ri-found"></div>
+    <div class="error-text"></div>
+    <div class="row"><button class="primary" data-ok disabled>Import</button><button data-close>Cancel</button></div>`;
+  document.body.append(dlg);
+  const $d = (q) => dlg.querySelector(q);
+  const src = { paths: [], uploads: [] };
+  let found = [];
+  const sel = new Set();
+  let imported = false;
+  const check = async () => {
+    $d(".error-text").textContent = "";
+    try {
+      const res = await api("POST", "/api/runs/import", { ...src, check: true });
+      found = res.runs;
+      sel.clear();
+      found.forEach((r) => !r.exists && sel.add(r.id));
+      draw(res.errors);
+    } catch (e) { $d(".error-text").textContent = e.message; }
+  };
+  const draw = (errors = []) => {
+    const where = [...src.paths, ...src.uploads.map((u) => u.name)];
+    $d(".ri-found").innerHTML = `${where.length ? `<p class="small muted">From ${where.map((p) => `<code title="${esc(p)}">${esc(p.split("/").pop() || p)}${src.paths.includes(p) && !/\.(json|log|txt|zip)$/i.test(p) ? "/" : ""}</code>`).join(", ")}</p>` : ""}
+      ${found.length ? `<table class="history ri-table"><thead><tr><th><input type="checkbox" data-all ${sel.size && sel.size === found.filter((r) => !r.exists).length ? "checked" : ""}></th><th>Status</th><th>Runbook</th><th>Started</th><th>Run ID</th><th></th></tr></thead><tbody>
+        ${found.map((r) => `<tr class="${r.exists ? "muted" : ""}"><td><input type="checkbox" data-id="${esc(r.id)}" ${sel.has(r.id) ? "checked" : ""} ${r.exists ? "disabled" : ""}></td>
+          <td><span class="s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span></td><td>${esc(r.runbook)}</td><td>${new Date(r.started).toLocaleString()}</td>
+          <td><code>${esc(r.id)}</code></td><td class="small">${r.exists ? "already here" : [r.unfinished && "was still going: comes in aborted", r.from_log && "from a raw log"].filter(Boolean).join("; ")}</td></tr>`).join("")}</tbody></table>` : where.length ? `<p class="muted">No runs to import.</p>` : ""}
+      ${errors.length ? `<ul class="error-text small">${errors.map((e) => `<li><code>${esc(e.from)}</code>: ${esc(e.error)}</li>`).join("")}</ul>` : ""}`;
+    $d("[data-ok]").disabled = !sel.size;
+    $d("[data-ok]").textContent = sel.size ? `Import ${sel.size} run${sel.size === 1 ? "" : "s"}` : "Import";
+  };
+  dlg.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.matches("[data-all]")) { found.forEach((r) => !r.exists && (t.checked ? sel.add(r.id) : sel.delete(r.id))); draw(); }
+    else if (t.matches("[data-id]")) { t.checked ? sel.add(t.dataset.id) : sel.delete(t.dataset.id); draw(); }
+  });
+  const start = () => impLoad("runnr.importRunsDir", "~");
+  const remember = (p) => { try { localStorage.setItem("runnr.importRunsDir", JSON.stringify(p.replace(/\/[^/]*$/, "") || "/")); } catch {} };
+  $d("[data-files]").onclick = async () => {
+    const ps = await pickPath({ kind: "file", multi: true, accept: [".json", ".log", ".txt", ".zip"], start: start(), title: "Choose runs to import" });
+    if (!ps?.length) return;
+    remember(ps[0]);
+    src.paths.push(...ps.filter((p) => !src.paths.includes(p)));
+    check();
+  };
+  $d("[data-folder]").onclick = async () => {
+    const p = await pickPath({ kind: "dir", start: start(), title: "Choose a folder of exported runs" });
+    if (!p) return;
+    try { localStorage.setItem("runnr.importRunsDir", JSON.stringify(p)); } catch {}
+    if (!src.paths.includes(p)) src.paths.push(p);
+    check();
+  };
+  $d("[data-upload]").onclick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.accept = ".json,.log,.txt,.zip,application/json,application/zip,text/plain";
+    input.onchange = async () => {
+      for (const f of input.files) {
+        const b = new Uint8Array(await f.arrayBuffer());
+        let bin = "";
+        for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+        src.uploads.push({ name: f.name, data: btoa(bin) });
+      }
+      check();
+    };
+    input.click();
+  };
+  $d("[data-ok]").onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const res = await api("POST", "/api/runs/import", { ...src, ids: [...sel] });
+      const n = res.runs.filter((r) => r.imported).length;
+      imported = n > 0;
+      toast(`Imported ${n} run${n === 1 ? "" : "s"}`);
+      dlg.close();
+    } catch (x) { $d(".error-text").textContent = x.message; e.currentTarget.disabled = false; }
+  };
+  $d("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => { dlg.remove(); if (imported) onDone?.(); };
+  dlg.showModal();
+}
+
+// scrubDialog masks credentials in the stored history (runnr history
+// --scrub): it looks first and lists the runs it would change, then masks
+// them and compacts the database.
+async function scrubDialog(onDone) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step abort-dialog scrub-dialog";
+  dlg.innerHTML = `<h3>Scrub credentials from the history</h3>
+    <p class="muted small">Masks passwords, tokens and keys in every stored run (its output, commands, notes and reasons), as exports are masked: the built-in patterns, each runbook's own, and values held under credential names. Then the database is compacted so the old text isn't left in it. Runs still going are left alone. This can't be undone.</p>
+    <div class="scrub-found muted">Looking…</div>
+    <div class="error-text"></div>
+    <div class="row"><button class="danger" data-ok disabled>Scrub</button><button data-close>Close</button></div>`;
+  document.body.append(dlg);
+  const $d = (q) => dlg.querySelector(q);
+  let changed = false;
+  const list = (res) => res.runs.map((r) => `<li><code>${esc(r.id)}</code> ${esc(r.runbook)}: ${r.running ? "still running, left alone"
+    : [r.record && "output and record", r.notes && `${r.notes} note${r.notes === 1 ? "" : "s"}`, r.asks && `${r.asks} reason${r.asks === 1 ? "" : "s"}`].filter(Boolean).join(", ")}</li>`).join("");
+  $d("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => { dlg.remove(); if (changed) onDone?.(); };
+  dlg.showModal();
+  try {
+    const res = await api("POST", "/api/runs/scrub", { check: true });
+    const n = res.runs.filter((r) => !r.running).length;
+    $d(".scrub-found").innerHTML = n ? `<p><b>${n} of ${res.total} run${res.total === 1 ? "" : "s"}</b> have credentials to mask:</p><ul class="small">${list(res)}</ul>`
+      : `<p>Nothing to mask in ${res.total} run${res.total === 1 ? "" : "s"}.</p>${res.runs.length ? `<ul class="small">${list(res)}</ul>` : ""}`;
+    $d("[data-ok]").disabled = !n;
+    $d("[data-ok]").textContent = n ? `Scrub ${n} run${n === 1 ? "" : "s"}` : "Scrub";
+  } catch (e) { $d(".error-text").textContent = e.message; }
+  $d("[data-ok]").onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const res = await api("POST", "/api/runs/scrub", {});
+      changed = true;
+      const n = res.runs.filter((r) => !r.running).length;
+      toast(`Masked credentials in ${n} run${n === 1 ? "" : "s"}${res.compacted ? "; database compacted" : ""}`);
+      dlg.close();
+    } catch (x) { $d(".error-text").textContent = x.message; e.currentTarget.disabled = false; }
+  };
+}

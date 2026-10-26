@@ -20,6 +20,7 @@ import (
 	"github.com/egrif/runnr/internal/claude"
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/htmlview"
+	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
 	"github.com/egrif/runnr/internal/timeline"
@@ -148,6 +149,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runbooks/{name}/files/plan", s.exportPlan)
 	mux.HandleFunc("POST /api/runbooks/{name}/files", s.exportFiles)
 	mux.HandleFunc("GET /api/runs/{id}/chain", s.runChain)
+	mux.HandleFunc("POST /api/runs/import", s.importRuns)
+	mux.HandleFunc("POST /api/runs/scrub", s.scrubRuns)
 	mux.HandleFunc("GET /api/runs/{id}/logs", s.downloadLogs)
 	mux.HandleFunc("POST /api/runs/{id}/logs", s.writeLogs)
 	mux.HandleFunc("POST /api/import/scan", s.importScan)
@@ -945,7 +948,7 @@ func (s *Server) runTimeline(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("download") != "" {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="run-%s.timeline.html"`, run.ID))
 	}
-	w.Write(timeline.Build(run, time.Now()).HTML())
+	w.Write(timeline.Build(project.MaskedRun(s.st, run), time.Now()).HTML())
 }
 
 func (s *Server) runLog(w http.ResponseWriter, r *http.Request) {
@@ -958,7 +961,7 @@ func (s *Server) runLog(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("download") != "" {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.log"`, run.ID))
 	}
-	io.WriteString(w, engine.RawLog(run))
+	io.WriteString(w, engine.RawLog(project.MaskedRun(s.st, run)))
 }
 
 func (s *Server) runEvents(w http.ResponseWriter, r *http.Request) {

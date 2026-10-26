@@ -193,7 +193,20 @@ jobs on a row under it), the run's row with the maintenance window, notes
   libraries it uses beside it. `runnr history <run-id> --export <folder>`
   writes a run's logs, with the runs linked to it by resuming (`--as raw`,
   `json` or `both`, and/or `timeline` for a page per run, comma-separated;
-  `--one-file`).
+  `--one-file`). `runnr history --import <file|zip|folder>` brings
+  exported runs into this runnr: records (`.json`) or raw logs (`.log`,
+  as `--raw` or the GUI's Raw log writes them), zips and folders of them
+  (repeatable; `--check` says what it would do). A run already here is
+  left alone; one exported while still going comes in aborted. A run from
+  a raw log is rebuilt from its text: close, not exact (times to the
+  second; no sections, state, jobs or step edits). Where there's both for
+  a run, the record is used.
+- `runnr history --scrub [run-id]` masks credentials in the stored runs
+  (all of them, or the one given): output, commands, notes and reasons,
+  with the built-in patterns, the runbook's own and values held under
+  credential names, as exports are masked. `--check` shows what it would
+  change. Runs still going are left alone; afterwards the database is
+  compacted (SQLite: `VACUUM`) so the old text isn't left in it.
 - `runnr delete` keeps every version: `runnr restore` lists what was
   deleted and brings it back. `runnr history --delete <run-id>` removes a
   run.

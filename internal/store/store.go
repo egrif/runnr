@@ -61,7 +61,7 @@ func Open(home, dsn string) (*Store, error) {
 	default:
 		path := strings.TrimPrefix(dsn, "sqlite:")
 		if path == "" {
-			if err := os.MkdirAll(home, 0o755); err != nil {
+			if err := os.MkdirAll(home, 0o700); err != nil {
 				return nil, err
 			}
 			path = filepath.Join(home, "runnr.db")
@@ -80,6 +80,14 @@ func Open(home, dsn string) (*Store, error) {
 	if err := s.migrate(ctx); err != nil {
 		s.db.Close()
 		return nil, fmt.Errorf("database %s: %w", s.Location, err)
+	}
+	if !s.postgres {
+		// Run records hold commands and output: for this user alone.
+		for _, f := range []string{s.Location, s.Location + "-wal", s.Location + "-shm"} {
+			if st, err := os.Stat(f); err == nil && st.Mode().Perm()&0o077 != 0 {
+				_ = os.Chmod(f, 0o600)
+			}
+		}
 	}
 	if dsn == "" {
 		if err := s.importLegacy(ctx, home); err != nil {

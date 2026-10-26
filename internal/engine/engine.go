@@ -134,6 +134,12 @@ type Run struct {
 	Secrets []string `json:"secrets,omitempty"`
 	// Owner is the runnr process running it (while it runs).
 	Owner *Owner `json:"owner,omitempty"`
+	// Imported is when it was imported from another runnr's export (zero
+	// for a run made here).
+	Imported time.Time `json:"imported,omitzero"`
+	// FromLog: imported from a raw log, so rebuilt from its text (see
+	// ParseRawLog for what that leaves out).
+	FromLog bool `json:"from_log,omitempty"`
 }
 
 // Owner identifies the runnr process running a run, so another runnr can
@@ -835,6 +841,7 @@ func (x *executor) onFailure(ctx context.Context, i int, step runbook.Step, out 
 		}
 		// Accepted as success, so whatever it published is used.
 		x.apply(step, out)
+		res.Command, res.Output = x.mask(res.Command), x.mask(res.Output)
 		res.Status, res.Note = StatusForced, "forced: "+strings.TrimSpace(reason)
 		x.stepDone(i)
 		return nil
@@ -855,10 +862,20 @@ func (x *executor) apply(step runbook.Step, out cmdResult) {
 	defer x.vmu.Unlock()
 	if step.Capture != "" {
 		x.vars[step.Capture] = strings.TrimSpace(out.stdout)
+		if runbook.SensitiveName(step.Capture) {
+			x.secretVars[step.Capture] = true
+			x.addSecret(x.vars[step.Capture], false)
+		}
 	}
 	for k, v := range out.outputs {
 		x.vars[k] = v
 		delete(x.secretVars, k)
+		// A name that says it's a credential is kept secret, published
+		// either way.
+		if runbook.SensitiveName(k) {
+			x.secretVars[k] = true
+			x.addSecret(v, false)
+		}
 		x.markPublished(k)
 	}
 	for k, v := range out.secrets {
