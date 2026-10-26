@@ -18,9 +18,11 @@ import (
 	"github.com/egrif/runnr/internal/store"
 )
 
-// Importing runs: the records an export writes (--as json, or the zip the
-// GUI downloads), from another runnr or a backup. A raw log is for reading
-// and can't be imported: it doesn't keep enough.
+// Importing runs: what an export writes (records, --as json; raw logs,
+// --as raw; or the zip the GUI downloads), from another runnr or a backup.
+// A run from a raw log is rebuilt from its text (engine.ParseRawLog), so
+// it's close, not exact; when a zip or folder has both for a run, the
+// record is used.
 
 // RunFile is a run read from a file to import.
 type RunFile struct {
@@ -36,8 +38,9 @@ type RunFileError struct {
 
 var runIDRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// ReadRuns reads the run records in a file: a run, a list of runs, or a
-// zip of such files (a zip's other files are left out).
+// ReadRuns reads the runs in a file: a run's record, a list of them, a raw
+// log (of one run or several), or a zip of such files (its other files are
+// left out).
 func ReadRuns(name string, data []byte) ([]RunFile, []RunFileError) {
 	if bytes.HasPrefix(data, []byte("PK\x03\x04")) {
 		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
@@ -47,7 +50,7 @@ func ReadRuns(name string, data []byte) ([]RunFile, []RunFileError) {
 		var out []RunFile
 		var bad []RunFileError
 		for _, f := range zr.File {
-			if f.FileInfo().IsDir() || !strings.EqualFold(path.Ext(f.Name), ".json") {
+			if f.FileInfo().IsDir() || !runFileExt(f.Name) {
 				continue
 			}
 			rc, err := f.Open()
@@ -65,9 +68,9 @@ func ReadRuns(name string, data []byte) ([]RunFile, []RunFileError) {
 			out, bad = append(out, rs...), append(bad, errs...)
 		}
 		if len(out) == 0 && len(bad) == 0 {
-			bad = append(bad, RunFileError{name, "no run records (.json) in the zip"})
+			bad = append(bad, RunFileError{name, "no runs (.json records or .log raw logs) in the zip"})
 		}
-		return out, bad
+		return preferRecords(out), bad
 	}
 	t := bytes.TrimSpace(data)
 	var runs []*engine.Run
@@ -80,9 +83,13 @@ func ReadRuns(name string, data []byte) ([]RunFile, []RunFileError) {
 		err = json.Unmarshal(t, &r)
 		runs = []*engine.Run{&r}
 	case bytes.HasPrefix(t, []byte("run ")) || bytes.HasPrefix(t, []byte("════")):
-		return nil, []RunFileError{{name, "a raw log, which can't be imported: export the run as records (JSON) instead"}}
+		rs, err := engine.ParseRawLog(string(data))
+		if err != nil {
+			return nil, []RunFileError{{name, "a raw log that can't be read: " + err.Error()}}
+		}
+		runs = rs
 	default:
-		return nil, []RunFileError{{name, "not run records (an export's .json, or a zip of them)"}}
+		return nil, []RunFileError{{name, "not runs (an export's .json records or .log raw logs, or a zip of them)"}}
 	}
 	if err != nil {
 		return nil, []RunFileError{{name, "not run records: " + err.Error()}}
@@ -123,19 +130,50 @@ func ReadRunPaths(paths []string) ([]RunFile, []RunFileError) {
 			}
 		}
 		if st, err := os.Stat(p); err == nil && st.IsDir() {
-			js, _ := filepath.Glob(filepath.Join(p, "*.json"))
-			zs, _ := filepath.Glob(filepath.Join(p, "*.zip"))
-			if len(js)+len(zs) == 0 {
-				bad = append(bad, RunFileError{p, "no .json or .zip files in this folder"})
+			ents, _ := os.ReadDir(p)
+			n := 0
+			for _, e := range ents {
+				if !e.IsDir() && (runFileExt(e.Name()) || strings.EqualFold(filepath.Ext(e.Name()), ".zip")) {
+					add(filepath.Join(p, e.Name()))
+					n++
+				}
 			}
-			for _, f := range append(js, zs...) {
-				add(f)
+			if n == 0 {
+				bad = append(bad, RunFileError{p, "no .json, .log or .zip files in this folder"})
 			}
 			continue
 		}
 		add(p)
 	}
-	return files, bad
+	return preferRecords(files), bad
+}
+
+// runFileExt says whether a file's name says it holds runs: a record or a
+// raw log.
+func runFileExt(name string) bool {
+	switch strings.ToLower(path.Ext(name)) {
+	case ".json", ".log", ".txt":
+		return true
+	}
+	return false
+}
+
+// preferRecords drops a run read from a raw log when its record is there
+// too (an export --as both).
+func preferRecords(files []RunFile) []RunFile {
+	rec := map[string]bool{}
+	for _, f := range files {
+		if !f.Run.FromLog {
+			rec[f.Run.ID] = true
+		}
+	}
+	out := files[:0:0]
+	for _, f := range files {
+		if !f.Run.FromLog || !rec[f.Run.ID] {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // RunImport is what importing a run does (or did).
@@ -150,7 +188,9 @@ type RunImport struct {
 	Exists bool `json:"exists,omitempty"`
 	// Unfinished: it was still going when exported; it's imported aborted.
 	Unfinished bool `json:"unfinished,omitempty"`
-	Imported   bool `json:"imported,omitempty"`
+	// FromLog: rebuilt from a raw log (close, not exact).
+	FromLog  bool `json:"from_log,omitempty"`
+	Imported bool `json:"imported,omitempty"`
 }
 
 // unfinished statuses: the run was still going where it was exported from.
@@ -175,7 +215,7 @@ func ImportRuns(st *store.Store, files []RunFile, ids []string, dry bool) ([]Run
 			continue
 		}
 		seen[r.ID] = true
-		ri := RunImport{ID: r.ID, Runbook: r.Runbook, Status: r.Status, Started: r.Started, Steps: len(r.Steps), From: f.From, Unfinished: unfinished(r.Status)}
+		ri := RunImport{ID: r.ID, Runbook: r.Runbook, Status: r.Status, Started: r.Started, Steps: len(r.Steps), From: f.From, Unfinished: unfinished(r.Status), FromLog: r.FromLog}
 		if _, err := st.LoadRun(r.ID); err == nil {
 			ri.Exists = true
 		} else if !errors.Is(err, store.ErrNotFound) {

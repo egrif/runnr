@@ -21,12 +21,15 @@ Watching a run together; importing runs from another runnr; seeing what an impor
   (**Show what it changes +N −M** in the GUI's import; `runnr import
   --diff` prints them and imports nothing; `diff` in the API's scan and
   check results).
-- **Import runs**: runs exported as records (JSON) from another runnr come
-  in from the history page (**⇪ Import runs…**: files, a folder, the zip
-  an export downloads, or files from the browser's computer) or `runnr
-  history --import` (`--check` to look first). A run already here is left
-  alone; one exported while still going comes in aborted. Imported runs
-  show ⇪ in the history. API: `POST /api/runs/import`.
+- **Import runs**: runs exported from another runnr come in from the
+  history page (**⇪ Import runs…**: files, a folder, the zip an export
+  downloads, or files from the browser's computer) or `runnr history
+  --import` (`--check` to look first): records (`.json`) or **raw logs**
+  (`.log`). A run from a raw log is rebuilt from its text: close, not
+  exact (times to the second; no sections, state, jobs or step edits).
+  A run already here is left alone; one exported while still going comes
+  in aborted. Imported runs show ⇪ in the history and on their page. API:
+  `POST /api/runs/import`.
 - **The file picker sorts** by name or date (click again to reverse; the
   choice is remembered) and shows each file's date.
 - Secret fields in the GUI (run forms, the console, the editor's test

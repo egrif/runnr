@@ -1485,6 +1485,9 @@ func importRuns(st *store.Store, paths, ids []string, check bool) error {
 		if r.Unfinished && !r.Exists {
 			what += " (it was still going: as aborted)"
 		}
+		if r.FromLog && !r.Exists {
+			what += " (from a raw log)"
+		}
 		if r.Imported || check && !r.Exists {
 			n++
 		}
@@ -1625,7 +1628,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 	cmd.Flags().StringVar(&as, "as", "raw", "--export: raw (logs to read), json (records to import), both, and/or timeline (a page per run laying it out in time), comma-separated")
 	cmd.Flags().BoolVar(&single, "one-file", false, "--export: all the runs in one file (per format)")
 	cmd.Flags().BoolVar(&only, "only", false, "--export: just this run, not those linked by resuming")
-	cmd.Flags().StringArrayVar(&imp, "import", nil, "import exported runs (records: --as json files, a zip of them, or a folder of them), repeatable; with a run id, just that run")
+	cmd.Flags().StringArrayVar(&imp, "import", nil, "import exported runs (records or raw logs: .json or .log files, a zip of them, or a folder of them), repeatable; with a run id, just that run")
 	cmd.Flags().BoolVar(&check, "check", false, "--import: say what it would import, and import nothing")
 	cmd.Flags().BoolVar(&del, "delete", false, "delete the run's record (not a running one)")
 	return cmd

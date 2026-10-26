@@ -3,7 +3,6 @@ package project
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -35,13 +34,28 @@ func TestImportRuns(t *testing.T) {
 	if fs, bad := ReadRuns("list.json", one[0].Data); len(fs) != 2 || len(bad) != 0 {
 		t.Fatalf("list: %d runs, %+v", len(fs), bad)
 	}
-	for name, data := range map[string]string{"run.log": engine.RawLog(done), "x.json": `{"id": "../x", "runbook": "r", "started": "2026-10-20T16:00:00Z"}`, "y.txt": "hello"} {
+	if files[0].Run.FromLog || files[1].Run.FromLog {
+		t.Fatal("used the raw log where the record was there too")
+	}
+	for name, data := range map[string]string{"x.json": `{"id": "../x", "runbook": "r", "started": "2026-10-20T16:00:00Z"}`, "y.txt": "hello", "z.log": "run x · y\n"} {
 		if fs, bad := ReadRuns(name, []byte(data)); len(fs) != 0 || len(bad) != 1 {
 			t.Errorf("%s: %d runs, %+v", name, len(fs), bad)
 		}
 	}
-	if _, bad := ReadRuns("run.log", []byte(engine.RawLog(done))); !strings.Contains(bad[0].Error, "raw log") {
-		t.Errorf("raw log: %s", bad[0].Error)
+	// A raw log alone is rebuilt.
+	logs, _ := LogFiles([]*engine.Run{done, going}, "raw", true, "")
+	fromLog, bad := ReadRuns("both.log", logs[0].Data)
+	if len(fromLog) != 2 || len(bad) != 0 || !fromLog[0].Run.FromLog || fromLog[0].Run.Inputs["target"] != "replica-b" || fromLog[0].Run.Steps[0].Name != "promote" {
+		t.Fatalf("raw log: %+v %+v", fromLog, bad)
+	}
+	if st2, _ := store.Open(t.TempDir(), ""); true {
+		got, err := ImportRuns(st2, fromLog, nil, false)
+		if err != nil || len(got) != 2 || !got[0].FromLog || !got[0].Imported {
+			t.Fatalf("raw import: %v %+v", err, got)
+		}
+		if r, _ := st2.LoadRun(done.ID); r == nil || !r.FromLog || len(r.Notes) != 1 {
+			t.Fatalf("raw run: %+v", r)
+		}
 	}
 
 	st, _ := store.Open(t.TempDir(), "")

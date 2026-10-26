@@ -9,9 +9,9 @@ import (
 	"github.com/egrif/runnr/internal/project"
 )
 
-// Importing runs (the history page's ⇪ Import runs…): exported run
-// records from files on this machine (paths) or sent from the browser
-// (uploads), checked first, then saved.
+// Importing runs (the history page's ⇪ Import runs…): exported runs
+// (records or raw logs) from files on this machine (paths) or sent from
+// the browser (uploads), checked first, then saved.
 //
 //	POST /api/runs/import {paths, uploads: [{name, data (base64)}], ids, check}
 //	  → {runs: [project.RunImport], errors: [{from, error}]}
