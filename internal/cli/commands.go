@@ -1505,6 +1505,47 @@ func importRuns(st *store.Store, paths, ids []string, check bool) error {
 	return nil
 }
 
+// scrubRuns masks credentials in stored runs (only those in ids, if any).
+func scrubRuns(st *store.Store, ids []string, check bool) error {
+	out, err := project.Scrub(st, ids, check)
+	n, skipped := 0, 0
+	for _, x := range out {
+		if x.Err != nil {
+			skipped++
+			fmt.Printf("%s  %s  left alone: %v\n", x.ID, x.Runbook, x.Err)
+			continue
+		}
+		if !x.Changed() {
+			continue
+		}
+		n++
+		var what []string
+		if x.Record {
+			what = append(what, "record")
+		}
+		if x.Notes > 0 {
+			what = append(what, fmt.Sprintf("%d note(s)", x.Notes))
+		}
+		if x.Asks > 0 {
+			what = append(what, fmt.Sprintf("%d reason(s)", x.Asks))
+		}
+		fmt.Printf("%s  %s  %s\n", x.ID, x.Runbook, strings.Join(what, ", "))
+	}
+	verb := "masked credentials in"
+	if check {
+		verb = "would mask credentials in"
+	}
+	fmt.Printf("%s %d of %d run(s)", verb, n, len(out))
+	if skipped > 0 {
+		fmt.Printf("; %d still running, left alone", skipped)
+	}
+	if n > 0 && !check {
+		fmt.Print("; database compacted")
+	}
+	fmt.Println()
+	return err
+}
+
 func historyCmd(s func() *store.Store) *cobra.Command {
 	var (
 		filter string
@@ -1520,6 +1561,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		find   string
 		imp    []string
 		check  bool
+		scrub  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "history [run-id]",
@@ -1528,6 +1570,9 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(imp) > 0 {
 				return importRuns(s(), imp, args, check)
+			}
+			if scrub {
+				return scrubRuns(s(), args, check)
 			}
 			if export != "" {
 				if len(args) != 1 {
@@ -1635,7 +1680,8 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 	cmd.Flags().BoolVar(&single, "one-file", false, "--export: all the runs in one file (per format)")
 	cmd.Flags().BoolVar(&only, "only", false, "--export: just this run, not those linked by resuming")
 	cmd.Flags().StringArrayVar(&imp, "import", nil, "import exported runs (records or raw logs: .json or .log files, a zip of them, or a folder of them), repeatable; with a run id, just that run")
-	cmd.Flags().BoolVar(&check, "check", false, "--import: say what it would import, and import nothing")
+	cmd.Flags().BoolVar(&check, "check", false, "--import, --scrub: say what it would do, and change nothing")
+	cmd.Flags().BoolVar(&scrub, "scrub", false, "mask credentials in stored runs (all of them, or the run given): records, notes and reasons, as exports are masked; then compact the database")
 	cmd.Flags().BoolVar(&del, "delete", false, "delete the run's record (not a running one)")
 	return cmd
 }

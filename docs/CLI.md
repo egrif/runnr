@@ -201,6 +201,12 @@ jobs on a row under it), the run's row with the maintenance window, notes
   a raw log is rebuilt from its text: close, not exact (times to the
   second; no sections, state, jobs or step edits). Where there's both for
   a run, the record is used.
+- `runnr history --scrub [run-id]` masks credentials in the stored runs
+  (all of them, or the one given): output, commands, notes and reasons,
+  with the built-in patterns, the runbook's own and values held under
+  credential names, as exports are masked. `--check` shows what it would
+  change. Runs still going are left alone; afterwards the database is
+  compacted (SQLite: `VACUUM`) so the old text isn't left in it.
 - `runnr delete` keeps every version: `runnr restore` lists what was
   deleted and brings it back. `runnr history --delete <run-id>` removes a
   run.

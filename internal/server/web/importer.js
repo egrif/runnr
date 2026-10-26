@@ -396,3 +396,42 @@ function importRunsDialog(onDone) {
   dlg.onclose = () => { dlg.remove(); if (imported) onDone?.(); };
   dlg.showModal();
 }
+
+// scrubDialog masks credentials in the stored history (runnr history
+// --scrub): it looks first and lists the runs it would change, then masks
+// them and compacts the database.
+async function scrubDialog(onDone) {
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step abort-dialog scrub-dialog";
+  dlg.innerHTML = `<h3>Scrub credentials from the history</h3>
+    <p class="muted small">Masks passwords, tokens and keys in every stored run (its output, commands, notes and reasons), as exports are masked: the built-in patterns, each runbook's own, and values held under credential names. Then the database is compacted so the old text isn't left in it. Runs still going are left alone. This can't be undone.</p>
+    <div class="scrub-found muted">Looking…</div>
+    <div class="error-text"></div>
+    <div class="row"><button class="danger" data-ok disabled>Scrub</button><button data-close>Close</button></div>`;
+  document.body.append(dlg);
+  const $d = (q) => dlg.querySelector(q);
+  let changed = false;
+  const list = (res) => res.runs.map((r) => `<li><code>${esc(r.id)}</code> ${esc(r.runbook)}: ${r.running ? "still running, left alone"
+    : [r.record && "output and record", r.notes && `${r.notes} note${r.notes === 1 ? "" : "s"}`, r.asks && `${r.asks} reason${r.asks === 1 ? "" : "s"}`].filter(Boolean).join(", ")}</li>`).join("");
+  $d("[data-close]").onclick = () => dlg.close();
+  dlg.onclose = () => { dlg.remove(); if (changed) onDone?.(); };
+  dlg.showModal();
+  try {
+    const res = await api("POST", "/api/runs/scrub", { check: true });
+    const n = res.runs.filter((r) => !r.running).length;
+    $d(".scrub-found").innerHTML = n ? `<p><b>${n} of ${res.total} run${res.total === 1 ? "" : "s"}</b> have credentials to mask:</p><ul class="small">${list(res)}</ul>`
+      : `<p>Nothing to mask in ${res.total} run${res.total === 1 ? "" : "s"}.</p>${res.runs.length ? `<ul class="small">${list(res)}</ul>` : ""}`;
+    $d("[data-ok]").disabled = !n;
+    $d("[data-ok]").textContent = n ? `Scrub ${n} run${n === 1 ? "" : "s"}` : "Scrub";
+  } catch (e) { $d(".error-text").textContent = e.message; }
+  $d("[data-ok]").onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    try {
+      const res = await api("POST", "/api/runs/scrub", {});
+      changed = true;
+      const n = res.runs.filter((r) => !r.running).length;
+      toast(`Masked credentials in ${n} run${n === 1 ? "" : "s"}${res.compacted ? "; database compacted" : ""}`);
+      dlg.close();
+    } catch (x) { $d(".error-text").textContent = x.message; e.currentTarget.disabled = false; }
+  };
+}
