@@ -34,6 +34,7 @@ import (
 )
 
 // Set via -ldflags "-X github.com/egrif/runnr/internal/cli.version=..."
+// (the release build and make); see Version.
 var version = "dev"
 
 // ExitError carries a process exit code out of a command.
@@ -74,7 +75,7 @@ func newRoot() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "runnr",
 		Short:         "Create, manage and run runbooks — interactively or unattended",
-		Version:       version,
+		Version:       Version(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
@@ -99,7 +100,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s), restoreCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), suspendCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), suspendCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s), versionCmd(),
 		attachCmd(), watchCmd(s), waitRunCmd(s), doctorCmd(s),
 	)
 	return root

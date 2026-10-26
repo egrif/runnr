@@ -201,6 +201,8 @@ jobs on a row under it), the run's row with the maintenance window, notes
   a raw log is rebuilt from its text: close, not exact (times to the
   second; no sections, state, jobs or step edits). Where there's both for
   a run, the record is used.
+- `runnr version` prints the version, the commit it was built from and the
+  Go it was built with.
 - `runnr history --scrub [run-id]` masks credentials in the stored runs
   (all of them, or the one given): output, commands, notes and reasons,
   with the built-in patterns, the runbook's own and values held under
