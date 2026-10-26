@@ -35,6 +35,15 @@ Watching a run together; importing runs from another runnr; seeing what an impor
 
 ### Changed
 
+- **More credentials are masked** before anything is recorded: settings
+  like `password=…`, `PGPASSWORD=…`, `"api_key": "…"` and `client_secret:
+  …`, flags like `--password …`, and values published or captured under a
+  credential name (`db_password`, `api_token`, `dbpass`), which are now
+  kept secret. Before, these were saved in plain text in run records and
+  logs unless declared secret.
+- The SQLite database (it holds every run's commands and output) is now
+  readable by its owner only (it was readable by everyone on the machine),
+  and a new runnr home folder is too.
 - **Run this** (in the editor) asks for all the runbook's inputs in one
   dialog first, filled with the values used last (or the test values), and
   can save them as the runbook's test values, or not ask again (Test

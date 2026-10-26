@@ -17,7 +17,20 @@ var BuiltinSensitive = map[string]string{
 	"url password": `[A-Za-z][A-Za-z0-9+.-]*://[^\s:/@]+:{{SENSITIVE}}@`,
 	"bearer token": `(?i)\bbearer\s+{{SENSITIVE}}`,
 	"aws secret":   `(?i)\b(aws_secret_access_key|aws_session_token)["']?\s*[=:]\s*["']?{{SENSITIVE}}`,
+	// password=…, PGPASSWORD=…, "api_key": "…", --token=…, client_secret: …
+	"credential setting": `(?i)[a-z0-9_.-]*(` + credentialWords + `)["']?\s*[=:]\s*["']?{{SENSITIVE}}`,
+	// --password …, --token …
+	"credential flag": `(?i)--[a-z0-9-]*(` + credentialWords + `)\s+["']?{{SENSITIVE}}`,
 }
+
+// credentialWords are the names credentials go by.
+const credentialWords = `passw(?:or)?d|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|mysql_pwd|credentials?`
+
+var credentialName = regexp.MustCompile(`(?i)(` + credentialWords + `|pass$|^pw$|_pw$)`)
+
+// SensitiveName says whether a variable's name says it holds a credential
+// (db_password, api_token, dbpass): published, it's kept secret.
+func SensitiveName(name string) bool { return credentialName.MatchString(name) }
 
 const groupPrefix = "runnrsensitive"
 

@@ -13,7 +13,7 @@ const FIELD_HELP = {
     shell: "Shell that runs every step (sh by default). Use zsh or bash if your commands need their syntax.",
     profile: "Files sourced before every step, e.g. ~/.zshrc, so your aliases and functions work in steps. Adds the time it takes to load them to each step.",
     env: "Environment variables for every step, KEY=value. Values may use templates like {{.input}}.",
-    sensitive: "Credential patterns to hide in output, state and history: name=regex, with {{SENSITIVE}} where the credential is. URL passwords, Bearer tokens and AWS keys are hidden already.",
+    sensitive: "Credential patterns to hide in output, state and history: name=regex, with {{SENSITIVE}} where the credential is. URL passwords, Bearer tokens, AWS keys and password=/token: style settings are hidden already.",
     inputs: "Values the operator gives when starting a run. Available to steps as {{.name}} and $name.",
     libraries: "Function libraries this runbook uses: their functions can be called in every step and in shells opened from runnr.",
     functions: "This runbook's own shell functions (name, description, body). They win over a library function of the same name.",
@@ -298,7 +298,7 @@ functions:
     <p>Every step can call them (commands, checks, every way, background steps), and shells opened from runnr have them too, loaded after your own shell config. Elsewhere: <code>eval "$(runnr lib export db-helpers)"</code>. A run fails to start if a library it uses is missing. The run's functions are also in <code>$RUNNR_FUNCTIONS</code> to source by hand.</p>
 
     <h2 id="help-masking">Masking</h2>
-    <p>Secret inputs and <code>secret_outputs</code> are hidden wherever they appear: output, commands, errors, state, history and terminals in the browser. When a pattern recognises a secret, only the credential part is hidden (<code>postgres://app:****@db/app</code>); otherwise all of it (<code>****</code>). Built-in patterns cover URL passwords, Bearer tokens and AWS secret keys; add your own with <code>sensitive</code>:</p>
+    <p>Secret inputs and <code>secret_outputs</code> are hidden wherever they appear: output, commands, errors, state, history and terminals in the browser. When a pattern recognises a secret, only the credential part is hidden (<code>postgres://app:****@db/app</code>); otherwise all of it (<code>****</code>). Built-in patterns cover URL passwords, Bearer tokens, AWS secret keys, credential settings (<code>password=…</code>, <code>PGPASSWORD=…</code>, <code>"api_key": "…"</code>) and flags (<code>--password …</code>); a value published under a credential name (<code>db_password</code>, <code>api_token</code>) is kept secret too. Add your own with <code>sensitive</code>:</p>
     <pre class="cmd">sensitive:
   api_key: 'X-Api-Key: {{SENSITIVE}}'
   ticket: 'token={{SENSITIVE}}&amp;'</pre>
