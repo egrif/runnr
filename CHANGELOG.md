@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.8.0 — 2026-10-26
+
+Importing runs from another runnr (records or raw logs); keeping credentials out of the history and everything exported from it.
+
+### Added
+
+- **Import runs**: runs exported from another runnr come in from the
+  history page (**⇪ Import runs…**: files, a folder, the zip an export
+  downloads, or files from the browser's computer) or `runnr history
+  --import` (`--check` to look first): records (`.json`) or **raw logs**
+  (`.log`). A run from a raw log is rebuilt from its text: close, not
+  exact (times to the second; no sections, state, jobs or step edits).
+  A run already here is left alone; one exported while still going comes
+  in aborted. Imported runs show ⇪ in the history and on their page. API:
+  `POST /api/runs/import`.
+- **The file picker sorts** by name or date (click again to reverse; the
+  choice is remembered) and shows each file's date.
+- **Scrub the history**: `runnr history --scrub [run-id]` (or **Scrub
+  credentials…** on the history page) masks credentials in the stored runs,
+  all of them or one: their output, commands, notes and reasons, as exports
+  are masked. `--check` shows what it would change. Runs still going are
+  left alone, and the database is compacted afterwards so the old text
+  isn't left in it. API: `POST /api/runs/scrub`.
+
+### Changed
+
+- **More credentials are masked** before anything is recorded: settings
+  like `password=…`, `PGPASSWORD=…`, `"api_key": "…"` and `client_secret:
+  …`, flags like `--password …`, and values published or captured under a
+  credential name (`db_password`, `api_token`, `dbpass`), which are now
+  kept secret. Before, these were saved in plain text in run records and
+  logs unless declared secret.
+- **Exports are scanned for credentials** again as they leave runnr: export
+  files and zips (raw logs, records, timelines), Raw log, the timeline
+  page, `runnr history --raw/--json/--timeline`, and imported runs before
+  they're kept. They're masked with the built-in patterns and the
+  runbook's own, and the values of inputs and variables named as
+  credentials are hidden wherever they appear. So a run recorded before
+  runnr knew to hide something doesn't pass it on.
+- The SQLite database (it holds every run's commands and output) is now
+  readable by its owner only (it was readable by everyone on the machine),
+  and a new runnr home folder is too.
+
 ## v0.7.0 — 2026-10-23
 
 Watching a run together; seeing what an import would change; showing a secret as you type it.

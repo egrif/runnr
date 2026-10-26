@@ -151,7 +151,8 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 			return nil
 		case outDone:
 			x.apply(step, a.out)
-			res.Command = x.mask(res.Command) // in case it contained a just-published secret
+			// In case they show a secret it just published (or captured).
+			res.Command, res.Output = x.mask(res.Command), x.mask(res.Output)
 			res.Status, res.Error = StatusSucceeded, ""
 			if a.note != "" {
 				res.Note = a.note
