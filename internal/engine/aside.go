@@ -153,6 +153,13 @@ type ShellSpec struct {
 // OpenShell runs a shell with spec's environment on conn until it ends or
 // ctx is done. What it publishes goes nowhere; it returns its transcript.
 func OpenShell(ctx context.Context, spec ShellSpec, conn TermConn) (string, error) {
+	// Its placeholders are this machine's folders, as in a run.
+	fo := spec.Options
+	fo.Vars = spec.Vars
+	if _, err := fillFolders(spec.Runbook, fo); err != nil {
+		conn.Close()
+		return "", err
+	}
 	p := NewPreviewer(spec.Runbook, spec.Vars, spec.State, false)
 	x := p.x
 	x.opts = spec.Options

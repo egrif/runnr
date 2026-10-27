@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/runbook"
 )
 
@@ -34,6 +35,11 @@ type Options struct {
 	Exe string
 	// Timeout bounds each scenario (default 2m).
 	Timeout time.Duration
+	// Folders gives the placeholders (@PROJECT_DIR@ …) the runbook, its
+	// libraries, the suite and its fakes name (used) their folders on this
+	// machine, or says why it can't; nil: none can be filled in.
+	Folders func(rb *runbook.Runbook, used []string) (map[string]string, error)
+	folders map[string]string
 }
 
 // Result is how one scenario went.
@@ -76,6 +82,22 @@ func Run(ctx context.Context, s *Suite, src Sources, o Options) ([]Result, error
 	}
 	if o.Timeout == 0 {
 		o.Timeout = 2 * time.Minute
+	}
+	sharedFakes := make([]*Fake, len(shared))
+	for i := range shared {
+		sharedFakes[i] = &shared[i].Fake
+	}
+	if used := placeholder.Used(rb, libs, s, sharedFakes); len(used) > 0 {
+		if o.Folders == nil {
+			return nil, fmt.Errorf("the tests name placeholders (%s) with no folders to fill them in", strings.Join(used, ", "))
+		}
+		vals, err := o.Folders(rb, used)
+		if err != nil {
+			return nil, err
+		}
+		// The suite and its fakes too (the runbook and libraries, as the run starts).
+		placeholder.Apply(vals, s, sharedFakes)
+		o.folders = vals
 	}
 	if s.Strict {
 		if err := SandboxAvailable(); err != nil {
@@ -231,7 +253,7 @@ func runScenario(ctx context.Context, s *Suite, sc Scenario, base *runbook.Runbo
 	rctx, cancel := context.WithTimeout(ctx, o.Timeout)
 	defer cancel()
 	run := engine.Execute(rctx, &rb, op, "", engine.Options{
-		Vars: inputs, Interactive: true, Libraries: libs, Sanctioned: true, Hurry: true, SkipRequires: true,
+		Vars: inputs, Interactive: true, Libraries: libs, Folders: o.folders, Sanctioned: true, Hurry: true, SkipRequires: true,
 		BaseEnv: cleanEnv(dir, path, map[string]string{envDir: dir, envExe: o.Exe}),
 		TempDir: filepath.Join(dir, "tmp"),
 		Wrap:    wrap,

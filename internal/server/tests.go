@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/store"
@@ -106,6 +107,9 @@ func (s *Server) runTests(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Scenario string `json:"scenario"`
 		Raw      string `json:"raw"`
+		// Collection and Folders: the placeholders' folders, as for a run.
+		Collection string            `json:"collection"`
+		Folders    map[string]string `json:"folders"`
 	}
 	if r.ContentLength != 0 {
 		if err := decode(r, &req); err != nil {
@@ -149,7 +153,7 @@ func (s *Server) runTests(w http.ResponseWriter, r *http.Request) {
 	if req.Scenario != "" {
 		only = []string{req.Scenario}
 	}
-	results, err := runtest.Run(r.Context(), su, src, runtest.Options{Only: only, Exe: exe})
+	results, err := runtest.Run(r.Context(), su, src, runtest.Options{Only: only, Exe: exe, Folders: project.SuiteFolders(s.st, project.FolderOpts{Collection: req.Collection, Set: req.Folders})})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeErr(w, err)

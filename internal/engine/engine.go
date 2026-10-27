@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/ver"
 )
@@ -147,6 +148,12 @@ type Run struct {
 	// FromLog: imported from a raw log, so rebuilt from its text (see
 	// ParseRawLog for what that leaves out).
 	FromLog bool `json:"from_log,omitempty"`
+	// Folders are the placeholders (@PROJECT_DIR@ …) the run filled in,
+	// with the folders it used; Collection is the collection they came
+	// from, and FolderSet those given for this run only.
+	Folders    map[string]string `json:"folders,omitempty"`
+	Collection string            `json:"collection,omitempty"`
+	FolderSet  map[string]string `json:"folder_set,omitempty"`
 }
 
 // Owner identifies the runnr process running a run, so another runnr can
@@ -278,6 +285,14 @@ type Options struct {
 	Previous *Run
 	// Libraries are the function libraries the runbook uses, resolved.
 	Libraries []*runbook.Library
+	// Folders are the values of the placeholders (@PROJECT_DIR@ …) the
+	// runbook, its libraries and Vars name, on this machine, and
+	// Collection the collection they came from (if one): the run doesn't
+	// start unless each it names is a folder here.
+	Folders    map[string]string
+	Collection string
+	// FolderSet are those given for this run only (kept for a resume).
+	FolderSet map[string]string
 	// State seeds variables from an earlier run (resume). Inputs win, and
 	// masked secrets are not restored.
 	State map[string]string
@@ -536,12 +551,20 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	own := *rb
 	own.Steps = slices.Clone(rb.Steps)
 	rb = &own
+	opts.Vars = maps.Clone(opts.Vars)
+	folders, folderErr := fillFolders(rb, opts)
 	x := &executor{runCtx: ctx, rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
 	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Libraries: opts.LibraryVersions, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
 	}
 	x.run.Identifiers = rb.IdentifierInputs()
+	x.run.Folders, x.run.Collection, x.run.FolderSet = folders, opts.Collection, opts.FolderSet
+	if folderErr != nil {
+		// It doesn't start: nothing has run, and there's nothing to keep.
+		x.run.Status, x.run.Error, x.run.Ended = StatusFailed, folderErr.Error(), time.Now()
+		return x.run
+	}
 
 	if opts.Previous != nil {
 		x.run.Previous = opts.Previous.ID
@@ -585,6 +608,8 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	}
 	if err == nil {
 		err = x.resolveInputs(ctx)
+		// An input typed as @PROJECT_DIR@/x is the folder too.
+		placeholder.Apply(folders, x.vars)
 	}
 	if err == nil {
 		// Inputs can override the window's target and planned offsets.

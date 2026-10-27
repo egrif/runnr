@@ -17,14 +17,100 @@ import (
 // every text in them scanned for credentials again, with the built-in
 // patterns and the runbook's own sensitive ones, so what was recorded
 // before runnr knew to hide it (an older runnr, a pattern added since, an
-// imported run) isn't passed on. The runs given are left as they are.
+// imported run) isn't passed on; and the folders this machine filled its
+// placeholders in with written as the placeholders again (FoldersBack).
+// The runs given are left as they are.
 func Masked(st *store.Store, runs []*engine.Run) []*engine.Run {
 	cache := map[string]*runbook.Masker{}
 	out := make([]*engine.Run, 0, len(runs))
 	for _, r := range runs {
-		out = append(out, MaskRun(r, maskerFor(st, r.Runbook, cache)))
+		out = append(out, FoldersBack(MaskRun(r, maskerFor(st, r.Runbook, cache))))
 	}
 	return out
+}
+
+// FoldersBack is a copy of r with the folders it filled its placeholders
+// in with (r.Folders) written as the placeholders again wherever they
+// appear (a command, its output, an input), the longest first, so this
+// machine's paths don't leave it. The folders themselves are left out
+// (the collection stays).
+func FoldersBack(r *engine.Run) *engine.Run {
+	if len(r.Folders) == 0 {
+		return r
+	}
+	type pair struct{ path, name string }
+	var pairs []pair
+	for n, p := range r.Folders {
+		if p = strings.TrimRight(p, "/"); len(p) > 1 {
+			pairs = append(pairs, pair{p, "@" + n + "@"})
+		}
+	}
+	slices.SortFunc(pairs, func(a, b pair) int { return len(b.path) - len(a.path) })
+	v, ok := asTree(r)
+	if !ok {
+		return r
+	}
+	v = mapStrings(v, func(s string) string {
+		for _, p := range pairs {
+			s = replacePath(s, p.path, p.name)
+		}
+		return s
+	})
+	b, err := json.Marshal(v)
+	if err != nil {
+		return r
+	}
+	var x engine.Run
+	if json.Unmarshal(b, &x) != nil {
+		return r
+	}
+	x.Folders, x.FolderSet = nil, nil
+	return &x
+}
+
+// replacePath replaces path in s where it's the whole of a path or the
+// start of a longer one (/src/repo in /src/repo/x, not in /src/repository).
+func replacePath(s, path, with string) string {
+	if !strings.Contains(s, path) {
+		return s
+	}
+	var b strings.Builder
+	for {
+		i := strings.Index(s, path)
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		end := i + len(path)
+		if end < len(s) && pathChar(s[end]) {
+			b.WriteString(s[:end])
+		} else {
+			b.WriteString(s[:i])
+			b.WriteString(with)
+		}
+		s = s[end:]
+	}
+}
+
+func pathChar(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '.'
+}
+
+// mapStrings is v (as JSON values) with fn applied to every string in it.
+func mapStrings(v any, fn func(string) string) any {
+	switch t := v.(type) {
+	case string:
+		return fn(t)
+	case []any:
+		for i := range t {
+			t[i] = mapStrings(t[i], fn)
+		}
+	case map[string]any:
+		for k := range t {
+			t[k] = mapStrings(t[k], fn)
+		}
+	}
+	return v
 }
 
 // MaskRun is a copy of r with RunMask applied to every string in it (and

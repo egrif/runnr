@@ -1,5 +1,43 @@
 # Changelog
 
+## v0.11.0 — 2026-10-27
+
+Placeholders are kept as written, and each machine says what folders they
+stand for.
+
+### Changed
+
+- **Files keep their placeholders.** `@PROJECT_DIR@`, `@REPO_ROOT@` and
+  any other `@NAME@` are imported, stored and exported as written, so a
+  runbook is the same (and the same version) on every machine. Importing
+  no longer fills them in: `runnr import --set` and the importer's
+  placeholder values are gone. A runbook stored by an older runnr keeps
+  the paths it was filled in with.
+- **A run fills them in with this machine's folders** when it starts:
+  `@REPOS_ROOT@` set for everything, and `@REPO_ROOT@`, `@PROJECT_DIR@`
+  (or any others) set for a collection, from the runbook's collection (in
+  several, where they agree) or `--collection`'s; `--set NAME=FOLDER`
+  gives one for that run only, and a resume keeps it. A value can name
+  another (`@REPOS_ROOT@/ops-runbooks`). **A run doesn't start**
+  while one it names has no value or isn't a folder here; nor do tests,
+  shells or the editor's Run this.
+
+### Added
+
+- `runnr folders` lists the folders set here; `runnr folders <runbook>`
+  says what a run of it would have; `runnr folders set [-c collection]
+  NAME=FOLDER…` and `unset` change them. `runnr run`, `resume`, `shell`
+  and `test` take `--collection` and `--set`.
+- The GUI: **Collections** has the folders for everything and on each
+  collection's card; the Run page has **Folders**, to see them, choose the
+  collection and give one for the run; previews show the folders filled in.
+- A run's record keeps the folders it had (`folders`, `collection`,
+  `folder_set`); exported, its logs and records have those folders written
+  as their placeholders again (`@REPO_ROOT@/tools`), so local paths aren't
+  passed on. API: `GET`/`PUT /api/folders`, `GET
+  /api/runbooks/{name}/folders`, and `collection`/`folders` in start,
+  resume, preview and test requests.
+
 ## v0.10.0 — 2026-10-26
 
 Versions are content hashes, the same in every runnr.

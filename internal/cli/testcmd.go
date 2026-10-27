@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/store"
@@ -20,6 +21,7 @@ import (
 func testCmd(s func() *store.Store) *cobra.Command {
 	var only, fakeFiles, libFiles []string
 	var rbFile string
+	var rf runFlags
 	var verbose, keep, asJSON, showLog bool
 	var timeout time.Duration
 	cmd := &cobra.Command{
@@ -111,7 +113,11 @@ the same name), so a runbook in a repo can be tested without importing it.`,
 					return out, nil
 				},
 			}
-			results, err := runtest.Run(cmd.Context(), suite, src, runtest.Options{Only: only, Keep: keep, Exe: exe, Timeout: timeout})
+			fo, err := rf.folderOpts(nil)
+			if err != nil {
+				return err
+			}
+			results, err := runtest.Run(cmd.Context(), suite, src, runtest.Options{Only: only, Keep: keep, Exe: exe, Timeout: timeout, Folders: project.SuiteFolders(s(), fo)})
 			if err != nil {
 				return err
 			}
@@ -134,6 +140,7 @@ the same name), so a runbook in a repo can be tested without importing it.`,
 	cmd.Flags().BoolVar(&keep, "keep", false, "keep each scenario's directory (fakes, call log)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "output JSON")
 	cmd.Flags().DurationVar(&timeout, "timeout", 2*time.Minute, "stop a scenario that runs longer than this")
+	rf.registerFolders(cmd)
 	return cmd
 }
 

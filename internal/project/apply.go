@@ -49,14 +49,9 @@ func (r Result) String() string {
 
 // Apply saves the plan's files, what they refer to first. A file whose
 // name is taken is saved as its current version only if replace says so. A
-// file with an error, a placeholder without a value or a reference that's
-// missing isn't saved.
+// file with an error or a reference that's missing isn't saved.
 func Apply(p *Plan, replace func(Doc) bool, save Saver) []Result {
 	var out []Result
-	unset := map[string]bool{}
-	for _, u := range p.Unset {
-		unset[u] = true
-	}
 	// What's in the store once each file is done (for the files after it).
 	there := map[string]bool{}
 	for _, d := range p.Docs {
@@ -64,11 +59,6 @@ func Apply(p *Plan, replace func(Doc) bool, save Saver) []Result {
 		var why []string
 		if d.Error != "" {
 			why = append(why, d.Error)
-		}
-		for _, ph := range d.Placeholders {
-			if unset[ph] {
-				why = append(why, "@"+ph+"@ has no value")
-			}
 		}
 		for _, ref := range d.Refs {
 			switch {

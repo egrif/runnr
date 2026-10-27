@@ -2,9 +2,9 @@
 // function libraries, fake libraries and test suites, the way a project
 // keeps them on disk.
 //
-// Files can hold placeholders, @NAME@, filled in on the way in:
-// @PROJECT_DIR@ is the folder imported, @REPO_ROOT@ its git root, and any
-// others take the values given. Each file's references are checked (a
+// Files can hold placeholders, @NAME@ (@PROJECT_DIR@, @REPO_ROOT@ …): they're
+// kept as written, and filled in with this machine's folders when a run
+// starts (folders.go). Each file's references are checked (a
 // runbook's libraries, a suite's runbook and fake libraries) against the
 // files being imported, what's stored and runnr's built-in libraries; a
 // missing library is looked for in the rest of the repository. Renaming a
@@ -19,7 +19,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -28,6 +27,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/ver"
@@ -64,8 +64,6 @@ type Options struct {
 	// subfolders too); Paths, files to import instead (or as well).
 	Dir   string
 	Paths []string
-	// Values fill in placeholders (they win over the defaults).
-	Values map[string]string
 	// Renames: "kind:name" → the name to import it as.
 	Renames map[string]string
 	// Include are more files to import (e.g. a library found elsewhere in
@@ -119,21 +117,14 @@ type Plan struct {
 	Dir      string `json:"dir"`
 	RepoRoot string `json:"repo_root,omitempty"`
 	Docs     []Doc  `json:"docs"`
-	// Values are the placeholder values used (defaults and given);
-	// Unset, placeholders in the files that have none.
-	Values map[string]string `json:"values"`
-	Unset  []string          `json:"unset,omitempty"`
 	// Ignored counts YAML files that aren't runnr's.
 	Ignored []string `json:"ignored,omitempty"`
 }
 
 // OK reports whether everything can be imported as planned: no errors,
-// placeholders unset or references missing (in files not skipped).
+// or references missing (in files not skipped).
 func (p *Plan) OK() error {
 	var errs []error
-	if len(p.Unset) > 0 {
-		errs = append(errs, fmt.Errorf("placeholders without a value: %s", strings.Join(p.Unset, ", ")))
-	}
 	for _, d := range p.Docs {
 		if d.Skipped {
 			continue
@@ -150,11 +141,9 @@ func (p *Plan) OK() error {
 	return errors.Join(errs...)
 }
 
-var placeholderRe = regexp.MustCompile(`@([A-Z][A-Z0-9_]*)@`)
-
 // Scan reads the files and works out the plan; nothing is saved.
 func Scan(o Options) (*Plan, error) {
-	p := &Plan{Values: map[string]string{}}
+	p := &Plan{}
 	if o.Dir != "" {
 		abs, err := filepath.Abs(o.Dir)
 		if err != nil {
@@ -168,13 +157,6 @@ func Scan(o Options) (*Plan, error) {
 		p.Dir, _ = os.Getwd()
 	}
 	p.RepoRoot = repoRoot(p.Dir)
-	p.Values["PROJECT_DIR"] = p.Dir
-	if p.RepoRoot != "" {
-		p.Values["REPO_ROOT"] = p.RepoRoot
-	}
-	for k, v := range o.Values {
-		p.Values[k] = v
-	}
 
 	var paths []string
 	if o.Dir != "" {
@@ -214,7 +196,6 @@ func Scan(o Options) (*Plan, error) {
 		skip[abs] = true
 	}
 	seen := map[string]bool{}
-	unset := map[string]bool{}
 	for _, path := range paths {
 		if seen[path] {
 			continue
@@ -246,8 +227,8 @@ func Scan(o Options) (*Plan, error) {
 			}
 			continue
 		}
-		raw, used, missing := fill(orig, p.Values)
-		d.Raw, d.Placeholders = raw, used
+		raw := orig
+		d.Raw, d.Placeholders = raw, placeholder.Tokens(string(raw))
 		if d.Kind = kindOf(raw); d.Kind == "" {
 			if _, ok := given[path]; ok {
 				d.Error = "this isn't a runbook (no steps:), a library (functions:), fakes (fakes:) or a test suite (scenarios:)"
@@ -257,21 +238,12 @@ func Scan(o Options) (*Plan, error) {
 			}
 			continue
 		}
-		if !d.Skipped {
-			for _, m := range missing {
-				unset[m] = true
-			}
-		}
 		d.Original, d.Name, err = nameOf(d.Kind, raw)
 		if err != nil {
 			d.Error = err.Error()
 		}
 		p.Docs = append(p.Docs, d)
 	}
-	for k := range unset {
-		p.Unset = append(p.Unset, k)
-	}
-	sort.Strings(p.Unset)
 
 	p.rename(o.Renames)
 	p.check(o.Lookup)
@@ -406,7 +378,6 @@ func (p *Plan) libraryFiles() map[string][]string {
 		if err != nil || kindOf(raw) != Library {
 			continue
 		}
-		raw, _, _ = fill(raw, p.Values)
 		if _, n, err := nameOf(Library, raw); err == nil {
 			out[n] = append(out[n], f)
 		}
@@ -449,28 +420,6 @@ func repoRoot(dir string) string {
 			return ""
 		}
 	}
-}
-
-// Fill replaces the placeholders (@NAME@) in raw that values has; it
-// returns the ones used and the ones without a value.
-func Fill(raw []byte, values map[string]string) ([]byte, []string, []string) {
-	return fill(raw, values)
-}
-
-// fill replaces the placeholders that have values; it returns the ones
-// used and the ones without a value.
-func fill(raw []byte, values map[string]string) ([]byte, []string, []string) {
-	used, missing := map[string]bool{}, map[string]bool{}
-	out := placeholderRe.ReplaceAllFunc(raw, func(m []byte) []byte {
-		k := string(m[1 : len(m)-1])
-		used[k] = true
-		if v, ok := values[k]; ok {
-			return []byte(v)
-		}
-		missing[k] = true
-		return m
-	})
-	return out, keys(used), keys(missing)
 }
 
 func keys(m map[string]bool) []string {

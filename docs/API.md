@@ -51,9 +51,9 @@ Paths are on the machine runnr runs on.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| POST | `/api/import/check?set=NAME=VALUE` | a runbook or library's YAML | `{kind, name, exists, version?, updated_at?, same?, diff?, builtin?, placeholders?, unset?, error?}`; `diff`: what saving over the stored one would change (unified diff) |
-| POST | `/api/import?as=&replace=1&collection=&set=NAME=VALUE` | YAML | `201 {kind, name, version, replaced?, collection?}`; `409 {error, check}` if the name is taken (unless `as` or `replace`); `400 {error, unset}` for placeholders without a value |
-| POST | `/api/import/scan` | `{dir, values?, renames?, include?, skip?}` | the plan for a project folder: `{dir, repo_root, docs, values, unset, ignored}` (a doc whose name is taken has `diff`: what saving over it would change) |
+| POST | `/api/import/check` | a runbook or library's YAML | `{kind, name, exists, version?, updated_at?, same?, diff?, builtin?, placeholders?, error?}`; `diff`: what saving over the stored one would change (unified diff) |
+| POST | `/api/import?as=&replace=1&collection=` | YAML | `201 {kind, name, version, replaced?, collection?}`; `409 {error, check}` if the name is taken (unless `as` or `replace`) |
+| POST | `/api/import/scan` | `{dir, renames?, include?, skip?}` | the plan for a project folder: `{dir, repo_root, docs, ignored}` (a doc whose name is taken has `diff`: what saving over it would change) |
 | POST | `/api/import/project` | as scan, `+ {replace?, replace_all?, collection?}` | `{plan, results: [{rel, kind, name, status, version?, replaced?, error?}]}` |
 | GET | `/api/fs?path=&hidden=1` | | `{path, parent, home, entries: [{name, dir, size?, mod?}], asked, exists, is_dir}`: the folder at `path` (or holding it, or the nearest that exists) |
 | POST | `/api/runbooks/{name}/files/plan` | `{path}` | `{files: [{kind, name, path, version?, exists?, builtin?, missing?}]}`: the runbook and the libraries it uses (beside it as `<name>.yaml`) |
@@ -65,9 +65,8 @@ Paths are on the machine runnr runs on.
 A project folder's `docs` are `{path, rel, kind, name, original, error?,
 placeholders?, refs?, included?, skipped?, exists, version?, updated_at?,
 same?, builtin?}`, `kind` being `runbook`, `library`, `fakes`, `suite` or
-`run` (a run record, JSON). `values` fill in placeholders (`@NAME@`;
-`PROJECT_DIR` and `REPO_ROOT` default to the folder and its git root),
-`renames` are `{"kind:name": "new"}` (references to it follow), `include`
+`run` (a run record, JSON); `placeholders` are the `@NAME@`s it names (kept
+as written). `renames` are `{"kind:name": "new"}` (references to it follow), `include`
 adds files or folders from elsewhere, `skip` leaves files out (by path), and
 `replace` names files to save as the current version of the one with their
 name. A result's `status` is `imported`, `replaced`, `unchanged`, `skipped`,
@@ -201,9 +200,23 @@ Start request:
   "pause_after": [4, 9],  // interactive: stop after these to check the result
   "step_mode": false,     // interactive: pause before every step
   "previous": "<run id>", // compare against this run (default: the resumed run, else the latest)
+  "collection": "payments", // take the placeholders' folders from this collection (default: the runbook's)
+  "folders": {"REPO_ROOT": "/src/ra"}, // folders for this run only (a resume keeps them)
   "wait": true            // block until done and return the run (requires unattended)
 }
 ```
+
+A run doesn't start while a placeholder (`@NAME@`) its runbook, libraries
+or inputs name has no folder on this machine: `400 {error, folders}`, where
+`folders` is as `GET /api/runbooks/{name}/folders` gives it. The record
+keeps the `folders` it had, its `collection` and `folder_set` (those given
+for the run).
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/folders` | | `{scopes: {"" \| collection: {NAME: {raw, value, why?}}}}`: the folders set on this machine, for everything (`""`) and each collection; `raw` as set (it can name others), `value` filled in, `why` it isn't a folder here |
+| PUT | `/api/folders` | `{collection?, name, value}` (`""` removes it) | as `GET` |
+| GET | `/api/runbooks/{name}/folders?collection=&set=NAME=FOLDER` | | `{used, collection?, collections?, values, from, problems?}`: what a run would fill its placeholders with (`from`: `run`, `collection` or `global`), and `problems: [{name, value?, why}]` that keep it from starting |
 
 A run record has `status` (`running`, `succeeded`, `failed`, `aborted`), `notes`,
 and a `steps` array with each step's `status` (also `pending`, `skipped`, or

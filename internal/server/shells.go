@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
 )
@@ -83,10 +84,12 @@ func (s *Server) openShell(w http.ResponseWriter, r *http.Request) {
 	if open == nil {
 		spec := engine.ShellSpec{Step: idx, Vars: req.Vars}
 		var err error
+		var fo project.FolderOpts
 		if req.Run != "" {
 			// A run not under way: before its steps (settling its inputs) or ended.
 			var rec *engine.Run
 			if rec, err = s.st.LoadRun(req.Run); err == nil {
+				fo = project.FolderOpts{Collection: rec.Collection, Set: rec.Folders} // the folders it had
 				spec.Runbook, err = s.runbookOf(rec)
 				spec.Vars, spec.RunID = engine.ResumeInputs(rec), rec.ID
 				if rec.Status != engine.StatusRunning || !rec.Ended.IsZero() {
@@ -101,6 +104,12 @@ func (s *Server) openShell(w http.ResponseWriter, r *http.Request) {
 		}
 		if err == nil {
 			spec.Options.Libraries, err = s.st.Libraries(spec.Runbook.Libraries)
+		}
+		if err == nil {
+			var f *project.Folders
+			if f, err = project.RunFolders(s.st, spec.Runbook, spec.Options.Libraries, spec.Vars, fo); err == nil {
+				spec.Options.Folders = f.Values
+			}
 		}
 		if err != nil {
 			cancel()
