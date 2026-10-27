@@ -24,7 +24,7 @@ async function viewConsole(id) {
     run, live, controls, presence, console: true,
     steps: run.steps.map((s) => ({ ...s, log: s.output ? s.output.replace(/\n$/, "").split("\n").map((t) => ({ stream: "stdout", text: t })) : [] })),
     question: null, open: new Set(), selected: null, follow: true, editing: null, sizes: cxSizes(),
-    plan: null, versionDismissed: 0, fg: null, bgActive: null,
+    plan: null, versionDismissed: "", fg: null, bgActive: null,
   };
   cxMountConsole(state);
   cxHostTerms(state);
@@ -134,7 +134,7 @@ function cxRenderTop(state) {
       <a href="#/runs/${enc(r.id)}" class="cx-back" data-classic title="The classic run page (with the runbooks list)">☰</a>
       <h1><a href="#/runbooks/${enc(r.runbook)}">${esc(r.runbook)}</a></h1>
       ${identChips(r)}
-      <span class="muted">${r.runbook_version ? `v${r.runbook_version} · ` : ""}${esc(r.id)} · ${esc(r.mode)}${r.dry_run ? " · dry run" : ""}</span>
+      <span class="muted">${r.runbook_version ? `${shortVer(r.runbook_version)} · ` : ""}${esc(r.id)} · ${esc(r.mode)}${r.dry_run ? " · dry run" : ""}</span>
       <span class="spacer"></span>
       <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>
       <span class="badge ${esc(ph.cls)}">${ICONS[r.status] || ""} ${esc(ph.label)}</span>
@@ -158,9 +158,9 @@ function cxRenderTop(state) {
 // version), and steps it ran that the runbook no longer has.
 function cxResumedChips(r) {
   const rs = r.resumptions || [], rm = r.removed || [];
-  const tip = rs.map((x) => `Resumed ${new Date(x.at).toLocaleString()} from step ${x.from + 1} (${howItEnded(x)})${x.was_version ? ` with runbook version ${x.runbook_version} (it had run version ${x.was_version})` : ""}`).join("\n");
+  const tip = rs.map((x) => `Resumed ${new Date(x.at).toLocaleString()} from step ${x.from + 1} (${howItEnded(x)})${x.was_version ? ` with runbook version ${shortVer(x.runbook_version)} (it had run version ${shortVer(x.was_version)})` : ""}`).join("\n");
   const ver = rs.filter((x) => x.was_version).pop();
-  return (rs.length ? `<span class="cx-chip" title="${esc(tip)}">↻ resumed${rs.length > 1 ? ` ${rs.length}×` : ""}${ver ? ` · runbook v${ver.was_version} → v${ver.runbook_version}` : ""}</span>` : "")
+  return (rs.length ? `<span class="cx-chip" title="${esc(tip)}">↻ resumed${rs.length > 1 ? ` ${rs.length}×` : ""}${ver ? ` · runbook ${shortVer(ver.was_version)} → ${shortVer(ver.runbook_version)}` : ""}</span>` : "")
     + (rm.length ? `<a class="cx-chip" href="#/runs/${enc(r.id)}" data-classic title="${esc(rm.map((x) => x.name).join(", "))}: on the classic run page">${rm.length} step${rm.length === 1 ? "" : "s"} no longer in the runbook</a>` : "");
 }
 
@@ -236,12 +236,12 @@ function cxBanners(state, live) {
     const steps = [...new Set(edits.map((e) => e.step + 1))].sort((a, b) => a - b);
     out += `<div class="cx-banner edits">✎ ${steps.length === 1 ? `Step ${steps[0]} was` : `Steps ${steps.join(", ")} were`} changed in this run; the runbook doesn't have ${steps.length === 1 ? "the change" : "the changes"}. <button data-act="save-edits" class="primary">Save to runbook</button></div>`;
   }
-  if (live && p && p.latest > p.version && p.latest !== state.versionDismissed && (p.changed?.length || p.shape)) {
+  if (live && p && p.latest && p.latest !== p.version && p.latest !== state.versionDismissed && (p.changed?.length || p.shape)) {
     out += p.shape
-      ? `<div class="cx-banner version">⚠ The runbook was saved as version ${p.latest} during this run, and ${esc(p.shape)}: this run can't take it. Carry on with version ${p.version}, or abort and run version ${p.latest}.
+      ? `<div class="cx-banner version">⚠ The runbook was saved as version ${shortVer(p.latest)} during this run, and ${esc(p.shape)}: this run can't take it. Carry on with version ${shortVer(p.version)}, or abort and run version ${shortVer(p.latest)}.
           <button data-act="dismiss-version">Carry on</button><button data-act="abort" class="danger">Abort run</button></div>`
-      : `<div class="cx-banner version">⚠ The runbook was saved as version ${p.latest} during this run. Steps not run yet that it changes: ${p.changed.map((n) => `<a href="#" data-pick="${n - 1}">${n}</a>`).join(", ")}.
-          <button data-act="adopt" class="primary">Use version ${p.latest} for the rest</button><button data-act="dismiss-version">Keep version ${p.version}</button><button data-act="abort" class="danger">Abort run</button></div>`;
+      : `<div class="cx-banner version">⚠ The runbook was saved as version ${shortVer(p.latest)} during this run. Steps not run yet that it changes: ${p.changed.map((n) => `<a href="#" data-pick="${n - 1}">${n}</a>`).join(", ")}.
+          <button data-act="adopt" class="primary">Use version ${shortVer(p.latest)} for the rest</button><button data-act="dismiss-version">Keep version ${shortVer(p.version)}</button><button data-act="abort" class="danger">Abort run</button></div>`;
   }
   return out;
 }
@@ -267,7 +267,7 @@ function cxBindTop(state, el, live) {
           if (!confirm(`Save this run's step edits as a new version of “${r.runbook}”?\nThe YAML is reformatted, so comments in it are dropped.`)) return;
           const { version } = await api("POST", `/api/runs/${enc(r.id)}/save-edits`);
           r.edits_saved = version;
-          toast(`Saved as version ${version}`);
+          toast(`Saved as version ${shortVer(version)}`);
           state.onState();
           return cxRender(state, { details: false });
         }
@@ -275,7 +275,7 @@ function cxBindTop(state, el, live) {
         case "adopt": {
           const res = await api("POST", `/api/runs/${enc(r.id)}/adopt-version`, { version: state.plan.latest });
           r.runbook_version = res.version;
-          toast(`On version ${res.version}: ${res.changed.length ? `steps ${res.changed.join(", ")} changed` : "no remaining step changed"}${res.restarted ? "; the current step starts again" : ""}`);
+          toast(`On version ${shortVer(res.version)}: ${res.changed.length ? `steps ${res.changed.join(", ")} changed` : "no remaining step changed"}${res.restarted ? "; the current step starts again" : ""}`);
           state.onState();
           return cxRender(state);
         }
@@ -331,7 +331,7 @@ function cxRenderList(state) {
   const el = main.querySelector(".cx-list");
   const keep = el.scrollTop;
   const sel = cxSelected(state), cur = cxCurrent(state);
-  const changed = new Set((state.plan?.latest > state.plan?.version && state.plan.latest !== state.versionDismissed) ? state.plan.changed || [] : []);
+  const changed = new Set((state.plan?.latest && state.plan.latest !== state.plan.version && state.plan.latest !== state.versionDismissed) ? state.plan.changed || [] : []);
   const w = state.run.window;
   const inWin = (i) => w && w.open_step >= 0 && i >= w.open_step && (w.close_step < 0 || i <= w.close_step);
   let html = `<div class="cx-list-head"><b>Steps</b><span class="spacer"></span>
@@ -528,7 +528,7 @@ function cxRenderEditor(state, head, body) {
           : state.steps[i].status === "running" ? "This step is running now; the change applies if it runs again (retry)." : "The run uses the new version when it gets here."}
          Save it to the runbook afterwards (the banner above), or the change is only in this run.`
       : state.launch ? "Saving makes a new version of the runbook with just this step changed. The run uses it when you start."
-      : `Saving makes a new version of the runbook with just this step changed; this run isn't changed.${state.run.runbook_version && ed.version !== state.run.runbook_version ? ` This run was on version ${state.run.runbook_version}; the runbook is at ${ed.version}: check it's the same step.` : ""}`;
+      : `Saving makes a new version of the runbook with just this step changed; this run isn't changed.${state.run.runbook_version && ed.version !== state.run.runbook_version ? ` This run was on version ${shortVer(state.run.runbook_version)}; the runbook is at ${shortVer(ed.version)}: check it's the same step.` : ""}`;
     body.innerHTML = `<div class="cx-edit-wrap"><p class="muted small cx-edit-note">${note}</p><div class="cx-step-editor"></div><div class="error-text"></div></div>`;
     ed.wrap = body.querySelector(".cx-edit-wrap");
     ed.mounted = body.querySelector(".cx-step-editor");
@@ -554,7 +554,7 @@ function cxRenderEditor(state, head, body) {
         toast(res.restarted ? "Step changed; running it again" : "Step changed for this run");
       } else {
         const res = await api("PUT", `/api/runbooks/${enc(state.run.runbook)}/steps/${i + 1}`, yaml, true, { "If-Match": String(ed.version) });
-        toast(`Saved to the runbook as version ${res.version}`);
+        toast(`Saved to the runbook as version ${shortVer(res.version)}`);
         if (state.launch) {
           state.rb = res.runbook;
           state.version = res.version;
@@ -1075,14 +1075,14 @@ function cxLaunchRenderTop(state) {
     <div class="cx-title">
       <a href="#/runbooks/${enc(rb.name)}" class="cx-back" title="The runbook's page">☰</a>
       <h1><a href="#/runbooks/${enc(rb.name)}">${esc(rb.name)}</a></h1>
-      <span class="muted">v${state.version} · ${esc((rb.description || "").split("\n")[0])}</span>
+      <span class="muted">${shortVer(state.version)} · ${esc((rb.description || "").split("\n")[0])}</span>
       <span class="spacer"></span>
       <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>
       <span class="badge">○ not started</span>
     </div>
     <div class="cx-status">
       <span class="cx-at">${mode === "run" ? "A new run" : `${mode === "resume" ? "Resuming" : "Running again"} <a href="#/runs/${enc(prev.id)}/console">${esc(prev.id)}</a> (${esc(prev.status)})${mode === "resume" ? ": steps that finished are left out" : ""}`}</span>
-      ${mode === "resume" && prev?.changed ? `<span class="cx-chip" title="${esc(changedNote(prev, state.version).trim())}">⚠ runbook changed: v${prev.runbook_version || "?"} → v${state.version}</span>` : ""}
+      ${mode === "resume" && prev?.changed ? `<span class="cx-chip" title="${esc(changedNote(prev, state.version).trim())}">⚠ runbook changed: ${shortVer(prev.runbook_version)} → ${shortVer(state.version)}</span>` : ""}
       <span class="cx-chip">${n} of ${state.steps.length} steps</span>
       ${rb.maintenance_window ? `<span class="cx-chip cx-window muted">Maintenance window${rb.maintenance_window.target ? `, target ${esc(rb.maintenance_window.target)}` : ""}</span>` : ""}
     </div>

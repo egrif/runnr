@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // ErrStepEdited, returned by an interactor while a step waits on it, means
@@ -39,7 +40,7 @@ type Editor interface {
 	// Edits are the changes made so far.
 	Edits() []StepEdit
 	// MarkEditsSaved records that the run's edits are in the runbook now.
-	MarkEditsSaved(version int)
+	MarkEditsSaved(version ver.ID)
 }
 
 var _ Editor = (*executor)(nil)
@@ -89,7 +90,7 @@ func (x *executor) EditStep(i int, s runbook.Step) error {
 	}
 	x.rb.Steps[i] = s
 	x.edits = append(x.edits, StepEdit{Step: i, At: time.Now(), Def: s, Before: before})
-	x.editsSaved = 0
+	x.editsSaved = ""
 	return nil
 }
 
@@ -99,7 +100,7 @@ func (x *executor) Edits() []StepEdit {
 	return slices.Clone(x.edits)
 }
 
-func (x *executor) MarkEditsSaved(version int) {
+func (x *executor) MarkEditsSaved(version ver.ID) {
 	x.em.Lock()
 	defer x.em.Unlock()
 	x.editsSaved = version
@@ -153,7 +154,7 @@ func ApplyEdits(rb *runbook.Runbook, edits []StepEdit) (*runbook.Runbook, error)
 // VersionAdopter moves a live run onto a newer saved version of its
 // runbook, for the steps it hasn't run yet.
 type VersionAdopter interface {
-	AdoptVersion(version int, steps []runbook.Step) (changed []int, err error)
+	AdoptVersion(version ver.ID, steps []runbook.Step) (changed []int, err error)
 }
 
 var _ VersionAdopter = (*executor)(nil)
@@ -162,7 +163,7 @@ var _ VersionAdopter = (*executor)(nil)
 // runbook's steps at version) where they differ, and records the run as on
 // that version. The runbook must have the same steps (count); edits made in
 // this run that aren't saved yet must agree with it.
-func (x *executor) AdoptVersion(version int, steps []runbook.Step) ([]int, error) {
+func (x *executor) AdoptVersion(version ver.ID, steps []runbook.Step) ([]int, error) {
 	changed, err := x.adoptVersion(version, steps)
 	if err == nil {
 		x.save()
@@ -170,17 +171,17 @@ func (x *executor) AdoptVersion(version int, steps []runbook.Step) ([]int, error
 	return changed, err
 }
 
-func (x *executor) adoptVersion(version int, steps []runbook.Step) ([]int, error) {
+func (x *executor) adoptVersion(version ver.ID, steps []runbook.Step) ([]int, error) {
 	x.em.Lock()
 	defer x.em.Unlock()
 	if len(steps) != len(x.rb.Steps) {
-		return nil, fmt.Errorf("version %d has %d steps, this run has %d: abort this run, then run version %d", version, len(steps), len(x.rb.Steps), version)
+		return nil, fmt.Errorf("version %s has %d steps, this run has %d: abort this run, then run version %s", version.Short(), len(steps), len(x.rb.Steps), version.Short())
 	}
 	cur := max(x.cur, 0)
-	if x.editsSaved == 0 {
+	if x.editsSaved == "" {
 		for _, e := range LatestEdits(x.edits) {
 			if !reflect.DeepEqual(steps[e.Step], e.Def) {
-				return nil, fmt.Errorf("step %d (%s) was edited in this run and isn't saved, and version %d has it differently: save or redo the edit first", e.Step+1, e.Def.Name, version)
+				return nil, fmt.Errorf("step %d (%s) was edited in this run and isn't saved, and version %s has it differently: save or redo the edit first", e.Step+1, e.Def.Name, version.Short())
 			}
 		}
 	}
@@ -194,7 +195,7 @@ func (x *executor) adoptVersion(version int, steps []runbook.Step) ([]int, error
 		}
 	}
 	if err := rb.Validate(); err != nil {
-		return nil, fmt.Errorf("version %d: %w", version, err)
+		return nil, fmt.Errorf("version %s: %w", version.Short(), err)
 	}
 	for _, i := range changed {
 		x.edits = append(x.edits, StepEdit{Step: i, At: time.Now(), Def: steps[i], Before: x.rb.Steps[i]})

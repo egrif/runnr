@@ -155,8 +155,8 @@ func Build(r *engine.Run, now time.Time) *Timeline {
 	}
 	for _, rs := range r.Resumptions {
 		text := fmt.Sprintf("resumed from step %d (%s)", rs.From+1, rs.HowItEnded())
-		if rs.Was != 0 {
-			text += fmt.Sprintf(" with runbook version %d (it had run version %d)", rs.RunbookVersion, rs.Was)
+		if rs.Was != "" {
+			text += fmt.Sprintf(" with runbook version %s (it had run version %s)", rs.RunbookVersion.Short(), rs.Was.Short())
 		}
 		t.Marks = append(t.Marks, Mark{At: rs.At, Kind: "resume", Lane: -1, Text: text})
 		if !rs.Ended.IsZero() && rs.At.After(rs.Ended) {
@@ -205,7 +205,7 @@ func (t *Timeline) moments() {
 			t.Moments = append(t.Moments, Moment{At: at, Kind: kind, Text: text})
 		}
 	}
-	add(r.Started, "start", fmt.Sprintf("run started (%s, runbook %s version %d)", r.Mode, r.Runbook, r.RunbookVersion))
+	add(r.Started, "start", fmt.Sprintf("run started (%s, runbook %s version %s)", r.Mode, r.Runbook, r.RunbookVersion.Short()))
 	for _, l := range t.Lanes {
 		for _, s := range l.Spans {
 			if (s.Kind == "try" || s.Kind == "earlier" || s.Kind == "background") && (s.Status == engine.StatusFailed || s.Status == engine.StatusAborted) {

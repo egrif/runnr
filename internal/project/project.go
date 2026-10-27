@@ -30,6 +30,7 @@ import (
 
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Kinds of file, in the order they're saved (what's referred to first).
@@ -47,7 +48,7 @@ var kindOrder = map[string]int{Library: 0, Fakes: 1, Runbook: 2, Suite: 3, Run: 
 
 // Stored is what's stored under a name.
 type Stored struct {
-	Version   int
+	Version   ver.ID
 	UpdatedAt time.Time
 	Raw       []byte
 	// Builtin: one of runnr's own libraries (not stored).
@@ -94,7 +95,7 @@ type Doc struct {
 	Skipped  bool `json:"skipped,omitempty"`
 	// What's stored by that name.
 	Exists    bool      `json:"exists"`
-	Version   int       `json:"version,omitempty"`
+	Version   ver.ID    `json:"version,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
 	Same      bool      `json:"same,omitempty"`
 	Builtin   bool      `json:"builtin,omitempty"`
@@ -370,7 +371,7 @@ func (p *Plan) check(lookup Lookup) {
 					d.Builtin = true
 				} else {
 					d.Exists, d.Version, d.UpdatedAt, d.Same = true, s.Version, s.UpdatedAt, bytes.Equal(s.Raw, d.Raw)
-					d.Diff = Diff(string(s.Raw), string(d.Raw), fmt.Sprintf("%s (version %d, stored)", d.Name, s.Version), d.Rel, 3)
+					d.Diff = Diff(string(s.Raw), string(d.Raw), fmt.Sprintf("%s (version %s, stored)", d.Name, s.Version.Short()), d.Rel, 3)
 				}
 			}
 		}

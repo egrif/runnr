@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Importing a file whose name is taken is refused unless it's renamed or
@@ -27,10 +28,11 @@ func TestImport(t *testing.T) {
 		json.NewDecoder(res.Body).Decode(&m)
 		return res.StatusCode, m
 	}
-	if code, m := post("/api/import", v1); code != http.StatusCreated || m["version"] != 1.0 {
+	h1, h2 := string(ver.Of([]byte(v1))), string(ver.Of([]byte(v2)))
+	if code, m := post("/api/import", v1); code != http.StatusCreated || m["version"] != h1 {
 		t.Fatalf("first import %d %v", code, m)
 	}
-	if _, m := post("/api/import/check", v2); m["kind"] != "runbook" || m["exists"] != true || m["version"] != 1.0 || m["same"] == true || !strings.Contains(fmt.Sprint(m["diff"]), "(version 1, stored)") {
+	if _, m := post("/api/import/check", v2); m["kind"] != "runbook" || m["exists"] != true || m["version"] != h1 || m["same"] == true || !strings.Contains(fmt.Sprint(m["diff"]), "(version "+ver.ID(h1).Short()+", stored)") {
 		t.Fatalf("check %v", m)
 	}
 	if _, m := post("/api/import/check", v1); m["same"] != true {
@@ -42,7 +44,7 @@ func TestImport(t *testing.T) {
 	if code, m := post("/api/import?as=w-2", v2); code != http.StatusCreated || m["name"] != "w-2" {
 		t.Fatalf("renamed %d %v", code, m)
 	}
-	if code, m := post("/api/import?replace=1", v2); code != http.StatusCreated || m["version"] != 2.0 || m["replaced"] != 1.0 {
+	if code, m := post("/api/import?replace=1", v2); code != http.StatusCreated || m["version"] != h2 || m["replaced"] != h1 {
 		t.Fatalf("replace %d %v", code, m)
 	}
 	lib := "name: helpers\nfunctions:\n  hi: {body: 'echo hi'}\n"

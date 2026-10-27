@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/egrif/runnr/internal/ver"
 )
 
-// docKind is a kind of named, versioned YAML document stored like
-// runbooks (libraries, collections).
+// docKind is a kind of named, versioned YAML document (runbooks,
+// libraries, collections, fake libraries, test suites). A version is the
+// hash of the document's text (ver.ID); every version is kept.
 type docKind struct {
 	noun     string // for messages
 	table    string
@@ -17,34 +20,37 @@ type docKind struct {
 	parse func([]byte) (string, error)
 }
 
-func init() {
-	for _, k := range []docKind{libraryKind, collectionKind, fakesKind, suiteKind} {
-		schema = append(schema,
-			`CREATE TABLE IF NOT EXISTS `+k.table+` (
-				name       TEXT PRIMARY KEY,
-				raw        TEXT NOT NULL,
-				version    INTEGER NOT NULL,
-				updated_at TEXT NOT NULL
-			)`,
-			`CREATE TABLE IF NOT EXISTS `+k.versions+` (
-				name       TEXT NOT NULL,
-				version    INTEGER NOT NULL,
-				raw        TEXT NOT NULL,
-				created_at TEXT NOT NULL,
-				PRIMARY KEY (name, version)
-			)`)
+func docSchema(k docKind) []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS ` + k.table + ` (
+			name       TEXT PRIMARY KEY,
+			raw        TEXT NOT NULL,
+			hash       TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS ` + k.versions + ` (
+			name       TEXT NOT NULL,
+			hash       TEXT NOT NULL,
+			raw        TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (name, hash)
+		)`,
 	}
+}
+
+func docKinds() []docKind {
+	return []docKind{runbookKind, libraryKind, collectionKind, fakesKind, suiteKind}
 }
 
 type docRow struct {
 	Name      string
 	Raw       []byte
-	Version   int
+	Version   ver.ID
 	UpdatedAt time.Time
 }
 
 func (s *Store) listDocs(k docKind) ([]docRow, error) {
-	rows, err := s.db.Query(`SELECT name, raw, version, updated_at FROM ` + k.table + ` ORDER BY name`)
+	rows, err := s.db.Query(`SELECT name, raw, hash, updated_at FROM ` + k.table + ` ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +71,7 @@ func (s *Store) listDocs(k docKind) ([]docRow, error) {
 func (s *Store) loadDoc(k docKind, name string) (*docRow, error) {
 	var raw, updated string
 	r := &docRow{Name: name}
-	err := s.db.QueryRow(s.q(`SELECT raw, version, updated_at FROM `+k.table+` WHERE name = ?`), name).Scan(&raw, &r.Version, &updated)
+	err := s.db.QueryRow(s.q(`SELECT raw, hash, updated_at FROM `+k.table+` WHERE name = ?`), name).Scan(&raw, &r.Version, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%s %q: %w", k.noun, name, ErrNotFound)
 	}
@@ -76,71 +82,76 @@ func (s *Store) loadDoc(k docKind, name string) (*docRow, error) {
 	return r, nil
 }
 
-// saveDoc validates raw and stores it as a new version of its name.
-func (s *Store) saveDoc(k docKind, raw []byte, o SaveOpts) (string, int, error) {
+// saveDoc validates raw and makes it the current version of its name. Text
+// saved before under this name is that version again, not a new one.
+func (s *Store) saveDoc(k docKind, raw []byte, o SaveOpts) (string, ver.ID, error) {
 	name, err := k.parse(raw)
 	if err != nil {
-		return "", 0, err
+		return "", "", err
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return "", 0, err
+		return "", "", err
 	}
 	defer tx.Rollback()
-	current := func(n string) (int, bool, error) {
-		var v int
-		err := tx.QueryRow(s.q(`SELECT version FROM `+k.table+` WHERE name = ?`+s.forUpdate()), n).Scan(&v)
+	current := func(n string) (ver.ID, bool, error) {
+		var v ver.ID
+		err := tx.QueryRow(s.q(`SELECT hash FROM `+k.table+` WHERE name = ?`+s.forUpdate()), n).Scan(&v)
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, nil
+			return "", false, nil
 		}
 		return v, err == nil, err
 	}
 	if o.OldName != "" {
 		v, ok, err := current(o.OldName)
 		if err != nil {
-			return "", 0, err
+			return "", "", err
 		}
 		if !ok {
-			return "", 0, fmt.Errorf("%s %q: %w", k.noun, o.OldName, ErrNotFound)
+			return "", "", fmt.Errorf("%s %q: %w", k.noun, o.OldName, ErrNotFound)
 		}
-		if o.BaseVersion != 0 && v != o.BaseVersion {
-			return "", 0, fmt.Errorf("%s %q is at version %d, you edited version %d: %w", k.noun, o.OldName, v, o.BaseVersion, ErrConflict)
+		if o.Base != "" && v != o.Base {
+			return "", "", fmt.Errorf("%s %q is at version %s, you edited version %s: %w", k.noun, o.OldName, v.Short(), o.Base.Short(), ErrConflict)
 		}
 	}
 	if o.OldName != name {
 		if _, exists, err := current(name); err != nil {
-			return "", 0, err
+			return "", "", err
 		} else if exists && !o.Overwrite {
-			return "", 0, fmt.Errorf("%s %q already exists", k.noun, name)
+			return "", "", fmt.Errorf("%s %q already exists", k.noun, name)
 		}
 	}
-	// Saving it unchanged keeps the version it has.
+	id := ver.Of(raw)
 	if o.OldName == "" || o.OldName == name {
-		var v int
-		var cur string
-		if err := tx.QueryRow(s.q(`SELECT version, raw FROM `+k.table+` WHERE name = ?`), name).Scan(&v, &cur); err == nil && cur == string(raw) {
-			return name, v, nil
+		if v, ok, err := current(name); err != nil {
+			return "", "", err
+		} else if ok && v == id {
+			return name, id, nil
 		}
-	}
-	var next int
-	if err := tx.QueryRow(s.q(`SELECT COALESCE(MAX(version), 0) + 1 FROM `+k.versions+` WHERE name = ?`), name).Scan(&next); err != nil {
-		return "", 0, err
 	}
 	now := ts(time.Now())
-	if _, err := tx.Exec(s.q(`INSERT INTO `+k.versions+` (name, version, raw, created_at) VALUES (?, ?, ?, ?)`), name, next, string(raw), now); err != nil {
-		return "", 0, err
+	if _, err := tx.Exec(s.q(`INSERT INTO `+k.versions+` (name, hash, raw, created_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT (name, hash) DO NOTHING`), name, id, string(raw), now); err != nil {
+		return "", "", err
 	}
-	if _, err := tx.Exec(s.q(`INSERT INTO `+k.table+` (name, raw, version, updated_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT (name) DO UPDATE SET raw = excluded.raw, version = excluded.version, updated_at = excluded.updated_at`),
-		name, string(raw), next, now); err != nil {
-		return "", 0, err
+	if _, err := tx.Exec(s.q(`INSERT INTO `+k.table+` (name, raw, hash, updated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT (name) DO UPDATE SET raw = excluded.raw, hash = excluded.hash, updated_at = excluded.updated_at`),
+		name, string(raw), id, now); err != nil {
+		return "", "", err
 	}
 	if o.OldName != "" && o.OldName != name {
 		if _, err := tx.Exec(s.q(`DELETE FROM `+k.table+` WHERE name = ?`), o.OldName); err != nil {
-			return "", 0, err
+			return "", "", err
 		}
 	}
-	return name, next, tx.Commit()
+	return name, id, tx.Commit()
+}
+
+func (s *Store) forUpdate() string {
+	if s.postgres {
+		return " FOR UPDATE"
+	}
+	return "" // SQLite transactions here are IMMEDIATE, i.e. already exclusive.
 }
 
 func (s *Store) deleteDoc(k docKind, name string) error {
@@ -154,8 +165,20 @@ func (s *Store) deleteDoc(k docKind, name string) error {
 	return nil
 }
 
+// Version is one saved version of a document.
+type Version struct {
+	Version   ver.ID    `json:"version"`
+	CreatedAt time.Time `json:"created_at"` // when it was first saved
+	Bytes     int       `json:"bytes"`
+	Current   bool      `json:"current,omitempty"`
+}
+
+// docVersions lists a document's versions, the most recently first saved
+// first.
 func (s *Store) docVersions(k docKind, name string) ([]Version, error) {
-	rows, err := s.db.Query(s.q(`SELECT version, created_at, LENGTH(raw) FROM `+k.versions+` WHERE name = ? ORDER BY version DESC`), name)
+	var cur ver.ID
+	_ = s.db.QueryRow(s.q(`SELECT hash FROM `+k.table+` WHERE name = ?`), name).Scan(&cur)
+	rows, err := s.db.Query(s.q(`SELECT hash, created_at, LENGTH(raw) FROM `+k.versions+` WHERE name = ? ORDER BY created_at DESC, hash`), name)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +190,7 @@ func (s *Store) docVersions(k docKind, name string) ([]Version, error) {
 		if err := rows.Scan(&v.Version, &created, &v.Bytes); err != nil {
 			return nil, err
 		}
-		v.CreatedAt = parseTS(created)
+		v.CreatedAt, v.Current = parseTS(created), v.Version == cur
 		out = append(out, v)
 	}
 	if len(out) == 0 && rows.Err() == nil {
@@ -176,11 +199,77 @@ func (s *Store) docVersions(k docKind, name string) ([]Version, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) rawDocVersion(k docKind, name string, version int) ([]byte, error) {
-	var raw string
-	err := s.db.QueryRow(s.q(`SELECT raw FROM `+k.versions+` WHERE name = ? AND version = ?`), name, version).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("%s %q version %d: %w", k.noun, name, version, ErrNotFound)
+// rawDocVersion is the text of the version of name that ref names (the
+// hash, a prefix of it, or its short form), and that version.
+func (s *Store) rawDocVersion(k docKind, name, ref string) ([]byte, ver.ID, error) {
+	rows, err := s.db.Query(s.q(`SELECT hash FROM `+k.versions+` WHERE name = ?`), name)
+	if err != nil {
+		return nil, "", err
 	}
-	return []byte(raw), err
+	var ids []ver.ID
+	for rows.Next() {
+		var id ver.ID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, "", err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	id, err := ver.Find(ids, ref)
+	if err != nil {
+		var nf *ver.NotFoundError
+		if errors.As(err, &nf) {
+			return nil, "", fmt.Errorf("%s %q version %s: %w", k.noun, name, ref, ErrNotFound)
+		}
+		return nil, "", fmt.Errorf("%s %q: %w", k.noun, name, err)
+	}
+	var raw string
+	err = s.db.QueryRow(s.q(`SELECT raw FROM `+k.versions+` WHERE name = ? AND hash = ?`), name, id).Scan(&raw)
+	return []byte(raw), id, err
+}
+
+func init() {
+	for _, k := range docKinds() {
+		schema = append(schema, docSchema(k)...)
+	}
+}
+
+// AddVersion keeps raw as a version of name (a document of kind, by the
+// names KindRunbook etc.), as when a run imported from another runnr brings
+// the runbook it ran. It becomes current only if there's no document by
+// that name; it says whether it did.
+func (s *Store) AddVersion(kind, name string, raw []byte) (bool, error) {
+	t, _, err := tables(kind)
+	if err != nil {
+		return false, err
+	}
+	var k docKind
+	for _, x := range docKinds() {
+		if x.table == t {
+			k = x
+		}
+	}
+	if n, err := k.parse(raw); err != nil {
+		return false, err
+	} else if n != name {
+		return false, fmt.Errorf("%s %q is named %q", k.noun, name, n)
+	}
+	id, now := ver.Of(raw), ts(time.Now())
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(s.q(`INSERT INTO `+k.versions+` (name, hash, raw, created_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT (name, hash) DO NOTHING`), name, id, string(raw), now); err != nil {
+		return false, err
+	}
+	res, err := tx.Exec(s.q(`INSERT INTO `+k.table+` (name, raw, hash, updated_at) VALUES (?, ?, ?, ?)
+		ON CONFLICT (name) DO NOTHING`), name, string(raw), id, now)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, tx.Commit()
 }

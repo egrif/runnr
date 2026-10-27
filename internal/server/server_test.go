@@ -16,6 +16,7 @@ import (
 
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 func do(t *testing.T, method, url, body string, hdr map[string]string) *http.Response {
@@ -163,17 +164,18 @@ func TestRunbookConflict(t *testing.T) {
 
 	v1 := "name: c\nsteps: [{name: a, run: 'true'}]\n"
 	do(t, "POST", ts.URL+"/api/runbooks", v1, nil)
-	if r := do(t, "PUT", ts.URL+"/api/runbooks/c", strings.Replace(v1, "true", "echo 2", 1), map[string]string{"If-Match": "1"}); r.StatusCode != http.StatusOK {
+	h1 := string(ver.Of([]byte(v1)))
+	if r := do(t, "PUT", ts.URL+"/api/runbooks/c", strings.Replace(v1, "true", "echo 2", 1), map[string]string{"If-Match": h1}); r.StatusCode != http.StatusOK {
 		t.Fatalf("first edit: %d", r.StatusCode)
 	}
-	// A second editor still on version 1 must not clobber version 2.
-	if r := do(t, "PUT", ts.URL+"/api/runbooks/c", strings.Replace(v1, "true", "echo 3", 1), map[string]string{"If-Match": "1"}); r.StatusCode != http.StatusConflict {
+	// A second editor still on the first version must not clobber the second.
+	if r := do(t, "PUT", ts.URL+"/api/runbooks/c", strings.Replace(v1, "true", "echo 3", 1), map[string]string{"If-Match": h1}); r.StatusCode != http.StatusConflict {
 		t.Fatalf("stale edit: %d", r.StatusCode)
 	}
 	r := do(t, "GET", ts.URL+"/api/runbooks/c/versions", "", nil)
 	var vs []store.Version
 	json.NewDecoder(r.Body).Decode(&vs)
-	if len(vs) != 2 || vs[0].Version != 2 {
+	if len(vs) != 2 || vs[0].Version != ver.Of([]byte(strings.Replace(v1, "true", "echo 2", 1))) || !vs[0].Current {
 		t.Fatalf("versions %+v", vs)
 	}
 }
@@ -416,16 +418,16 @@ func TestEditStepDuringRunOverHTTP(t *testing.T) {
 		t.Fatalf("%+v %q", final, output)
 	}
 	r := do(t, "POST", base+"/save-edits", "", nil)
-	var saved struct{ Version int }
+	var saved struct{ Version ver.ID }
 	json.NewDecoder(r.Body).Decode(&saved)
-	if r.StatusCode != http.StatusOK || saved.Version != 2 {
+	if d, _ := st.Load("fixme"); r.StatusCode != http.StatusOK || saved.Version != d.Version {
 		t.Fatalf("save: %d %+v", r.StatusCode, saved)
 	}
 	if got, _, _ := st.Get("fixme"); got.Steps[1].Run != "echo fixed" {
 		t.Fatalf("runbook not updated: %q", got.Steps[1].Run)
 	}
-	if rec, _ := st.LoadRun(started.ID); rec.EditsSaved != 2 {
-		t.Fatalf("run record: edits_saved %d", rec.EditsSaved)
+	if rec, _ := st.LoadRun(started.ID); rec.EditsSaved != saved.Version {
+		t.Fatalf("run record: edits_saved %s", rec.EditsSaved)
 	}
 }
 
@@ -561,12 +563,12 @@ func TestResumeWithChangedRunbook(t *testing.T) {
 	if r := do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true,"new_run":true}`, nil); r.StatusCode == http.StatusOK {
 		t.Fatalf("new_run on a changed runbook: %d", r.StatusCode)
 	}
-	// Carrying on: the same run, with version 2 noted.
+	// Carrying on: the same run, with the new version noted.
 	var got engine.Run
 	r := do(t, "POST", ts.URL+"/api/runs/"+run.ID+"/resume", `{"vars":{"mode":"ok"},"unattended":true,"wait":true}`, nil)
 	json.NewDecoder(r.Body).Decode(&got)
 	if r.StatusCode != http.StatusOK || got.ID != run.ID || got.Status != engine.StatusSucceeded || len(got.Steps) != 3 ||
-		len(got.Resumptions) != 1 || got.Resumptions[0].RunbookVersion != 2 || len(got.Removed) != 1 || got.Removed[0].Name != "gone" {
+		len(got.Resumptions) != 1 || got.Resumptions[0].RunbookVersion != ver.Of([]byte(v2)) || len(got.Removed) != 1 || got.Removed[0].Name != "gone" {
 		t.Fatalf("resume: %d %+v", r.StatusCode, got)
 	}
 	saved, _ := st.LoadRun(run.ID)

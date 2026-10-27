@@ -29,8 +29,8 @@ proxy) off-host.
 | POST | `/api/runbooks` | YAML | `201 {name, version, runbook}` (`400` if invalid or exists) |
 | PUT | `/api/runbooks/{name}` | YAML | `{name, version, runbook}`; renames if `name` changed |
 | DELETE | `/api/runbooks/{name}` | | `204`: version history is kept; it's taken out of its collections and its scheduled runs are removed |
-| GET | `/api/runbooks/{name}/versions` | | `[{version, created_at, bytes}]`, newest first |
-| GET | `/api/runbooks/{name}/versions/{n}` | | `{version, raw}` |
+| GET | `/api/runbooks/{name}/versions` | | `[{version, created_at, bytes, current?}]`, most recently first saved first |
+| GET | `/api/runbooks/{name}/versions/{version}` | | `{version, raw}`; `{version}` is the hash, a prefix of it or its short form |
 | POST | `/api/validate` | YAML | `{ok, error?}` |
 | POST | `/api/parse` | YAML | `{ok, runbook?, comments?, error?}`: the structured form, and the YAML's comments by field path (`"steps.3.run"`, `"steps.3"` for the item, `""` for the file) |
 | POST | `/api/format` | runbook JSON, or `{runbook, comments}` | `{ok, raw?, error?}`: YAML (validated), with the comments put back on their fields |
@@ -41,8 +41,9 @@ proxy) off-host.
 | POST | `/api/format-step` | step JSON | `{ok, raw?, error?}` |
 | GET | `/api/template?name=` | | `{raw}`: a starter runbook |
 
-Send `If-Match: <version>` with `PUT` to get `409 Conflict` instead of
-overwriting a newer save.
+A `version` is the SHA-256 of the document's text (hex); the same text is
+the same version in any runnr. Send `If-Match: <version>` with `PUT` to get
+`409 Conflict` instead of overwriting a newer save.
 
 ## Import, export, manage
 
@@ -59,7 +60,7 @@ Paths are on the machine runnr runs on.
 | POST | `/api/runbooks/{name}/files` | `{path, libraries, overwrite?}` | `{written: [...]}`; files already there are refused without `overwrite` |
 | GET | `/api/manage` | | `{items: [{kind, name, version, updated_at, used_by, schedules?, builtin?, error?}], deleted: [{kind, name, version, saved_at}]}` |
 | POST | `/api/manage/delete` | `{items: [{kind, name}]}` | `{results: [{kind, name, ok, error?, also?}]}` (`also`: collections and scheduled runs a runbook was taken out of) |
-| POST | `/api/manage/restore` | `{items: [{kind, name}]}` | `{results: [{kind, name, ok, version?, error?}]}`: saves the last version again |
+| POST | `/api/manage/restore` | `{items: [{kind, name}]}` | `{results: [{kind, name, ok, version?, error?}]}`: makes the last version current again |
 
 A project folder's `docs` are `{path, rel, kind, name, original, error?,
 placeholders?, refs?, included?, skipped?, exists, version?, updated_at?,
@@ -68,7 +69,7 @@ same?, builtin?}`, `kind` being `runbook`, `library`, `fakes`, `suite` or
 `PROJECT_DIR` and `REPO_ROOT` default to the folder and its git root),
 `renames` are `{"kind:name": "new"}` (references to it follow), `include`
 adds files or folders from elsewhere, `skip` leaves files out (by path), and
-`replace` names files to save as the next version of the one with their
+`replace` names files to save as the current version of the one with their
 name. A result's `status` is `imported`, `replaced`, `unchanged`, `skipped`,
 `exists` (taken, not replaced) or `failed`. Kinds for manage are `runbook`,
 `library`, `fakes`, `suite` and `collection`.
@@ -147,7 +148,7 @@ aren't stored.
 | POST | `/api/libraries` | YAML | `201 {name, version, library}` |
 | PUT | `/api/libraries/{name}` | YAML | `{name, version, library}` (`If-Match: <version>` → `409` on conflict) |
 | DELETE | `/api/libraries/{name}` | | `204` (versions kept) |
-| GET | `/api/libraries/{name}/versions` | | `[{version, created_at, bytes}]` |
+| GET | `/api/libraries/{name}/versions` | | `[{version, created_at, bytes, current?}]` |
 | POST | `/api/libraries/validate` | YAML | `{ok, error?}` |
 
 Starting a run fails with `400` if a library the runbook uses doesn't exist.
@@ -161,7 +162,7 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | GET | `/api/runs/{id}` | | `{run, live}` |
 | DELETE | `/api/runs/{id}` | | `204`; `409` while it's running |
 | GET | `/api/runs/{id}/plan` | | `{steps: [StepView], version, latest, changed?, shape?, live}`: the steps as this run uses them, and the runbook's newest version (`changed`: steps not run yet that it has differently; `shape`: why it can't be adopted) |
-| POST | `/api/runs/{id}/adopt-version` | `{version}` | `{changed, restarted, version}`: a live run takes that version for the steps it hasn't run (`409` if it can't) |
+| POST | `/api/runs/{id}/adopt-version` | `{version}` (hash, prefix or short form) | `{changed, restarted, version}`: a live run takes that version for the steps it hasn't run (`409` if it can't) |
 | GET | `/api/runs/{id}/chain` | | `[{id, status, started, ended?, resumes?, runbook_version?, steps}]`: the run and the runs linked to it by resuming, oldest first |
 | GET | `/api/runs/{id}/logs?ids=&format=raw\|json\|both&single=1` | | those runs of the chain (all by default) as raw logs, records (JSON) or both, in one file per format or one per run: a file, or a zip of several. `format` can add `,timeline` (or be just `timeline`): a page per run laying it out in time |
 | POST | `/api/runs/import` | `{paths?, uploads?: [{name, data (base64)}], ids?, check?}` | `{runs: [{id, runbook, status, started, steps, from, exists?, unfinished?, imported?}], errors: [{from, error}]}`: imports exported runs: records (`.json`) or raw logs (`.log`), zips of them, or folders of them on this machine, or sent as `uploads`; `check` only says what it would do, `ids` imports just those. A run already here is left alone; one exported while still going comes in aborted; one from a raw log is rebuilt from its text (`from_log`; close, not exact), and the record is used where there's both. Imported runs have `imported` (when) |
@@ -210,8 +211,8 @@ and a `steps` array with each step's `status` (also `pending`, `skipped`, or
 (system note, e.g. the force reason), `notes` (operator notes), `shells`
 (shell sessions opened at it), `jobs` (commands the operator ran in the
 background at it: `{command, started, ended, exit_code, output, note}`) and
-timings, plus `runbook_version`, `resumes` (a `new_run` resume), `resumptions` (each time it was resumed in place, with `runbook_version` and `was_version` when the runbook had changed), `removed` (steps it ran that a changed runbook no longer has), `edits` and `input_changes`
-(`{at, name, old, new, by, step}`). Secrets are masked.
+timings, plus `runbook_version`, `libraries` (`{name: version}` of the libraries it used), `resumes` (a `new_run` resume), `resumptions` (each time it was resumed in place, with `runbook_version` and `was_version` when the runbook had changed), `removed` (steps it ran that a changed runbook no longer has), `edits` and `input_changes`
+(`{at, name, old, new, by, step}`). Secrets are masked. An exported record (`logs`, `format=json`) also has `definitions`: `{version: text}` of the runbook and libraries it ran, which importing it keeps.
 
 ### Interactive runs over the API
 

@@ -175,8 +175,8 @@ func (s *Server) shellInput(w http.ResponseWriter, r *http.Request) {
 
 // runbookOf is the runbook version a run ran.
 func (s *Server) runbookOf(rec *engine.Run) (*runbook.Runbook, error) {
-	if rec.RunbookVersion > 0 {
-		if raw, err := s.st.RawVersion(rec.Runbook, rec.RunbookVersion); err == nil {
+	if rec.RunbookVersion != "" {
+		if raw, _, err := s.st.RawVersion(rec.Runbook, string(rec.RunbookVersion)); err == nil {
 			return runbook.Parse(raw)
 		}
 	}

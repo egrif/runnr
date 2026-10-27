@@ -2,6 +2,9 @@
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const main = $("#main");
+// A version is the hash of its text; it's shown by its first and last four
+// characters.
+const shortVer = (v) => (v ? `${v.slice(0, 4)}…${v.slice(-4)}` : "unknown");
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const ICONS = { succeeded: "✔", failed: "✘", skipped: "↷", aborted: "■", suspended: "‖", running: "▶", pending: "○", forced: "⚑", background: "◐" };
 
@@ -477,7 +480,7 @@ function renderRun(state) {
     <div class="row">
       <div>
         <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a> ${identChips(run, "big")}</h1>
-        <div class="muted">${esc(run.id)}${run.runbook_version ? ` · v${run.runbook_version}` : ""} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
+        <div class="muted">${esc(run.id)}${run.runbook_version ? ` · ${shortVer(run.runbook_version)}` : ""} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
           ${duration(run.started, run.ended) ? ` · took ${duration(run.started, run.ended)}` : ""}${run.imported ? ` · <span title="${esc(new Date(run.imported).toLocaleString())}${run.from_log ? ": rebuilt from its text, so times are to the second, and sections and state aren't there" : ""}">⇪ imported${run.from_log ? " from a raw log" : ""}</span>` : ""}</div>
       </div>
       <span class="spacer"></span>
@@ -680,7 +683,7 @@ function editsBanner(run, state) {
   if (!edits.length) return "";
   const steps = [...new Set(edits.map((e) => e.step))].sort((a, b) => a - b);
   const names = steps.map((i) => `${i + 1}. ${esc(state.steps[i]?.name || "")}`).join(", ");
-  if (run.edits_saved) return `<p class="muted">✎ Step edits (${names}) saved to the runbook as version ${run.edits_saved}.</p>`;
+  if (run.edits_saved) return `<p class="muted">✎ Step edits (${names}) saved to the runbook as version ${shortVer(run.edits_saved)}.</p>`;
   return `<div class="edits-banner">✎ You changed ${steps.length === 1 ? "a step" : `${steps.length} steps`} in this run (${names}). The runbook doesn't have ${steps.length === 1 ? "this change" : "these changes"} yet.
     <button class="primary" id="save-edits">Save to runbook</button></div>`;
 }
@@ -914,7 +917,7 @@ function alignedRun(run, rb) {
 function changedNote(prev, version) {
   if (!prev?.changed) return "";
   const d = prev.dropped || [];
-  return ` The runbook has changed since this run (it ran version ${prev.runbook_version || "?"}, now ${version}): it carries on with this version, its steps matched by name${d.length ? `; ${d.length === 1 ? "a step it ran is" : `${d.length} steps it ran are`} no longer in it (${d.map(esc).join(", ")}) and ${d.length === 1 ? "stays" : "stay"} in the record` : ""}.`;
+  return ` The runbook has changed since this run (it ran version ${shortVer(prev.runbook_version)}, now ${shortVer(version)}): it carries on with this version, its steps matched by name${d.length ? `; ${d.length === 1 ? "a step it ran is" : `${d.length} steps it ran are`} no longer in it (${d.map(esc).join(", ")}) and ${d.length === 1 ? "stays" : "stay"} in the record` : ""}.`;
 }
 
 // openTimeline shows the run laid out in time (a page of its own, from
@@ -946,7 +949,7 @@ function howItEnded(r) {
 function resumedHTML(run) {
   const rs = run.resumptions || [];
   if (!rs.length) return "";
-  return `<p class="muted">${rs.map((r) => `↻ Resumed ${new Date(r.at).toLocaleString()} from step ${r.from + 1} (${esc(howItEnded(r))})${r.was_version ? ` with runbook version ${r.runbook_version} (it had run version ${r.was_version})` : ""}`).join("<br>")}</p>`;
+  return `<p class="muted">${rs.map((r) => `↻ Resumed ${new Date(r.at).toLocaleString()} from step ${r.from + 1} (${esc(howItEnded(r))})${r.was_version ? ` with runbook version ${shortVer(r.runbook_version)} (it had run version ${shortVer(r.was_version)})` : ""}`).join("<br>")}</p>`;
 }
 
 // removedHTML lists steps the run did that its runbook no longer has.
@@ -962,7 +965,7 @@ async function saveRunEdits(state) {
   try {
     const { version } = await api("POST", `/api/runs/${enc(state.run.id)}/save-edits`);
     state.run.edits_saved = version;
-    toast(`Saved as version ${version}`);
+    toast(`Saved as version ${shortVer(version)}`);
     api("GET", `/api/runbooks/${enc(state.run.runbook)}`).then((d) => { state.cfg = d.runbook?.steps; renderRun(state); }).catch(() => {});
     renderRun(state);
   } catch (e) { toast(e.message); }

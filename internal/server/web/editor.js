@@ -15,7 +15,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
       ${name ? `<button id="run-tests" title="Run this runbook's tests against what's in the editor, before saving">▶ Run tests</button>` : ""}
       <div class="seg"><button id="as-struct">Structured</button><button id="as-yaml" class="on">YAML</button></div>
       <button type="button" data-fnpick="#yaml" class="fn-pick-yaml" title="Insert a function at the cursor in the YAML (Ctrl+Shift+F)">ƒ Insert function</button>
-      ${version ? `<span class="muted">version ${version} · saved ${new Date(updatedAt).toLocaleString()}</span>` : ""}
+      ${version ? `<span class="muted">version ${shortVer(version)} · saved ${new Date(updatedAt).toLocaleString()}</span>` : ""}
       <span class="spacer"></span>
       ${name ? `<button class="danger" id="delete">Delete</button>` : ""}
     </div>

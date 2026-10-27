@@ -3,7 +3,7 @@
 // Importing runbook and library files (⇪ Import in the sidebar, the New
 // runbook page and Libraries). Each file is checked first: what it is, and
 // whether its name is taken. A taken name needs a choice: save it as the
-// next version of the one there (its earlier versions are kept), import it
+// current version of the one there (its earlier versions are kept), import it
 // under another name (its name: is changed), or skip it. Nothing is saved
 // until Import.
 
@@ -71,13 +71,13 @@ async function openImport(files, opts = {}) {
       const unset = unsetIn(it);
       let body;
       if (c.error) body = `<div class="error-text">${esc(c.error)}</div><div class="muted small">Skipped.</div>`;
-      else if (c.same) body = `<div class="muted small">Same as ${noun} <b>${esc(c.name)}</b> version ${c.version}: nothing to import.</div>`;
+      else if (c.same) body = `<div class="muted small">Same as ${noun} <b>${esc(c.name)}</b> version ${shortVer(c.version)}: nothing to import.</div>`;
       else if (!c.exists) body = `<div class="small">Adds ${noun} <b>${esc(c.name)}</b>.${c.builtin ? ` <span class="warn-text">It takes the place of runnr's built-in library of that name.</span>` : ""}</div>
         <label class="check small"><input type="radio" name="ch${k}" value="add" ${it.choice !== "skip" ? "checked" : ""}> Import as <input data-as="${k}" value="${esc(it.as)}" spellcheck="false"></label>
         <label class="check small"><input type="radio" name="ch${k}" value="skip" ${it.choice === "skip" ? "checked" : ""}> Skip</label>`;
-      else body = `<div class="warn-text small">⚠ ${noun} <b>${esc(c.name)}</b> already exists: version ${c.version}, saved ${esc(when(c.updated_at))}.</div>
+      else body = `<div class="warn-text small">⚠ ${noun} <b>${esc(c.name)}</b> already exists: version ${shortVer(c.version)}, saved ${esc(when(c.updated_at))}.</div>
         ${diffHTML(c.diff, `f${k}`, openDiffs)}
-        <label class="check small"><input type="radio" name="ch${k}" value="replace" ${it.choice === "replace" ? "checked" : ""}> Save as version ${c.version + 1} of <b>${esc(c.name)}</b> (its earlier versions are kept)</label>
+        <label class="check small"><input type="radio" name="ch${k}" value="replace" ${it.choice === "replace" ? "checked" : ""}> Make it the current version of <b>${esc(c.name)}</b> (its earlier versions are kept)</label>
         <label class="check small"><input type="radio" name="ch${k}" value="rename" ${it.choice === "rename" ? "checked" : ""}> Import as <input data-as="${k}" value="${esc(it.as)}" spellcheck="false"></label>
         <label class="check small"><input type="radio" name="ch${k}" value="skip" ${it.choice === "skip" ? "checked" : ""}> Skip</label>`;
       if (unset.length && !c.error) body += `<div class="error-text small">Uses ${unset.map((k) => `@${esc(k)}@`).join(", ")}, which ${unset.length === 1 ? "has" : "have"} no value (above): not imported until ${unset.length === 1 ? "it has" : "they have"} one.</div>`;
@@ -116,7 +116,7 @@ async function openImport(files, opts = {}) {
       if (collection && it.check.kind === "runbook") q.set("collection", collection);
       try {
         const res = await api("POST", `/api/import?${q}`, it.raw, true);
-        it.result = { ok: true, text: res.replaced ? `saved as version ${res.version}` : `imported as ${res.name}` };
+        it.result = { ok: true, text: res.replaced ? `saved as version ${shortVer(res.version)}` : `imported as ${res.name}` };
         done.push(res);
       } catch (err) { it.result = { ok: false, text: err.message }; }
     }
@@ -228,11 +228,11 @@ function openFolderImport(dir = "") {
     for (const d of p.docs) for (const r of d.refs || []) (neededBy[`${r.kind}:${r.name}`] ||= []).push(d.name);
     const row = (d) => {
       const key = `${d.kind}:${d.original}`, skipped = st.skip.includes(d.path), r = res[d.rel];
-      const replaceBox = `<label class="check"><input type="checkbox" data-replace="${esc(d.path)}" ${st.replace.has(d.path) ? "checked" : ""}> save as version ${d.version + 1} (earlier versions are kept)</label>`;
+      const replaceBox = `<label class="check"><input type="checkbox" data-replace="${esc(d.path)}" ${st.replace.has(d.path) ? "checked" : ""}> make it the current version (earlier versions are kept)</label>`;
       let state;
       if (d.error) state = `<span class="error-text">${esc(d.error)}</span>`;
-      else if (d.same) state = `<span class="muted">${d.kind === "run" ? "already in the history" : `unchanged (version ${d.version})`}</span>`;
-      else if (d.exists) state = `<span class="warn-text">⚠ name taken: version ${d.version}, saved ${esc(new Date(d.updated_at).toLocaleString())}</span> ${replaceBox}`;
+      else if (d.same) state = `<span class="muted">${d.kind === "run" ? "already in the history" : `unchanged (version ${shortVer(d.version)})`}</span>`;
+      else if (d.exists) state = `<span class="warn-text">⚠ name taken: version ${shortVer(d.version)}, saved ${esc(new Date(d.updated_at).toLocaleString())}</span> ${replaceBox}`;
       else state = `<span class="ok-text">new</span>${d.builtin ? ` <span class="warn-text">(takes the place of runnr's built-in library)</span>` : ""}`;
       const unset = (d.placeholders || []).filter((k) => p.unset?.includes(k));
       if (unset.length && !d.error) state += `<div class="small error-text">${unset.map((k) => `@${esc(k)}@`).join(", ")} needs a value (above)</div>`;
@@ -243,7 +243,7 @@ function openFolderImport(dir = "") {
         <td class="small">${esc(KIND_LABEL[d.kind] || "")}</td>
         <td>${d.kind === "run" ? `<code>${esc(d.name)}</code>` : d.error && !d.name ? "" : `<input class="imp-name" data-rename="${esc(key)}" value="${esc(st.renames[key] ?? d.name)}" spellcheck="false" ${d.kind === "suite" && !d.original ? "" : ""}>`}
           <div class="muted small">${esc(d.rel)}${d.included ? (neededBy[`${d.kind}:${d.name}`] ? ` · from the repository, needed by ${esc(neededBy[`${d.kind}:${d.name}`].join(", "))}` : " · added from elsewhere") : ""}</div>${refs}</td>
-        <td class="small">${r ? `<b class="${["failed", "exists"].includes(r.status) ? "error-text" : "ok-text"}">${esc(r.status)}${r.version ? ` · v${r.version}` : ""}</b>${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}${r.status === "exists" ? `<div>${replaceBox}</div>` : ""}` : state}</td></tr>
+        <td class="small">${r ? `<b class="${["failed", "exists"].includes(r.status) ? "error-text" : "ok-text"}">${esc(r.status)}${r.version ? ` · ${shortVer(r.version)}` : ""}</b>${r.error ? `<div class="error-text">${esc(r.error)}</div>` : ""}${r.status === "exists" ? `<div>${replaceBox}</div>` : ""}` : state}</td></tr>
         ${d.diff && !skipped && (!r || r.status === "exists") ? `<tr class="imp-diff-row"><td></td><td colspan="3">${diffHTML(d.diff, d.path, st.openDiffs)}</td></tr>` : ""}`;
     };
     const blocked = p.docs.filter((d) => !d.error && !st.skip.includes(d.path) && (d.placeholders || []).some((k) => p.unset?.includes(k)));

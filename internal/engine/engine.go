@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 type Status string
@@ -93,8 +94,14 @@ type Run struct {
 	Mode           string `json:"mode"`
 	DryRun         bool   `json:"dry_run,omitempty"`
 	StartAt        int    `json:"start_at,omitempty"`
-	RunbookVersion int    `json:"runbook_version,omitempty"`
-	Resumes        string `json:"resumes,omitempty"`
+	RunbookVersion ver.ID `json:"runbook_version,omitempty"`
+	// Libraries are the versions of the function libraries it used, by name.
+	Libraries map[string]ver.ID `json:"libraries,omitempty"`
+	// Definitions are the texts of the runbook and libraries it ran, by
+	// version. An exported run carries them so another runnr can tell
+	// exactly what ran; a stored record doesn't.
+	Definitions map[ver.ID]string `json:"definitions,omitempty"`
+	Resumes     string            `json:"resumes,omitempty"`
 	// Resumptions are the times this run was resumed (it carries on in
 	// the same record).
 	Resumptions []Resumption `json:"resumptions,omitempty"`
@@ -107,9 +114,9 @@ type Run struct {
 	// identifier in the runbook); their values are in Inputs.
 	Identifiers []string `json:"identifiers,omitempty"`
 	// Edits are changes made to steps during the run; EditsSaved is the
-	// runbook version they were saved as (0: not saved yet).
+	// runbook version they were saved as (empty: not saved yet).
 	Edits      []StepEdit `json:"edits,omitempty"`
-	EditsSaved int        `json:"edits_saved,omitempty"`
+	EditsSaved ver.ID     `json:"edits_saved,omitempty"`
 	// InputChanges are changes to the inputs during the run (Inputs has
 	// the values now).
 	InputChanges []InputChange `json:"input_changes,omitempty"`
@@ -276,8 +283,10 @@ type Options struct {
 	State map[string]string
 	// Resumes records the run ID this run continues, if any.
 	Resumes string
-	// RunbookVersion records which saved version of the runbook ran.
-	RunbookVersion int
+	// RunbookVersion is the version of the runbook that runs (its text's
+	// hash); LibraryVersions, those of its libraries, by name.
+	RunbookVersion  ver.ID
+	LibraryVersions map[string]ver.ID
 	// Save is called with a snapshot after every state change worth keeping.
 	Save func(*Run)
 	// Sanctioned: a recorded run of a saved runbook. Dangerous steps run
@@ -486,7 +495,7 @@ type executor struct {
 	em         sync.Mutex
 	cur        int
 	edits      []StepEdit
-	editsSaved int
+	editsSaved ver.ID
 	// reopenTo is the step asked to re-open; pauseAt the re-opened step
 	// that pauses before running (-1: none).
 	reopenTo, pauseAt int
@@ -528,7 +537,7 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 	own.Steps = slices.Clone(rb.Steps)
 	rb = &own
 	x := &executor{runCtx: ctx, rb: rb, ui: ui, opts: opts, cur: -1, reopenTo: -1, pauseAt: -1, windowOpenedBy: -1, vars: map[string]string{}, secretVars: map[string]bool{}, masker: runbook.NewMasker(rb)}
-	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
+	x.run = &Run{ID: id, Runbook: rb.Name, Mode: mode, DryRun: opts.DryRun, StartAt: opts.StartAt, Resumes: opts.Resumes, RunbookVersion: opts.RunbookVersion, Libraries: opts.LibraryVersions, Status: StatusRunning, Started: time.Now(), Inputs: map[string]string{}, Owner: opts.Owner}
 	for i, s := range rb.Steps {
 		x.run.Steps = append(x.run.Steps, StepResult{Index: i, Name: s.Name, Section: s.Section, Owner: s.Owner, Kind: stepKind(s), Status: StatusPending, Optional: s.Optional})
 	}

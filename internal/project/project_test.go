@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // A repository like runbook-automation: shared libraries at the top, a
@@ -114,16 +116,12 @@ func TestApply(t *testing.T) {
 	stored := map[string][]byte{}
 	lookup := func(kind, name string) (Stored, bool) {
 		raw, ok := stored[kind+":"+name]
-		return Stored{Version: 1, Raw: raw}, ok
+		return Stored{Version: ver.Of(raw), Raw: raw}, ok
 	}
-	save := func(kind string, raw []byte, overwrite bool) (int, error) {
+	save := func(kind string, raw []byte, overwrite bool) (ver.ID, error) {
 		_, n, _ := nameOf(kind, raw)
-		v := 1
-		if overwrite {
-			v = 2
-		}
 		stored[kind+":"+n] = raw
-		return v, nil
+		return ver.Of(raw), nil
 	}
 	opts := Options{Dir: proj, Values: map[string]string{"TEAM": "x"}, Lookup: lookup}
 	p, _ := Scan(opts)

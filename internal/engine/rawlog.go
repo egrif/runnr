@@ -27,11 +27,12 @@ func RawLog(r *Run) string {
 		return to.Sub(from).Round(time.Millisecond).String()
 	}
 
-	ver := ""
-	if r.RunbookVersion > 0 {
-		ver = fmt.Sprintf(" v%d", r.RunbookVersion)
+	// The whole version, so an imported log knows exactly which ran.
+	v := ""
+	if r.RunbookVersion != "" {
+		v = " @" + string(r.RunbookVersion)
 	}
-	w("run %s · %s%s · %s", r.ID, r.Runbook, ver, r.Mode)
+	w("run %s · %s%s · %s", r.ID, r.Runbook, v, r.Mode)
 	if r.DryRun {
 		w(" · dry run")
 	}
@@ -66,8 +67,8 @@ func RawLog(r *Run) string {
 
 	for _, rs := range r.Resumptions {
 		w("resumed %s from step %d (%s)", rs.At.Local().Format("2006-01-02 15:04:05"), rs.From+1, rs.HowItEnded())
-		if rs.Was != 0 {
-			w(" with runbook version %d (it had run version %d)", rs.RunbookVersion, rs.Was)
+		if rs.Was != "" {
+			w(" with runbook version %s (it had run version %s)", rs.RunbookVersion, rs.Was)
 		}
 		w("\n")
 	}

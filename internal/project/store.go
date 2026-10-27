@@ -7,6 +7,7 @@ import (
 	"github.com/egrif/runnr/internal/engine"
 
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // StoreLookup finds files in a runnr store.
@@ -40,9 +41,9 @@ func StoreLookup(st *store.Store) Lookup {
 
 // StoreSaver saves files to a runnr store.
 func StoreSaver(st *store.Store) Saver {
-	return func(kind string, raw []byte, overwrite bool) (int, error) {
+	return func(kind string, raw []byte, overwrite bool) (ver.ID, error) {
 		o := store.SaveOpts{Overwrite: overwrite}
-		var v int
+		var v ver.ID
 		var err error
 		switch kind {
 		case Runbook:

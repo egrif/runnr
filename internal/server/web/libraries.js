@@ -12,7 +12,7 @@ async function viewLibraries() {
     ${libs.length ? `<table><thead><tr><th>Library</th><th>Functions</th><th>Description</th><th>Version</th></tr></thead><tbody>
       ${libs.map((l) => `<tr data-lib="${esc(l.name)}"><td><b>${esc(l.name)}</b></td>
         <td><code>${esc([...l.functions].sort().join(", "))}</code></td>
-        <td class="${l.error ? "error-text" : "muted"}">${esc(l.error ? "invalid: " + l.error.split("\n")[0] : l.description || "")}</td><td>${l.version}</td></tr>`).join("")}
+        <td class="${l.error ? "error-text" : "muted"}">${esc(l.error ? "invalid: " + l.error.split("\n")[0] : l.description || "")}</td><td class="muted">${shortVer(l.version)}</td></tr>`).join("")}
     </tbody></table>` : `<div class="empty">No libraries yet.</div>`}`;
   main.querySelectorAll("tr[data-lib]").forEach((tr) => (tr.onclick = () => (location.hash = `#/libraries/${enc(tr.dataset.lib)}`)));
   $("#new-lib").onclick = () => (location.hash = "#/libraries/new");
@@ -32,7 +32,7 @@ async function viewLibrary(name) {
       <div>
         <div class="row" style="margin-bottom:8px">
           <button class="primary" id="save">Save</button><button id="validate">Validate</button>
-          ${data.version ? `<span class="muted">version ${data.version} · saved ${new Date(data.updated_at).toLocaleString()}</span>` : ""}
+          ${data.version ? `<span class="muted">version ${shortVer(data.version)} · saved ${new Date(data.updated_at).toLocaleString()}</span>` : ""}
           <span class="spacer"></span>${isNew ? "" : `<button class="danger" id="delete">Delete</button>`}
         </div>
         <div id="validation" class="validation"></div>

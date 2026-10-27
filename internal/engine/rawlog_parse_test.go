@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // rawDemo is a made-up cutover with most of what a raw log shows: a
@@ -16,12 +18,12 @@ func rawDemo() *Run {
 		return day.AddDate(0, 0, d).Add(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(s)*time.Second)
 	}
 	one, zero := 1, 0
-	r := &Run{ID: "20261020-160000-abc123", Runbook: "orders-db-cutover", Mode: "interactive", RunbookVersion: 3, Status: StatusSucceeded,
+	r := &Run{ID: "20261020-160000-abc123", Runbook: "orders-db-cutover", Mode: "interactive", RunbookVersion: ver.Of([]byte("v3")), Status: StatusSucceeded,
 		Started: at(0, 16, 0, 0), Ended: at(1, 10, 41, 0), Resumes: "20261019-090000-fff000",
 		Inputs: map[string]string{"target": "replica b", "token": "****"}, Error: "",
 		Window:      &WindowRecord{Opened: at(1, 10, 15, 0), Closed: at(1, 10, 30, 30)},
 		Notes:       []Note{{Time: at(0, 16, 30, 0), Author: "pat", Text: "db team on it, resume tomorrow"}},
-		Resumptions: []Resumption{{At: at(1, 10, 14, 30), From: 2, Status: StatusFailed, Error: "step 3 failed", RunbookVersion: 4, Was: 3}}}
+		Resumptions: []Resumption{{At: at(1, 10, 14, 30), From: 2, Status: StatusFailed, Error: "step 3 failed", RunbookVersion: ver.Of([]byte("v4")), Was: ver.Of([]byte("v3"))}}}
 	r.Steps = []StepResult{
 		{Name: "check replication", Kind: "checks", Status: StatusSucceeded, Started: at(0, 16, 0, 5), Ended: at(0, 16, 2, 10), Attempts: 2,
 			Checks: []CheckResult{{Name: "lag", Passed: true, Attempt: 2, Output: "lag 0s\n"}, {Name: "slots", Passed: false, Error: "exit 1", Output: "2 slots\nwant 1\n"}, {Name: "after", NotRun: true}}},

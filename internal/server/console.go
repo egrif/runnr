@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
-	"strconv"
-	"strings"
 
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // runPlan is what the run console shows of a run's steps: each as this run
@@ -19,8 +18,8 @@ import (
 type runPlan struct {
 	Steps []engine.StepView `json:"steps"`
 	// Version is the runbook version the run is on; Latest the newest saved.
-	Version int `json:"version"`
-	Latest  int `json:"latest"`
+	Version ver.ID `json:"version"`
+	Latest  ver.ID `json:"latest"`
 	// Changed are the steps (1-based) not run yet that the latest version
 	// has differently; Shape says the latest has a different number of
 	// steps (it can't be adopted).
@@ -63,11 +62,11 @@ func (s *Server) getRunPlan(w http.ResponseWriter, r *http.Request) {
 		defs = rb.Steps
 		cur = len(defs)
 	}
-	if latest, ver, err := s.st.Get(run.Runbook); err == nil && run.RunbookVersion > 0 {
-		p.Latest = ver
-		if ver != run.RunbookVersion && defs != nil {
+	if latest, rev, err := s.st.Get(run.Runbook); err == nil && s.st.HasVersion(run.Runbook, run.RunbookVersion) {
+		p.Latest = rev
+		if rev != run.RunbookVersion && defs != nil {
 			if len(latest.Steps) != len(defs) {
-				p.Shape = fmt.Sprintf("version %d has %d steps; this run has %d", ver, len(latest.Steps), len(defs))
+				p.Shape = fmt.Sprintf("version %s has %d steps; this run has %d", rev.Short(), len(latest.Steps), len(defs))
 			} else {
 				for i := cur; i < len(defs); i++ {
 					if !reflect.DeepEqual(latest.Steps[i], defs[i]) {
@@ -84,8 +83,8 @@ func (s *Server) getRunPlan(w http.ResponseWriter, r *http.Request) {
 // edits made during it.
 func (s *Server) runRunbook(run *engine.Run) (*runbook.Runbook, error) {
 	var rb *runbook.Runbook
-	if run.RunbookVersion > 0 {
-		if raw, err := s.st.RawVersion(run.Runbook, run.RunbookVersion); err == nil {
+	if run.RunbookVersion != "" {
+		if raw, _, err := s.st.RawVersion(run.Runbook, string(run.RunbookVersion)); err == nil {
 			rb, err = runbook.Parse(raw)
 			if err != nil {
 				return nil, err
@@ -110,11 +109,11 @@ func (s *Server) runRunbook(run *engine.Run) (*runbook.Runbook, error) {
 }
 
 // adoptVersion moves a live run onto a newer saved version of its runbook,
-// for the steps it hasn't run yet (body: {"version": N}). The step waiting
+// for the steps it hasn't run yet (body: {"version": "<hash, a prefix of it or its short form>"}). The step waiting
 // on the operator, if it changed, starts again with the new version.
 func (s *Server) adoptVersion(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Version int `json:"version"`
+		Version ver.ID `json:"version"`
 	}
 	if err := decode(r, &req); err != nil {
 		writeErr(w, err)
@@ -136,7 +135,7 @@ func (s *Server) adoptVersion(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	raw, err := s.st.RawVersion(run.Runbook, req.Version)
+	raw, v, err := s.st.RawVersion(run.Runbook, string(req.Version))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -146,7 +145,7 @@ func (s *Server) adoptVersion(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	changed, err := ad.AdoptVersion(req.Version, rb.Steps)
+	changed, err := ad.AdoptVersion(v, rb.Steps)
 	if err != nil {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
@@ -159,7 +158,7 @@ func (s *Server) adoptVersion(w http.ResponseWriter, r *http.Request) {
 			restarted = l.restartStep(i)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"changed": n, "restarted": restarted, "version": req.Version})
+	writeJSON(w, http.StatusOK, map[string]any{"changed": n, "restarted": restarted, "version": v})
 }
 
 // getRunbookStep is step n of the saved runbook as YAML, for editing one
@@ -207,12 +206,7 @@ func (s *Server) putRunbookStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := store.SaveOpts{OldName: name}
-	if m := strings.Trim(r.Header.Get("If-Match"), `" `); m != "" {
-		if o.BaseVersion, err = strconv.Atoi(m); err != nil {
-			writeErr(w, fmt.Errorf("If-Match must be a version number"))
-			return
-		}
-	}
+	o.Base = ifMatch(r)
 	body, err := readBody(r)
 	if err != nil {
 		writeErr(w, err)
@@ -228,12 +222,12 @@ func (s *Server) putRunbookStep(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	rb, ver, err := s.st.Save(raw, o)
+	rb, rev, err := s.st.Save(raw, o)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"version": ver, "runbook": rb})
+	writeJSON(w, http.StatusOK, map[string]any{"version": rev, "runbook": rb})
 }
 
 // parseStep reads one step's YAML into the structure the editor's form

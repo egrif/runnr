@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Importing runs: what an export writes (records, --as json; raw logs,
@@ -230,6 +232,9 @@ func ImportRuns(st *store.Store, files []RunFile, ids []string, dry bool) ([]Run
 			r = MaskedRun(st, r)
 			r.Imported = time.Now()
 			r.Owner = nil
+			if err := keepDefinitions(st, r); err != nil {
+				return out, fmt.Errorf("run %s: %w", r.ID, err)
+			}
 			if err := st.SaveRun(r); err != nil {
 				return out, fmt.Errorf("run %s: %w", r.ID, err)
 			}
@@ -262,4 +267,32 @@ func markUnfinished(r *engine.Run) {
 			}
 		}
 	}
+}
+
+// keepDefinitions saves the runbook and library versions an exported run
+// brought (those whose text is what the run says it ran), then drops them
+// from the record.
+func keepDefinitions(st *store.Store, r *engine.Run) error {
+	defs := r.Definitions
+	r.Definitions = nil
+	keep := func(kind, name string, v ver.ID) error {
+		raw, ok := defs[v]
+		if !ok || v == "" || ver.Of([]byte(raw)) != v {
+			return nil
+		}
+		_, err := st.AddVersion(kind, name, []byte(raw))
+		return err
+	}
+	if err := keep(store.KindRunbook, r.Runbook, r.RunbookVersion); err != nil {
+		return err
+	}
+	for name, v := range r.Libraries {
+		if runbook.BuiltinLibrary(name) != nil && ver.Of(runbook.BuiltinLibrary(name)) == v {
+			continue // ships with runnr
+		}
+		if err := keep(store.KindLibrary, name, v); err != nil {
+			return err
+		}
+	}
+	return nil
 }

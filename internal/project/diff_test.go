@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 func TestDiff(t *testing.T) {
@@ -59,7 +60,7 @@ func TestScanDiff(t *testing.T) {
 	for _, d := range p.Docs {
 		switch d.Name {
 		case "d":
-			if add, rm := DiffStat(d.Diff); add != 1 || rm != 1 || !strings.Contains(d.Diff, "--- d (version 1, stored)\n+++ d.yaml\n") {
+			if add, rm := DiffStat(d.Diff); add != 1 || rm != 1 || !strings.Contains(d.Diff, "--- d (version "+ver.Of([]byte("name: d\nsteps: [{name: a, run: 'echo 1'}]\n")).Short()+", stored)\n+++ d.yaml\n") {
 				t.Fatalf("%q", d.Diff)
 			}
 		case "e":

@@ -1,6 +1,7 @@
 package project
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 func TestImportRuns(t *testing.T) {
@@ -85,5 +87,41 @@ func TestImportRuns(t *testing.T) {
 	again, _ := ImportRuns(st, files, []string{done.ID}, false)
 	if len(again) != 1 || !again[0].Exists || again[0].Imported {
 		t.Fatalf("again: %+v", again)
+	}
+}
+
+// An exported run carries the runbook and library it ran; importing it
+// into another runnr keeps them, so that runnr knows exactly what ran.
+func TestRunBringsItsDefinitions(t *testing.T) {
+	from, _ := store.Open(t.TempDir(), "")
+	to, _ := store.Open(t.TempDir(), "")
+	lib := "name: helpers\nfunctions:\n  hi: {body: 'echo hi'}\n"
+	rb := "name: deploy\nlibraries: [helpers, std]\nsteps: [{name: a, run: hi}]\n"
+	from.SaveLibrary([]byte(lib), store.SaveOpts{})
+	_, v, _ := from.Save([]byte(rb), store.SaveOpts{})
+	run := &engine.Run{ID: "r1", Runbook: "deploy", Status: engine.StatusSucceeded, Started: time.Now(), RunbookVersion: v,
+		Libraries: from.LibrariesUsed([]string{"helpers", "std"}), Inputs: map[string]string{}}
+	// The runbook moved on after the run: the export still has what ran.
+	from.Save([]byte(rb+"description: later\n"), store.SaveOpts{OldName: "deploy"})
+
+	b, err := json.Marshal(WithDefinitions(from, []*engine.Run{run})[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, bad := ReadRuns("r1.json", b)
+	if len(bad) > 0 {
+		t.Fatal(bad)
+	}
+	if _, err := ImportRuns(to, files, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if d, err := to.Load("deploy"); err != nil || d.Version != v {
+		t.Fatalf("runbook: %v %v", d, err)
+	}
+	if d, err := to.LoadLibrary("helpers"); err != nil || d.Version != ver.Of([]byte(lib)) {
+		t.Fatalf("library: %v %v", d, err)
+	}
+	if r, _ := to.LoadRun("r1"); r.Definitions != nil || r.RunbookVersion != v || !to.HasVersion("deploy", r.RunbookVersion) {
+		t.Fatalf("record: %+v", r)
 	}
 }

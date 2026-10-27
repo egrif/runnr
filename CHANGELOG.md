@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.10.0 — 2026-10-26
+
+Versions are content hashes, the same in every runnr.
+
+### Changed
+
+- **A version is the SHA-256 of the text** (runbooks, libraries, fake
+  libraries, test suites, collections), shown as its first and last four
+  characters, `3f2a…9c1d`. Numbers counted per database meant nothing in
+  another runnr; a hash names the same text everywhere, so versions
+  compare across installations. `--version`, the API's `{version}`,
+  `If-Match` and `adopt-version` take the hash, a prefix of it, or the
+  short form.
+- **Saving text a document had before makes that version current again**
+  instead of adding a copy; restoring a deleted document does the same.
+  `runnr versions` lists them by when each was first saved and marks the
+  current one.
+- The raw log's first line names the whole hash (`run <id> · <runbook>
+  @<hash> · <mode>`); logs with the old `v<N>` still import (their version
+  isn't known).
+
+### Added
+
+- **Runs record the versions of the libraries they used** (`libraries`),
+  as well as the runbook's.
+- **An exported run carries the runbook and library text it ran**
+  (`definitions`); importing it into another runnr keeps them as versions
+  there (and adds the runbook if that runnr hasn't one by its name).
+
+### Upgrading
+
+- The first time this runnr opens an older database it converts it: each
+  kind's tables are keyed by hash, and runs' version numbers become the
+  hashes of what they ran. A run whose number has no saved version (one
+  imported from another runnr) no longer names a version. A SQLite file is
+  copied aside first, as `runnr.db.before-hashes-<time>`; take a backup of
+  a shared Postgres database yourself. Older runnr builds can't read the
+  converted database.
+
 ## v0.9.2 — 2026-10-26
 
 Terraform's imported passwords are masked.

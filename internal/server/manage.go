@@ -6,6 +6,7 @@ import (
 
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Managing what's stored: everything by kind, what uses each, deleting
@@ -20,7 +21,7 @@ import (
 type manageItem struct {
 	Kind      string    `json:"kind"`
 	Name      string    `json:"name"`
-	Version   int       `json:"version,omitempty"`
+	Version   ver.ID    `json:"version,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
 	// UsedBy are what refer to it: runbooks using a library, suites of a
 	// runbook or using fakes, collections holding a runbook.
@@ -133,7 +134,7 @@ type manageResult struct {
 	Kind    string `json:"kind"`
 	Name    string `json:"name"`
 	OK      bool   `json:"ok"`
-	Version int    `json:"version,omitempty"`
+	Version ver.ID `json:"version,omitempty"`
 	Error   string `json:"error,omitempty"`
 	// Also: what went with it (a runbook's place in collections, its
 	// scheduled runs).

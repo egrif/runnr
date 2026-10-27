@@ -26,7 +26,7 @@ func TestCollectionMembership(t *testing.T) {
 			// A comment in the collection survives membership changes.
 			d, _ := st.LoadCollection("ops")
 			raw := strings.Replace(d.Raw, "runbooks:", "# keep me\nrunbooks:", 1)
-			if _, _, err := st.SaveCollection([]byte(raw), SaveOpts{OldName: "ops", BaseVersion: d.Version}); err != nil {
+			if _, _, err := st.SaveCollection([]byte(raw), SaveOpts{OldName: "ops", Base: d.Version}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := st.MoveRunbook("b", "", "infra", true); err != nil {

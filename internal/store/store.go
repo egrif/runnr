@@ -21,6 +21,7 @@ import (
 
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/runbook"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 var (
@@ -109,19 +110,6 @@ func redact(dsn string) string {
 }
 
 var schema = []string{
-	`CREATE TABLE IF NOT EXISTS runbooks (
-		name       TEXT PRIMARY KEY,
-		raw        TEXT NOT NULL,
-		version    INTEGER NOT NULL,
-		updated_at TEXT NOT NULL
-	)`,
-	`CREATE TABLE IF NOT EXISTS runbook_versions (
-		name       TEXT NOT NULL,
-		version    INTEGER NOT NULL,
-		raw        TEXT NOT NULL,
-		created_at TEXT NOT NULL,
-		PRIMARY KEY (name, version)
-	)`,
 	`CREATE TABLE IF NOT EXISTS runs (
 		id         TEXT PRIMARY KEY,
 		runbook    TEXT NOT NULL,
@@ -144,12 +132,25 @@ var schema = []string{
 }
 
 func (s *Store) migrate(ctx context.Context) error {
+	if s.postgres {
+		// Two runnrs opening a database at once would race to create its
+		// tables (and convert them): one waits here for the other.
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		if _, err := conn.ExecContext(ctx, `SELECT pg_advisory_lock(7172707)`); err != nil {
+			return err
+		}
+		defer conn.ExecContext(context.Background(), `SELECT pg_advisory_unlock(7172707)`)
+	}
 	for _, q := range schema {
 		if _, err := s.db.ExecContext(ctx, q); err != nil {
 			return err
 		}
 	}
-	return nil
+	return s.migrateHashes(ctx)
 }
 
 // q rewrites ? placeholders to $n for Postgres.
@@ -183,62 +184,60 @@ func parseTS(s string) time.Time {
 
 // ---------- runbooks ----------
 
+var runbookKind = docKind{noun: "runbook", table: "runbooks", versions: "runbook_versions",
+	parse: func(raw []byte) (string, error) {
+		rb, err := runbook.Parse(raw)
+		if err != nil {
+			return "", err
+		}
+		return rb.Name, nil
+	}}
+
 // Entry is a listing row; Err is set when the stored YAML fails to parse.
 type Entry struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description,omitempty"`
 	Tags        []string  `json:"tags,omitempty"`
 	Steps       int       `json:"steps"`
-	Version     int       `json:"version"`
+	Version     ver.ID    `json:"version"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	Err         string    `json:"error,omitempty"`
 }
 
 func (s *Store) List() ([]Entry, error) {
-	rows, err := s.db.Query(`SELECT name, raw, version, updated_at FROM runbooks ORDER BY name`)
+	rows, err := s.listDocs(runbookKind)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Entry
-	for rows.Next() {
-		var name, raw, updated string
-		var version int
-		if err := rows.Scan(&name, &raw, &version, &updated); err != nil {
-			return nil, err
-		}
-		e := Entry{Name: name, Version: version, UpdatedAt: parseTS(updated)}
-		if rb, err := runbook.Parse([]byte(raw)); err != nil {
+	for _, r := range rows {
+		e := Entry{Name: r.Name, Version: r.Version, UpdatedAt: r.UpdatedAt}
+		if rb, err := runbook.Parse(r.Raw); err != nil {
 			e.Err = err.Error()
 		} else {
 			e.Description, e.Tags, e.Steps = rb.Description, rb.Tags, len(rb.Steps)
 		}
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Doc is a stored runbook. Runbook is nil if Raw doesn't parse (ParseErr).
 type Doc struct {
 	Name      string
 	Raw       []byte
-	Version   int
+	Version   ver.ID
 	UpdatedAt time.Time
 	Runbook   *runbook.Runbook
 	ParseErr  error
 }
 
 func (s *Store) Load(name string) (*Doc, error) {
-	var raw, updated string
-	var version int
-	err := s.db.QueryRow(s.q(`SELECT raw, version, updated_at FROM runbooks WHERE name = ?`), name).Scan(&raw, &version, &updated)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("runbook %q: %w", name, ErrNotFound)
-	}
+	r, err := s.loadDoc(runbookKind, name)
 	if err != nil {
 		return nil, err
 	}
-	d := &Doc{Name: name, Raw: []byte(raw), Version: version, UpdatedAt: parseTS(updated)}
+	d := &Doc{Name: name, Raw: r.Raw, Version: r.Version, UpdatedAt: r.UpdatedAt}
 	d.Runbook, d.ParseErr = runbook.Parse(d.Raw)
 	return d, nil
 }
@@ -252,24 +251,25 @@ func (s *Store) Raw(name string) ([]byte, error) {
 }
 
 // Get returns a parsed runbook and its version.
-func (s *Store) Get(name string) (*runbook.Runbook, int, error) {
+func (s *Store) Get(name string) (*runbook.Runbook, ver.ID, error) {
 	d, err := s.Load(name)
 	if err != nil {
-		return nil, 0, err
+		return nil, "", err
 	}
 	return d.Runbook, d.Version, d.ParseErr
 }
 
-// Resolve loads a runbook by name, or from a file if ref looks like a path
-// (version 0).
-func (s *Store) Resolve(ref string) (*runbook.Runbook, int, error) {
+// Resolve loads a runbook by name, or from a file if ref looks like a path.
+// Either way the version is its text's (HasVersion says whether it's one
+// runnr has saved).
+func (s *Store) Resolve(ref string) (*runbook.Runbook, ver.ID, error) {
 	if strings.ContainsAny(ref, `/\`) || strings.HasSuffix(ref, ".yaml") || strings.HasSuffix(ref, ".yml") {
 		b, err := os.ReadFile(ref)
 		if err != nil {
-			return nil, 0, err
+			return nil, "", err
 		}
 		rb, err := runbook.Parse(b)
-		return rb, 0, err
+		return rb, ver.Of(b), err
 	}
 	return s.Get(ref)
 }
@@ -284,141 +284,42 @@ type SaveOpts struct {
 	// OldName is the name being edited; if the YAML declares a different
 	// name, the runbook is renamed. Empty means create.
 	OldName string
-	// BaseVersion, if set, must match the stored version (else ErrConflict).
-	BaseVersion int
+	// Base, if set, must be the stored version (else ErrConflict).
+	Base ver.ID
 	// Overwrite allows creating over an existing runbook.
 	Overwrite bool
 }
 
-// Save validates raw YAML and stores it as a new version of its declared name.
-func (s *Store) Save(raw []byte, o SaveOpts) (*runbook.Runbook, int, error) {
+// Save validates raw YAML and makes it the current version of its declared
+// name.
+func (s *Store) Save(raw []byte, o SaveOpts) (*runbook.Runbook, ver.ID, error) {
+	_, v, err := s.saveDoc(runbookKind, raw, o)
+	if err != nil {
+		return nil, "", err
+	}
 	rb, err := runbook.Parse(raw)
-	if err != nil {
-		return nil, 0, err
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, 0, err
-	}
-	defer tx.Rollback()
-
-	current := func(name string) (int, bool, error) {
-		var v int
-		err := tx.QueryRow(s.q(`SELECT version FROM runbooks WHERE name = ?`+s.forUpdate()), name).Scan(&v)
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, false, nil
-		}
-		return v, err == nil, err
-	}
-
-	if o.OldName != "" {
-		v, ok, err := current(o.OldName)
-		if err != nil {
-			return nil, 0, err
-		}
-		if !ok {
-			return nil, 0, fmt.Errorf("runbook %q: %w", o.OldName, ErrNotFound)
-		}
-		if o.BaseVersion != 0 && v != o.BaseVersion {
-			return nil, 0, fmt.Errorf("runbook %q is at version %d, you edited version %d: %w", o.OldName, v, o.BaseVersion, ErrConflict)
-		}
-	}
-	if o.OldName != rb.Name {
-		if _, exists, err := current(rb.Name); err != nil {
-			return nil, 0, err
-		} else if exists && !o.Overwrite {
-			return nil, 0, fmt.Errorf("runbook %q already exists", rb.Name)
-		}
-	}
-
-	// Saving it unchanged keeps the version it has.
-	if o.OldName == "" || o.OldName == rb.Name {
-		var v int
-		var cur string
-		if err := tx.QueryRow(s.q(`SELECT version, raw FROM runbooks WHERE name = ?`), rb.Name).Scan(&v, &cur); err == nil && cur == string(raw) {
-			return rb, v, nil
-		}
-	}
-	// Versions continue across deletes so history stays unambiguous.
-	var next int
-	if err := tx.QueryRow(s.q(`SELECT COALESCE(MAX(version), 0) + 1 FROM runbook_versions WHERE name = ?`), rb.Name).Scan(&next); err != nil {
-		return nil, 0, err
-	}
-	now := ts(time.Now())
-	if _, err := tx.Exec(s.q(`INSERT INTO runbook_versions (name, version, raw, created_at) VALUES (?, ?, ?, ?)`), rb.Name, next, string(raw), now); err != nil {
-		return nil, 0, err
-	}
-	if _, err := tx.Exec(s.q(`INSERT INTO runbooks (name, raw, version, updated_at) VALUES (?, ?, ?, ?)
-		ON CONFLICT (name) DO UPDATE SET raw = excluded.raw, version = excluded.version, updated_at = excluded.updated_at`),
-		rb.Name, string(raw), next, now); err != nil {
-		return nil, 0, err
-	}
-	if o.OldName != "" && o.OldName != rb.Name {
-		if _, err := tx.Exec(s.q(`DELETE FROM runbooks WHERE name = ?`), o.OldName); err != nil {
-			return nil, 0, err
-		}
-	}
-	return rb, next, tx.Commit()
+	return rb, v, err
 }
 
-func (s *Store) forUpdate() string {
-	if s.postgres {
-		return " FOR UPDATE"
-	}
-	return "" // SQLite transactions here are IMMEDIATE, i.e. already exclusive.
+// Delete removes a runbook; its versions are kept.
+func (s *Store) Delete(name string) error { return s.deleteDoc(runbookKind, name) }
+
+// Versions lists a runbook's versions, the most recently first saved first.
+func (s *Store) Versions(name string) ([]Version, error) { return s.docVersions(runbookKind, name) }
+
+// RawVersion is the text of a runbook's version that ref names (the hash,
+// a prefix of it or its short form), and that version.
+func (s *Store) RawVersion(name, ref string) ([]byte, ver.ID, error) {
+	return s.rawDocVersion(runbookKind, name, ref)
 }
 
-// Delete removes a runbook; its version history is kept.
-func (s *Store) Delete(name string) error {
-	res, err := s.db.Exec(s.q(`DELETE FROM runbooks WHERE name = ?`), name)
-	if err != nil {
-		return err
+// HasVersion says whether v is a saved version of runbook name.
+func (s *Store) HasVersion(name string, v ver.ID) bool {
+	if v == "" {
+		return false
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("runbook %q: %w", name, ErrNotFound)
-	}
-	return nil
-}
-
-type Version struct {
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
-	Bytes     int       `json:"bytes"`
-}
-
-// Versions lists a runbook's saved versions, newest first.
-func (s *Store) Versions(name string) ([]Version, error) {
-	rows, err := s.db.Query(s.q(`SELECT version, created_at, LENGTH(raw) FROM runbook_versions WHERE name = ? ORDER BY version DESC`), name)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Version
-	for rows.Next() {
-		var v Version
-		var created string
-		if err := rows.Scan(&v.Version, &created, &v.Bytes); err != nil {
-			return nil, err
-		}
-		v.CreatedAt = parseTS(created)
-		out = append(out, v)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("runbook %q: %w", name, ErrNotFound)
-	}
-	return out, nil
-}
-
-func (s *Store) RawVersion(name string, version int) ([]byte, error) {
-	var raw string
-	err := s.db.QueryRow(s.q(`SELECT raw FROM runbook_versions WHERE name = ? AND version = ?`), name, version).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("runbook %q version %d: %w", name, version, ErrNotFound)
-	}
-	return []byte(raw), err
+	var one int
+	return s.db.QueryRow(s.q(`SELECT 1 FROM runbook_versions WHERE name = ? AND hash = ?`), name, v).Scan(&one) == nil
 }
 
 // ---------- runs ----------
@@ -726,28 +627,28 @@ func (s *Store) importLegacy(ctx context.Context, home string) error {
 // SaveRunEdits saves the step edits made during a run as a new version of
 // its runbook, and records that on the run. A step that has changed in the
 // runbook since the run started is a conflict.
-func (s *Store) SaveRunEdits(run *engine.Run) (int, error) {
+func (s *Store) SaveRunEdits(run *engine.Run) (ver.ID, error) {
 	if len(run.Edits) == 0 {
-		return 0, errors.New("this run has no step edits")
+		return "", errors.New("this run has no step edits")
 	}
-	if run.RunbookVersion == 0 {
-		return 0, errors.New("this run's runbook isn't saved in runnr (it ran from a file)")
+	if !s.HasVersion(run.Runbook, run.RunbookVersion) {
+		return "", errors.New("this run's runbook isn't saved in runnr (it ran from a file, or came from another runnr)")
 	}
-	rb, ver, err := s.Get(run.Runbook)
+	rb, v, err := s.Get(run.Runbook)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	edited, err := engine.ApplyEdits(rb, run.Edits)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	raw, err := runbook.Format(edited)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	if _, ver, err = s.Save(raw, SaveOpts{OldName: rb.Name, BaseVersion: ver}); err != nil {
-		return 0, err
+	if _, v, err = s.Save(raw, SaveOpts{OldName: rb.Name, Base: v}); err != nil {
+		return "", err
 	}
-	run.EditsSaved = ver
-	return ver, s.SaveRun(run)
+	run.EditsSaved = v
+	return v, s.SaveRun(run)
 }
