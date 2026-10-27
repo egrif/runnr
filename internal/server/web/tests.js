@@ -28,7 +28,7 @@ runnr fakes import aws-rds.yaml     # shared fake libraries, if it uses any</pre
     const passed = state.last ? state.last.results.filter((r) => r.passed).length : 0;
     el.innerHTML = `
       <div class="row tests-head">
-        <div><b>${esc(su.name)}</b> <span class="muted small">suite v${su.version}${su.uses?.length ? ` · fakes: ${su.uses.map(esc).join(", ")}` : ""}${su.isolate?.length ? ` · isolates ${su.isolate.map(esc).join(", ")}` : ""}${su.strict ? ` · sandboxed` : ""}</span></div>
+        <div><b>${esc(su.name)}</b> <span class="muted small">suite ${shortVer(su.version)}${su.uses?.length ? ` · fakes: ${su.uses.map(esc).join(", ")}` : ""}${su.isolate?.length ? ` · isolates ${su.isolate.map(esc).join(", ")}` : ""}${su.strict ? ` · sandboxed` : ""}</span></div>
         <span class="spacer"></span>
         ${state.last ? `<span class="badge ${passed === state.last.results.length ? "s-succeeded" : "s-failed"}">${passed}/${state.last.results.length} passing</span>
           <span class="muted small">${new Date(state.last.at).toLocaleTimeString()}</span>` : ""}

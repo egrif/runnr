@@ -13,6 +13,7 @@ import (
 	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Importing a file (a runbook or a library) from the GUI:
@@ -29,7 +30,7 @@ type importCheck struct {
 	// Exists: one by that name is stored (Version, UpdatedAt); Same: and
 	// it's identical, so importing changes nothing.
 	Exists    bool      `json:"exists"`
-	Version   int       `json:"version,omitempty"`
+	Version   ver.ID    `json:"version,omitempty"`
 	UpdatedAt time.Time `json:"updated_at,omitzero"`
 	Same      bool      `json:"same,omitempty"`
 	// Diff: what replacing the stored one would change (a unified diff).
@@ -55,7 +56,7 @@ func (s *Server) checkImport(raw []byte) importCheck {
 		c.Name = rb.Name
 		if d, err := s.st.Load(rb.Name); err == nil {
 			c.Exists, c.Version, c.UpdatedAt, c.Same = true, d.Version, d.UpdatedAt, string(d.Raw) == string(raw)
-			c.Diff = project.Diff(string(d.Raw), string(raw), fmt.Sprintf("%s (version %d, stored)", rb.Name, d.Version), "this file", 3)
+			c.Diff = project.Diff(string(d.Raw), string(raw), fmt.Sprintf("%s (version %s, stored)", rb.Name, d.Version.Short()), "this file", 3)
 		}
 	case "library":
 		lib, err := runbook.ParseLibrary(raw)
@@ -69,7 +70,7 @@ func (s *Server) checkImport(raw []byte) importCheck {
 				c.Builtin = true
 			} else {
 				c.Exists, c.Version, c.UpdatedAt, c.Same = true, d.Version, d.UpdatedAt, string(d.Raw) == string(raw)
-				c.Diff = project.Diff(string(d.Raw), string(raw), fmt.Sprintf("%s (version %d, stored)", lib.Name, d.Version), "this file", 3)
+				c.Diff = project.Diff(string(d.Raw), string(raw), fmt.Sprintf("%s (version %s, stored)", lib.Name, d.Version.Short()), "this file", 3)
 			}
 		}
 	default:
@@ -132,17 +133,17 @@ func (s *Server) importDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := store.SaveOpts{Overwrite: replace}
-	var ver int
+	var rev ver.ID
 	if c.Kind == "runbook" {
-		_, ver, err = s.st.Save(raw, o)
+		_, rev, err = s.st.Save(raw, o)
 	} else {
-		_, ver, err = s.st.SaveLibrary(raw, o)
+		_, rev, err = s.st.SaveLibrary(raw, o)
 	}
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	res := map[string]any{"kind": c.Kind, "name": c.Name, "version": ver}
+	res := map[string]any{"kind": c.Kind, "name": c.Name, "version": rev}
 	if c.Exists {
 		res["replaced"] = c.Version
 	}
@@ -167,7 +168,7 @@ type projectReq struct {
 	Renames map[string]string `json:"renames"`
 	Include []string          `json:"include"`
 	Skip    []string          `json:"skip"`
-	// Replace are the files (paths) to save as the next version of the
+	// Replace are the files (paths) to save as the current version of the
 	// one with their name; ReplaceAll, every such file.
 	Replace    []string `json:"replace"`
 	ReplaceAll bool     `json:"replace_all"`

@@ -33,7 +33,7 @@ async function viewManage() {
           ${rows.map((it) => `<tr class="${st.sel.has(key(it)) ? "sel" : ""}">
             <td><input type="checkbox" data-sel="${esc(key(it))}" ${st.sel.has(key(it)) ? "checked" : ""} ${it.builtin ? "disabled title=\"Built into runnr\"" : ""}></td>
             <td>${link ? `<a href="${link(it.name)}">${esc(it.name)}</a>` : esc(it.name)}${it.builtin ? ` <span class="badge-k">built in</span>` : ""}${it.error ? ` <span class="error-text small">${esc(it.error)}</span>` : ""}</td>
-            <td class="muted">${it.version ? `v${it.version}` : ""}</td>
+            <td class="muted">${it.version ? shortVer(it.version) : ""}</td>
             <td class="muted small">${esc(ago(it.updated_at))}</td>
             <td class="small">${(it.used_by || []).map((u) => `<span class="chip">${esc(MANAGE_NOUN[u.kind])} ${esc(u.name)}</span>`).join(" ")}${it.schedules ? ` <span class="chip warn">${it.schedules} scheduled run${it.schedules === 1 ? "" : "s"}</span>` : ""}</td></tr>`).join("")}</table>`;
       }).join("")}
@@ -41,7 +41,7 @@ async function viewManage() {
         <div class="row"><button data-restore ${st.delSel.size ? "" : "disabled"}>Restore selected${st.delSel.size ? ` (${st.delSel.size})` : ""}</button></div>
         <table class="manage-table">${data.deleted.filter(show).map((d) => `<tr>
           <td><input type="checkbox" data-dsel="${esc(key(d))}" ${st.delSel.has(key(d)) ? "checked" : ""}></td>
-          <td>${esc(d.name)}</td><td class="muted small">${esc(MANAGE_NOUN[d.kind])}</td><td class="muted">v${d.version}</td><td class="muted small">last saved ${esc(ago(d.saved_at))}</td></tr>`).join("")}</table>` : ""}`;
+          <td>${esc(d.name)}</td><td class="muted small">${esc(MANAGE_NOUN[d.kind])}</td><td class="muted">${shortVer(d.version)}</td><td class="muted small">last saved ${esc(ago(d.saved_at))}</td></tr>`).join("")}</table>` : ""}`;
     const f = main.querySelector(".manage-filter");
     f.oninput = () => { st.q = f.value; draw(); const g = main.querySelector(".manage-filter"); g.focus(); g.setSelectionRange(g.value.length, g.value.length); };
     main.querySelectorAll("[data-sel]").forEach((c) => (c.onchange = () => { c.checked ? st.sel.add(c.dataset.sel) : st.sel.delete(c.dataset.sel); draw(); }));

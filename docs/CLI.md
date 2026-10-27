@@ -178,7 +178,7 @@ jobs on a row under it), the run's row with the maintenance window, notes
 
 - `runnr new` / `runnr edit` open a runbook in `$EDITOR`. It's saved only
   once it validates, and every save is a version (`runnr versions`,
-  `runnr show --version N`).
+  `runnr show --version 3f2a…9c1d`).
 - `runnr shell <runbook|run-id>` runs the setup steps, then opens a shell
   with their environment and the runbook's library functions. Given a run,
   it also has what the run's steps published (secret values aren't saved,
@@ -186,7 +186,7 @@ jobs on a row under it), the run's row with the maintenance window, notes
 - `runnr import <folder|files>` adds runbooks, libraries, fake libraries,
   test suites and run records, filling in `@PROJECT_DIR@`-style
   placeholders (`--set`), checking references and finding missing
-  libraries in the repository. A taken name needs `-f` (next version) or
+  libraries in the repository. A taken name needs `-f` (made its current version) or
   `--rename`; `-n` shows what it would do, and `--diff` also what saving
   over each taken name would change.
 - `runnr export <runbook> -o file.yaml` writes the runbook with the

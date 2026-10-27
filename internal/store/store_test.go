@@ -4,11 +4,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // stores returns a fresh SQLite store, plus Postgres when
@@ -41,21 +43,31 @@ func stores(t *testing.T) map[string]*Store {
 const rbA = "name: a\nsteps: [{name: s, run: 'true'}]\n"
 
 func TestRunbooksAndVersions(t *testing.T) {
+	two := rbA + "description: two\n"
 	for name, s := range stores(t) {
 		t.Run(name, func(t *testing.T) {
 			_, v, err := s.Save([]byte(rbA), SaveOpts{})
-			if err != nil || v != 1 {
-				t.Fatalf("create: v%d %v", v, err)
+			if err != nil || v != ver.Of([]byte(rbA)) {
+				t.Fatalf("create: %s %v", v, err)
 			}
 			if _, _, err := s.Save([]byte(rbA), SaveOpts{}); err == nil {
 				t.Fatal("duplicate create should fail")
 			}
-			_, v, err = s.Save([]byte(rbA+"description: two\n"), SaveOpts{OldName: "a", BaseVersion: 1})
-			if err != nil || v != 2 {
-				t.Fatalf("update: v%d %v", v, err)
+			v1 := v
+			_, v, err = s.Save([]byte(two), SaveOpts{OldName: "a", Base: v1})
+			if err != nil || v != ver.Of([]byte(two)) {
+				t.Fatalf("update: %s %v", v, err)
 			}
-			if _, _, err := s.Save([]byte(rbA), SaveOpts{OldName: "a", BaseVersion: 1}); !errors.Is(err, ErrConflict) {
+			if _, _, err := s.Save([]byte(rbA), SaveOpts{OldName: "a", Base: v1}); !errors.Is(err, ErrConflict) {
 				t.Fatalf("stale update: %v", err)
+			}
+			// Saving text it had before makes that version current again: no
+			// new version.
+			if _, v, err = s.Save([]byte(rbA), SaveOpts{OldName: "a", Base: ver.Of([]byte(two))}); err != nil || v != v1 {
+				t.Fatalf("back to the first: %s %v", v, err)
+			}
+			if vs, err := s.Versions("a"); err != nil || len(vs) != 2 || !slices.ContainsFunc(vs, func(x Version) bool { return x.Version == v1 && x.Current }) {
+				t.Fatalf("versions %+v %v", vs, err)
 			}
 
 			// Rename keeps the old name's history and frees the name.
@@ -65,23 +77,23 @@ func TestRunbooksAndVersions(t *testing.T) {
 			if s.Exists("a") || !s.Exists("b") {
 				t.Fatal("rename")
 			}
-			if raw, err := s.RawVersion("a", 2); err != nil || string(raw) != rbA+"description: two\n" {
-				t.Fatalf("old version: %q %v", raw, err)
+			short := ver.Of([]byte(two)).Short()
+			if raw, id, err := s.RawVersion("a", short); err != nil || string(raw) != two || id != ver.Of([]byte(two)) {
+				t.Fatalf("old version by its short form: %q %v", raw, err)
+			}
+			if _, _, err := s.RawVersion("a", "ffffffff"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("no such version: %v", err)
 			}
 
-			// Re-creating a deleted name continues its version numbers.
-			if _, v, _ := s.Save([]byte(rbA), SaveOpts{}); v != 3 {
-				t.Fatalf("recreate version %d", v)
+			// Re-creating a deleted name with its old text is that version.
+			if _, v, _ := s.Save([]byte(rbA), SaveOpts{}); v != v1 {
+				t.Fatalf("recreate version %s", v)
 			}
 			if err := s.Delete("a"); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := s.Load("a"); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("deleted: %v", err)
-			}
-			entries, _ := s.List()
-			if len(entries) != 1 || entries[0].Name != "b" || entries[0].Steps != 1 {
-				t.Fatalf("list %+v", entries)
 			}
 		})
 	}
@@ -183,10 +195,10 @@ func TestLibraries(t *testing.T) {
 			s.db.Exec("DELETE FROM libraries")
 			s.db.Exec("DELETE FROM library_versions")
 			lib := "name: helpers\nfunctions:\n  greet: {body: 'echo hi'}\n"
-			if _, v, err := s.SaveLibrary([]byte(lib), SaveOpts{}); err != nil || v != 1 {
-				t.Fatalf("v%d %v", v, err)
+			if _, v, err := s.SaveLibrary([]byte(lib), SaveOpts{}); err != nil || v != ver.Of([]byte(lib)) {
+				t.Fatalf("%s %v", v, err)
 			}
-			if _, _, err := s.SaveLibrary([]byte(lib), SaveOpts{OldName: "helpers", BaseVersion: 7}); !errors.Is(err, ErrConflict) {
+			if _, _, err := s.SaveLibrary([]byte(lib), SaveOpts{OldName: "helpers", Base: "0000"}); !errors.Is(err, ErrConflict) {
 				t.Fatalf("conflict: %v", err)
 			}
 			libs, err := s.Libraries([]string{"helpers"})
@@ -212,8 +224,8 @@ func TestCollectionsAndTestValues(t *testing.T) {
 			s.db.Exec("DELETE FROM collections")
 			s.db.Exec("DELETE FROM collection_versions")
 			s.db.Exec("DELETE FROM runbook_test_values")
-			if _, v, err := s.SaveCollection([]byte("name: mig\ndescription: d\nrunbooks: [a, b]\n"), SaveOpts{}); err != nil || v != 1 {
-				t.Fatalf("v%d %v", v, err)
+			if _, v, err := s.SaveCollection([]byte("name: mig\ndescription: d\nrunbooks: [a, b]\n"), SaveOpts{}); err != nil || v != ver.Of([]byte("name: mig\ndescription: d\nrunbooks: [a, b]\n")) {
+				t.Fatalf("%s %v", v, err)
 			}
 			if _, _, err := s.SaveCollection([]byte("name: mig\nrunbooks: [a, a]\n"), SaveOpts{OldName: "mig"}); err == nil {
 				t.Fatal("duplicate runbook should be rejected")

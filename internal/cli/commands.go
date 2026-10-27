@@ -31,6 +31,7 @@ import (
 	"github.com/egrif/runnr/internal/server"
 	"github.com/egrif/runnr/internal/store"
 	"github.com/egrif/runnr/internal/timeline"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Set via -ldflags "-X github.com/egrif/runnr/internal/cli.version=..."
@@ -132,7 +133,7 @@ func listCmd(s func() *store.Store) *cobra.Command {
 				if e.Err != "" {
 					desc = "INVALID: " + firstLine(e.Err)
 				}
-				fmt.Fprintf(w, "%s\t%d\t%d\t%s\n", e.Name, e.Version, e.Steps, firstLine(desc))
+				fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", e.Name, e.Version.Short(), e.Steps, firstLine(desc))
 			}
 			return w.Flush()
 		},
@@ -142,16 +143,16 @@ func listCmd(s func() *store.Store) *cobra.Command {
 }
 
 func showCmd(s func() *store.Store) *cobra.Command {
-	var ver int
+	var rev string
 	cmd := &cobra.Command{
 		Use:   "show <name>",
-		Short: "Print a runbook's YAML (current, or --version N)",
+		Short: "Print a runbook's YAML (current, or --version V)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var b []byte
 			var err error
-			if ver > 0 {
-				b, err = s().RawVersion(args[0], ver)
+			if rev != "" {
+				b, _, err = s().RawVersion(args[0], rev)
 			} else {
 				b, err = s().Raw(args[0])
 			}
@@ -162,7 +163,7 @@ func showCmd(s func() *store.Store) *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().IntVar(&ver, "version", 0, "print this saved version")
+	cmd.Flags().StringVar(&rev, "version", "", "print this saved version (its hash, a prefix of it, or its short form)")
 	return cmd
 }
 
@@ -170,7 +171,7 @@ func versionsCmd(s func() *store.Store) *cobra.Command {
 	return &cobra.Command{
 		Use:   "versions <name>",
 		Short: "List a runbook's saved versions",
-		Long:  "Every save is kept. Print one with `runnr show <name> --version N`; restore it with\n`runnr show <name> --version N | runnr import -f -`.",
+		Long:  "Every save is kept. Print one with `runnr show <name> --version V` (its hash, a prefix of it, or the\nshort form listed); make it current again with `runnr show <name> --version V | runnr import -f -`.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			vs, err := s().Versions(args[0])
@@ -178,9 +179,9 @@ func versionsCmd(s func() *store.Store) *cobra.Command {
 				return err
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "VERSION\tSAVED\tBYTES")
+			fmt.Fprintln(w, "VERSION\tFIRST SAVED\tBYTES\t")
 			for _, v := range vs {
-				fmt.Fprintf(w, "%d\t%s\t%d\n", v.Version, v.CreatedAt.Local().Format("2006-01-02 15:04:05"), v.Bytes)
+				fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", v.Version.Short(), v.CreatedAt.Local().Format("2006-01-02 15:04:05"), v.Bytes, map[bool]string{true: "current"}[v.Current])
 			}
 			return w.Flush()
 		},
@@ -264,9 +265,9 @@ func editLoop(st *store.Store, name string) error {
 		if err != nil {
 			return err
 		}
-		rb, ver, err := st.Save(edited, store.SaveOpts{OldName: name, BaseVersion: doc.Version})
+		rb, rev, err := st.Save(edited, store.SaveOpts{OldName: name, Base: doc.Version})
 		if err == nil {
-			fmt.Printf("saved %s (version %d)\n", rb.Name, ver)
+			fmt.Printf("saved %s (version %s)\n", rb.Name, rev.Short())
 			return nil
 		}
 		if errors.Is(err, store.ErrConflict) {
@@ -304,8 +305,8 @@ runbook and fake libraries must be in the import, stored, or built in. A
 library that's missing but defined once elsewhere in the repository is
 imported too (--no-found leaves it out).
 
-A file whose name is taken is refused, unless --force (it's saved as the
-next version of that one; earlier versions are kept) or --rename
+A file whose name is taken is refused, unless --force (it becomes the
+current version of that one; earlier versions are kept) or --rename
 NAME=NEW (imported as NEW; references to it in the other files follow).
 --as NEW renames a single file. --diff shows what saving over each taken
 name would change (and imports nothing). Files are saved libraries first, then
@@ -412,7 +413,7 @@ without a value, a missing reference) is reported and left out.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVarP(&force, "force", "f", false, "save over files with the same name (as their next version)")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "save over files with the same name (as their current version)")
 	cmd.Flags().StringVar(&as, "as", "", "import a single file under this name (its name: is changed)")
 	cmd.Flags().StringArrayVar(&renames, "rename", nil, "import NAME as NEW (NAME=NEW; references to it follow)")
 	cmd.Flags().StringArrayVar(&sets, "set", nil, "a placeholder's value (NAME=VALUE, for @NAME@)")
@@ -437,13 +438,13 @@ func printPlan(p *project.Plan, diffs bool) error {
 		case d.Error != "":
 			state = "error: " + d.Error
 		case d.Same:
-			state = fmt.Sprintf("unchanged (version %d)", d.Version)
+			state = fmt.Sprintf("unchanged (version %s)", d.Version.Short())
 		case d.Exists:
-			state = fmt.Sprintf("name taken (version %d)", d.Version)
+			state = fmt.Sprintf("name taken (version %s)", d.Version.Short())
 		}
 		if d.Diff != "" {
 			add, rm := project.DiffStat(d.Diff)
-			state += fmt.Sprintf(": -f saves it as version %d (+%d −%d lines)", d.Version+1, add, rm)
+			state += fmt.Sprintf(": -f saves it as version %s (+%d −%d lines)", ver.Of(d.Raw).Short(), add, rm)
 		}
 		fmt.Printf("  %-8s %-28s %s  %s\n", d.Kind, d.Name, d.Rel, state)
 		if diffs && d.Diff != "" {
@@ -493,20 +494,20 @@ func importStdin(st *store.Store, force bool, collection string, values map[stri
 	if len(unset) > 0 {
 		return fmt.Errorf("placeholders without a value (--set NAME=VALUE): %s", strings.Join(unset, ", "))
 	}
-	var prev int
+	var prev ver.ID
 	if rb, err := runbook.Parse(raw); err == nil {
 		if d, err := st.Load(rb.Name); err == nil {
 			prev = d.Version
 		}
 	}
-	rb, ver, err := st.Save(raw, store.SaveOpts{Overwrite: force})
+	rb, rev, err := st.Save(raw, store.SaveOpts{Overwrite: force})
 	if err != nil {
-		if !force && prev > 0 {
-			err = fmt.Errorf("%w (version %d): --force saves this as its next version", err, prev)
+		if !force && prev != "" {
+			err = fmt.Errorf("%w (version %s): --force makes this its current version", err, prev.Short())
 		}
 		return err
 	}
-	fmt.Println(importReport("-", rb.Name, ver, prev))
+	fmt.Println(importReport("-", rb.Name, rev, prev))
 	if collection != "" {
 		if _, _, err := st.AddToCollection(collection, true, rb.Name); err != nil {
 			return err
@@ -617,17 +618,17 @@ func (f *runFlags) register(cmd *cobra.Command) {
 func offerSaveEdits(st *store.Store, run *engine.Run, t *Terminal, ask bool) {
 	n := len(engine.LatestEdits(run.Edits))
 	fmt.Fprintf(os.Stderr, "\n✎ %d step(s) were changed during this run; the runbook doesn't have the change yet.\n", n)
-	if run.RunbookVersion == 0 {
+	if !st.HasVersion(run.Runbook, run.RunbookVersion) {
 		fmt.Fprintln(os.Stderr, "  This runbook ran from a file: copy the change into it by hand.")
 		return
 	}
 	if ask {
 		fmt.Fprintf(os.Stderr, "  Save to %s as a new version? [y/N]: ", run.Runbook)
 		if a, err := t.readLine(context.Background()); err == nil && strings.HasPrefix(strings.ToLower(a), "y") {
-			if ver, err := st.SaveRunEdits(run); err != nil {
+			if rev, err := st.SaveRunEdits(run); err != nil {
 				fmt.Fprintln(os.Stderr, "  couldn't save:", err)
 			} else {
-				fmt.Fprintf(os.Stderr, "  saved %s (version %d)\n", run.Runbook, ver)
+				fmt.Fprintf(os.Stderr, "  saved %s (version %s)\n", run.Runbook, rev.Short())
 				return
 			}
 		}
@@ -646,7 +647,7 @@ type launch struct {
 	resumed  *engine.Run // the run this continues
 }
 
-func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l launch) error {
+func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l launch) error {
 	if f.tmux && os.Getenv(envTmuxSession) == "" {
 		if f.js || f.noHistory {
 			return errors.New("--tmux can't be used with --json or --no-history")
@@ -756,10 +757,10 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, ver int, l laun
 	opts := engine.Options{
 		Owner: engine.ThisProcess("cli"), Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt,
 		Controls: ctl, Review: interactive && !f.noReview, Previous: l.previous,
-		State: state, Resumes: resumes, RunbookVersion: ver, Libraries: libs,
+		State: state, Resumes: resumes, RunbookVersion: rev, LibraryVersions: st.LibrariesUsed(rb.Libraries), Libraries: libs,
 		// Only a recorded run of a saved runbook can run dangerous steps
 		// without a double check.
-		Sanctioned: ver > 0 && !f.noHistory && !f.dry, Resumed: l.resumed, Continue: l.resumed != nil && !f.newRun,
+		Sanctioned: st.HasVersion(rb.Name, rev) && !f.noHistory && !f.dry, Resumed: l.resumed, Continue: l.resumed != nil && !f.newRun,
 		// A resume leaves out every step that finished, not only those
 		// before where it starts.
 		// (Unless the operator chose the steps with --skip.)
@@ -851,7 +852,7 @@ and tty steps follow their 'unattended' policy, and any failure aborts.
 'always' (e.g. environment setup) still run.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rb, ver, err := s().Resolve(args[0])
+			rb, rev, err := s().Resolve(args[0])
 			if err != nil {
 				return err
 			}
@@ -861,7 +862,7 @@ and tty steps follow their 'unattended' policy, and any failure aborts.
 					return err
 				}
 			}
-			return f.execute(s(), rb, ver, launch{startAt: start})
+			return f.execute(s(), rb, rev, launch{startAt: start})
 		},
 	}
 	f.register(cmd)
@@ -882,11 +883,11 @@ asked again). The review shows what each step did in that earlier run.`,
 			if err != nil {
 				return err
 			}
-			rb, ver, err := s().Get(prev.Runbook)
+			rb, rev, err := s().Get(prev.Runbook)
 			if err != nil {
 				return err
 			}
-			return f.execute(s(), rb, ver, launch{base: engine.ResumeInputs(prev), previous: prev})
+			return f.execute(s(), rb, rev, launch{base: engine.ResumeInputs(prev), previous: prev})
 		},
 	}
 	f.register(cmd)
@@ -918,7 +919,7 @@ stored, so they're asked for again (or pass them with -v). Steps marked
 			if start < 0 {
 				return fmt.Errorf("run %s has no unfinished steps", prev.ID)
 			}
-			rb, ver, err := s().Get(prev.Runbook)
+			rb, rev, err := s().Get(prev.Runbook)
 			if err != nil {
 				return err
 			}
@@ -936,8 +937,8 @@ stored, so they're asked for again (or pass them with -v). Steps marked
 					return err
 				}
 				gone := len(aligned.Removed) - len(prev.Removed)
-				fmt.Printf("runbook %s changed since this run (version %d, it ran version %d): carrying on with it, steps matched by name%s\n",
-					rb.Name, ver, prev.RunbookVersion, map[bool]string{true: fmt.Sprintf("; %d step(s) no longer in it are kept in the record", gone), false: ""}[gone > 0])
+				fmt.Printf("runbook %s changed since this run (version %s, it ran version %s): carrying on with it, steps matched by name%s\n",
+					rb.Name, rev.Short(), prev.RunbookVersion.Short(), map[bool]string{true: fmt.Sprintf("; %d step(s) no longer in it are kept in the record", gone), false: ""}[gone > 0])
 				prev = aligned
 				if start = engine.ResumePoint(prev); start < 0 {
 					return fmt.Errorf("run %s has no unfinished steps in this version", prev.ID)
@@ -952,7 +953,7 @@ stored, so they're asked for again (or pass them with -v). Steps marked
 					l.previous, _ = s().LoadRun(prev.Previous)
 				}
 			}
-			return f.execute(s(), rb, ver, l)
+			return f.execute(s(), rb, rev, l)
 		},
 	}
 	f.register(cmd)
@@ -1339,11 +1340,11 @@ since the run started is a conflict; the YAML is reformatted (comments drop).`,
 			if err != nil {
 				return err
 			}
-			ver, err := s().SaveRunEdits(r)
+			rev, err := s().SaveRunEdits(r)
 			if err != nil {
 				return err
 			}
-			fmt.Printf("saved %s (version %d)\n", r.Runbook, ver)
+			fmt.Printf("saved %s (version %s)\n", r.Runbook, rev.Short())
 			return nil
 		},
 	}
@@ -1586,7 +1587,7 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				if only {
 					runs = slices.DeleteFunc(runs, func(r *engine.Run) bool { return r.ID != args[0] })
 				}
-				files, err := project.LogFiles(project.Masked(s(), runs), as, single, "")
+				files, err := project.LogFiles(project.WithDefinitions(s(), project.Masked(s(), runs)), as, single, "")
 				if err != nil {
 					return err
 				}
@@ -1659,11 +1660,11 @@ func historyCmd(s func() *store.Store) *cobra.Command {
 				if !r.Ended.IsZero() {
 					dur = r.Ended.Sub(r.Started).Round(time.Millisecond).String()
 				}
-				ver := "-"
-				if r.RunbookVersion > 0 {
-					ver = fmt.Sprint(r.RunbookVersion)
+				rev := "-"
+				if r.RunbookVersion != "" {
+					rev = r.RunbookVersion.Short()
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Runbook, ver, r.Status, r.Mode, r.Started.Local().Format("2006-01-02 15:04:05"), dur, strings.Join(engine.RunIdentifiers(&r, nil), " "))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Runbook, rev, r.Status, r.Mode, r.Started.Local().Format("2006-01-02 15:04:05"), dur, strings.Join(engine.RunIdentifiers(&r, nil), " "))
 			}
 			return w.Flush()
 		},
@@ -1761,8 +1762,8 @@ func dbCmd(s func() *store.Store) *cobra.Command {
 
 func printRun(r *engine.Run) {
 	fmt.Printf("Run %s — %s (%s)\n", r.ID, r.Runbook, r.Mode)
-	if r.RunbookVersion > 0 {
-		fmt.Printf("Version: %d\n", r.RunbookVersion)
+	if r.RunbookVersion != "" {
+		fmt.Printf("Version: %s\n", r.RunbookVersion)
 	}
 	fmt.Printf("Status:  %s\n", r.Status)
 	if r.Error != "" {
@@ -1950,32 +1951,32 @@ shells opened from runnr. To use them in any other terminal:
 						return fmt.Errorf("%s: %w", f, err)
 					}
 				}
-				var prev int
+				var prev ver.ID
 				if l, perr := runbook.ParseLibrary(raw); perr == nil {
 					if d, lerr := s().LoadLibrary(l.Name); lerr == nil && !d.Builtin {
 						prev = d.Version
 					}
 				}
-				lib, ver, err := s().SaveLibrary(raw, store.SaveOpts{Overwrite: force})
+				lib, rev, err := s().SaveLibrary(raw, store.SaveOpts{Overwrite: force})
 				if err != nil {
-					if !force && prev > 0 {
-						err = fmt.Errorf("%w (version %d): --force saves this as its next version, --as NAME imports it under another name", err, prev)
+					if !force && prev != "" {
+						err = fmt.Errorf("%w (version %s): --force makes this its current version, --as NAME imports it under another name", err, prev.Short())
 					}
 					return fmt.Errorf("%s: %w", f, err)
 				}
-				fmt.Println(importReport(f, "library "+lib.Name, ver, prev))
+				fmt.Println(importReport(f, "library "+lib.Name, rev, prev))
 			}
 			return nil
 		},
 	}
-	importC.Flags().BoolVarP(&force, "force", "f", false, "save over libraries with the same name (as a new version)")
+	importC.Flags().BoolVarP(&force, "force", "f", false, "save over libraries with the same name (as their current version)")
 	importC.Flags().StringVar(&libAs, "as", "", "import the library under this name (its name: is changed)")
-	var ver int
+	var rev string
 	showC := &cobra.Command{
-		Use: "show <name>", Short: "Print a library's YAML (--version N for an older save)", Args: cobra.ExactArgs(1),
+		Use: "show <name>", Short: "Print a library's YAML (--version V for an older save)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if ver > 0 {
-				b, err := s().RawLibraryVersion(args[0], ver)
+			if rev != "" {
+				b, _, err := s().RawLibraryVersion(args[0], rev)
 				if err == nil {
 					_, err = os.Stdout.Write(b)
 				}
@@ -1988,7 +1989,7 @@ shells opened from runnr. To use them in any other terminal:
 			return err
 		},
 	}
-	showC.Flags().IntVar(&ver, "version", 0, "print this saved version")
+	showC.Flags().StringVar(&rev, "version", "", "print this saved version (its hash, a prefix of it, or its short form)")
 	cmd.AddCommand(
 		&cobra.Command{
 			Use: "list", Aliases: []string{"ls"}, Short: "List libraries and their functions", Args: cobra.NoArgs,
@@ -2009,7 +2010,7 @@ shells opened from runnr. To use them in any other terminal:
 					if l.Err != "" {
 						desc = "INVALID: " + firstLine(l.Err)
 					}
-					fmt.Fprintf(w, "%s\t%d\t%s\t%s\n", l.Name, l.Version, strings.Join(l.Functions, ", "), desc)
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", l.Name, l.Version.Short(), strings.Join(l.Functions, ", "), desc)
 				}
 				return w.Flush()
 			},
@@ -2037,9 +2038,9 @@ shells opened from runnr. To use them in any other terminal:
 					return err
 				}
 				w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-				fmt.Fprintln(w, "VERSION\tSAVED\tBYTES")
+				fmt.Fprintln(w, "VERSION\tFIRST SAVED\tBYTES\t")
 				for _, v := range vs {
-					fmt.Fprintf(w, "%d\t%s\t%d\n", v.Version, v.CreatedAt.Local().Format("2006-01-02 15:04:05"), v.Bytes)
+					fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", v.Version.Short(), v.CreatedAt.Local().Format("2006-01-02 15:04:05"), v.Bytes, map[bool]string{true: "current"}[v.Current])
 				}
 				return w.Flush()
 			},
@@ -2066,7 +2067,7 @@ shells opened from runnr. To use them in any other terminal:
 
 // editDoc edits a temp copy of a stored YAML document and only saves it
 // once valid.
-func editDoc(noun, name string, raw []byte, save func([]byte) (string, int, error)) error {
+func editDoc(noun, name string, raw []byte, save func([]byte) (string, ver.ID, error)) error {
 	tmp, err := os.CreateTemp("", "runnr-"+noun+"-"+name+"-*.yaml")
 	if err != nil {
 		return err
@@ -2092,9 +2093,9 @@ func editDoc(noun, name string, raw []byte, save func([]byte) (string, int, erro
 		if err != nil {
 			return err
 		}
-		saved, ver, err := save(edited)
+		saved, rev, err := save(edited)
 		if err == nil {
-			fmt.Printf("saved %s %s (version %d)\n", noun, saved, ver)
+			fmt.Printf("saved %s %s (version %s)\n", noun, saved, rev.Short())
 			return nil
 		}
 		if errors.Is(err, store.ErrConflict) {
@@ -2116,12 +2117,12 @@ func editLibrary(st *store.Store, name string) error {
 	if err != nil {
 		return err
 	}
-	return editDoc("library", name, doc.Raw, func(raw []byte) (string, int, error) {
-		lib, ver, err := st.SaveLibrary(raw, store.SaveOpts{OldName: name, BaseVersion: doc.Version})
+	return editDoc("library", name, doc.Raw, func(raw []byte) (string, ver.ID, error) {
+		lib, rev, err := st.SaveLibrary(raw, store.SaveOpts{OldName: name, Base: doc.Version})
 		if err != nil {
-			return "", 0, err
+			return "", "", err
 		}
-		return lib.Name, ver, nil
+		return lib.Name, rev, nil
 	})
 }
 
@@ -2146,8 +2147,8 @@ func collectionCmd(s func() *store.Store) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return editDoc("collection", args[0], []byte(d.Raw), func(raw []byte) (string, int, error) {
-				return s().SaveCollection(raw, store.SaveOpts{OldName: args[0], BaseVersion: d.Version})
+			return editDoc("collection", args[0], []byte(d.Raw), func(raw []byte) (string, ver.ID, error) {
+				return s().SaveCollection(raw, store.SaveOpts{OldName: args[0], Base: d.Version})
 			})
 		},
 	}
@@ -2166,11 +2167,11 @@ func collectionCmd(s func() *store.Store) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				name, ver, err := s().SaveCollection(raw, store.SaveOpts{Overwrite: force})
+				name, rev, err := s().SaveCollection(raw, store.SaveOpts{Overwrite: force})
 				if err != nil {
 					return fmt.Errorf("%s: %w", f, err)
 				}
-				fmt.Printf("imported %s → collection %s (version %d)\n", f, name, ver)
+				fmt.Printf("imported %s → collection %s (version %s)\n", f, name, rev.Short())
 			}
 			return nil
 		},
@@ -2180,14 +2181,14 @@ func collectionCmd(s func() *store.Store) *cobra.Command {
 	addC := &cobra.Command{
 		Use: "add <collection> <runbook>...", Short: "Add runbooks to a collection (at the end)", Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ver, created, err := s().AddToCollection(args[0], create, args[1:]...)
+			rev, created, err := s().AddToCollection(args[0], create, args[1:]...)
 			if err != nil {
 				if _, e := s().LoadCollection(args[0]); !create && errors.Is(e, store.ErrNotFound) {
 					return fmt.Errorf("%w (--create makes it)", err)
 				}
 				return err
 			}
-			fmt.Printf("collection %s%s (version %d): added %s\n", args[0], map[bool]string{true: " created"}[created], ver, strings.Join(args[1:], ", "))
+			fmt.Printf("collection %s%s (version %s): added %s\n", args[0], map[bool]string{true: " created"}[created], rev.Short(), strings.Join(args[1:], ", "))
 			return nil
 		},
 	}
@@ -2222,11 +2223,11 @@ they're in. A runbook in several collections needs --from to say which.`,
 		&cobra.Command{
 			Use: "remove <collection> <runbook>...", Aliases: []string{"rm-runbook"}, Short: "Take runbooks out of a collection (they stay in runnr)", Args: cobra.MinimumNArgs(2),
 			RunE: func(cmd *cobra.Command, args []string) error {
-				ver, err := s().RemoveFromCollection(args[0], args[1:]...)
+				rev, err := s().RemoveFromCollection(args[0], args[1:]...)
 				if err != nil {
 					return err
 				}
-				fmt.Printf("collection %s (version %d): removed %s\n", args[0], ver, strings.Join(args[1:], ", "))
+				fmt.Printf("collection %s (version %s): removed %s\n", args[0], rev.Short(), strings.Join(args[1:], ", "))
 				return nil
 			},
 		},
@@ -2274,8 +2275,8 @@ they're in. A runbook in several collections needs --from to say which.`,
 				if err != nil {
 					return err
 				}
-				return editDoc("collection", args[0], []byte(d.Raw), func(raw []byte) (string, int, error) {
-					return s().SaveCollection(raw, store.SaveOpts{OldName: args[0], BaseVersion: d.Version})
+				return editDoc("collection", args[0], []byte(d.Raw), func(raw []byte) (string, ver.ID, error) {
+					return s().SaveCollection(raw, store.SaveOpts{OldName: args[0], Base: d.Version})
 				})
 			},
 		},
@@ -2302,14 +2303,14 @@ func nonEmptyEnv(key, def string) string {
 
 // importReport says what importing file did: added it, saved it as a new
 // version of the one with its name, or nothing (it was unchanged).
-func importReport(file, name string, ver, prev int) string {
+func importReport(file, name string, rev, prev ver.ID) string {
 	switch {
-	case prev == 0:
-		return fmt.Sprintf("imported %s → %s (version %d)", file, name, ver)
-	case prev == ver:
-		return fmt.Sprintf("unchanged %s → %s (version %d)", file, name, ver)
+	case prev == "":
+		return fmt.Sprintf("imported %s → %s (version %s)", file, name, rev.Short())
+	case prev == rev:
+		return fmt.Sprintf("unchanged %s → %s (version %s)", file, name, rev.Short())
 	default:
-		return fmt.Sprintf("replaced %s with %s (version %d → %d)", name, file, prev, ver)
+		return fmt.Sprintf("replaced %s with %s (version %s → %s)", name, file, prev.Short(), rev.Short())
 	}
 }
 
@@ -2337,7 +2338,7 @@ with a kind and a name, it saves the last version again.`,
 						return err
 					}
 					for _, d := range ds {
-						fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", d.Kind, d.Name, d.Version, d.SavedAt.Local().Format("2006-01-02 15:04"))
+						fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", d.Kind, d.Name, d.Version.Short(), d.SavedAt.Local().Format("2006-01-02 15:04"))
 						n++
 					}
 				}
@@ -2351,7 +2352,7 @@ with a kind and a name, it saves the last version again.`,
 			if err != nil {
 				return err
 			}
-			fmt.Printf("restored %s %s (version %d)\n", args[0], args[1], v)
+			fmt.Printf("restored %s %s (version %s)\n", args[0], args[1], v.Short())
 			return nil
 		},
 	}

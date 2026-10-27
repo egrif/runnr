@@ -11,13 +11,14 @@ import (
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // testRun is one run of a runbook's tests, as the GUI shows it.
 type testRun struct {
 	At      time.Time    `json:"at"`
 	Draft   bool         `json:"draft,omitempty"` // against an unsaved version
-	Version int          `json:"suite_version"`
+	Version ver.ID       `json:"suite_version"`
 	Results []testResult `json:"results"`
 }
 
@@ -43,33 +44,33 @@ type testStep struct {
 
 // suiteFor finds a runbook's test suite: one named after it, else the
 // first that names it as its runbook.
-func (s *Server) suiteFor(name string) (*runtest.Suite, int, error) {
-	su, ver, _, err := s.suiteDoc(name)
-	return su, ver, err
+func (s *Server) suiteFor(name string) (*runtest.Suite, ver.ID, error) {
+	su, rev, _, err := s.suiteDoc(name)
+	return su, rev, err
 }
 
 // suiteDoc is suiteFor with the suite's YAML.
-func (s *Server) suiteDoc(name string) (*runtest.Suite, int, []byte, error) {
+func (s *Server) suiteDoc(name string) (*runtest.Suite, ver.ID, []byte, error) {
 	if d, err := s.st.LoadSuite(name); err == nil {
 		su, err := runtest.ParseSuite(d.Raw)
 		return su, d.Version, d.Raw, err
 	}
 	docs, err := s.st.ListSuites()
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, "", nil, err
 	}
 	for _, d := range docs {
 		if su, err := runtest.ParseSuite(d.Raw); err == nil && su.Runbook == name {
 			return su, d.Version, d.Raw, nil
 		}
 	}
-	return nil, 0, nil, nil
+	return nil, "", nil, nil
 }
 
 // getTests is a runbook's suite (its scenarios) and its latest results.
 func (s *Server) getTests(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	su, ver, raw, err := s.suiteDoc(name)
+	su, rev, raw, err := s.suiteDoc(name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -87,7 +88,7 @@ func (s *Server) getTests(w http.ResponseWriter, r *http.Request) {
 		for _, x := range su.Scenarios {
 			scs = append(scs, sc{x.Name, x.Description, defs[x.Name]})
 		}
-		resp["suite"] = map[string]any{"name": su.Name, "version": ver, "uses": su.Uses, "isolate": su.Isolate,
+		resp["suite"] = map[string]any{"name": su.Name, "version": rev, "uses": su.Uses, "isolate": su.Isolate,
 			"strict": su.Strict, "setup": setup, "scenarios": scs}
 	}
 	s.mu.Lock()
@@ -112,7 +113,7 @@ func (s *Server) runTests(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	su, ver, err := s.suiteFor(name)
+	su, rev, err := s.suiteFor(name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -157,7 +158,7 @@ func (s *Server) runTests(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
-	tr := &testRun{At: time.Now(), Draft: draft != nil, Version: ver}
+	tr := &testRun{At: time.Now(), Draft: draft != nil, Version: rev}
 	for _, x := range results {
 		res := testResult{Scenario: x.Scenario, Passed: x.Passed, Problems: x.Problems, Status: string(x.Run.Status),
 			TookMS: x.Took.Milliseconds(), Calls: x.Calls, Asked: x.Asked, Unused: x.Unused, Warnings: x.Warnings, Log: engine.RawLog(x.Run)}

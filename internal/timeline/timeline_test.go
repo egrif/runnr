@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // demoRun is a made-up cutover: it fails late in the day, stays stopped
@@ -22,7 +23,7 @@ func demoRun() *engine.Run {
 	step := func(name, section string, st engine.Status, from, to time.Time) engine.StepResult {
 		return engine.StepResult{Name: name, Section: section, Kind: "run", Status: st, Started: from, Ended: to}
 	}
-	r := &engine.Run{ID: "20261020-160000-abc123", Runbook: "orders-db-cutover", Mode: "interactive", RunbookVersion: 3, Status: ok,
+	r := &engine.Run{ID: "20261020-160000-abc123", Runbook: "orders-db-cutover", Mode: "interactive", RunbookVersion: ver.Of([]byte("v3")), Status: ok,
 		Started: at(0, 16, 0, 0), Ended: at(1, 10, 41, 0)}
 	r.Steps = []engine.StepResult{
 		step("check replication", "prepare", ok, at(0, 16, 0, 5), at(0, 16, 2, 10)),

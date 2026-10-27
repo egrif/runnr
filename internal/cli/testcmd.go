@@ -14,6 +14,7 @@ import (
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 func testCmd(s func() *store.Store) *cobra.Command {
@@ -214,7 +215,7 @@ func printResults(suite *runtest.Suite, results []runtest.Result, verbose, showL
 // testsCmd manages stored test suites; fakesCmd, fake libraries.
 func testsCmd(s func() *store.Store) *cobra.Command {
 	return docCmd("tests", "test suite", "Manage runbooks' test suites",
-		func(raw []byte, force bool) (string, int, error) {
+		func(raw []byte, force bool) (string, ver.ID, error) {
 			return s().SaveSuite(raw, store.SaveOpts{Overwrite: force})
 		},
 		func() ([]store.TestDoc, error) { return s().ListSuites() },
@@ -234,7 +235,7 @@ func testsCmd(s func() *store.Store) *cobra.Command {
 
 func fakesCmd(s func() *store.Store) *cobra.Command {
 	cmd := docCmd("fakes", "fake library", "Manage fake libraries (canned command responses for tests)",
-		func(raw []byte, force bool) (string, int, error) {
+		func(raw []byte, force bool) (string, ver.ID, error) {
 			return s().SaveFakes(raw, store.SaveOpts{Overwrite: force})
 		},
 		func() ([]store.TestDoc, error) { return s().ListFakes() },
@@ -314,7 +315,7 @@ func fakesOf(st *store.Store, arg string) ([]runtest.Fake, error) {
 
 // docCmd is list / show / import / delete for a kind of stored document.
 func docCmd(use, noun, short string,
-	save func([]byte, bool) (string, int, error),
+	save func([]byte, bool) (string, ver.ID, error),
 	list func() ([]store.TestDoc, error),
 	load func(string) (*store.TestDoc, error),
 	del func(string) error,
@@ -336,11 +337,11 @@ func docCmd(use, noun, short string,
 				if err != nil {
 					return err
 				}
-				name, ver, err := save(raw, force)
+				name, rev, err := save(raw, force)
 				if err != nil {
 					return fmt.Errorf("%s: %w", f, err)
 				}
-				fmt.Printf("imported %s → %s %s (version %d)\n", f, noun, name, ver)
+				fmt.Printf("imported %s → %s %s (version %s)\n", f, noun, name, rev.Short())
 			}
 			return nil
 		},
@@ -361,7 +362,7 @@ func docCmd(use, noun, short string,
 				fmt.Printf("none yet: runnr %s import <file>\n", use)
 			}
 			for _, d := range docs {
-				fmt.Printf("%-28s v%-3d %s\n", d.Name, d.Version, summary(d))
+				fmt.Printf("%-28s %s  %s\n", d.Name, d.Version.Short(), summary(d))
 			}
 			return nil
 		},

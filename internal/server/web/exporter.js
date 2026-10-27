@@ -40,7 +40,7 @@ function exportRunbook(name) {
     $e(".exp-files").innerHTML = st.files.length ? `<table class="imp-docs">${st.files.map((f) => `<tr>
         <td>${f.kind === "runbook" ? `<input type="checkbox" checked disabled>` : `<input type="checkbox" data-lib="${esc(f.name)}" ${st.libs.has(f.name) ? "checked" : ""} ${f.missing ? "disabled" : ""}>`}</td>
         <td class="small">${f.kind}</td>
-        <td><b>${esc(f.name)}</b>${f.version ? ` <span class="muted small">v${f.version}</span>` : ""}${f.builtin ? ` <span class="badge-k">built into runnr</span>` : ""}<div class="muted small"><code>${esc(f.path)}</code></div></td>
+        <td><b>${esc(f.name)}</b>${f.version ? ` <span class="muted small">${shortVer(f.version)}</span>` : ""}${f.builtin ? ` <span class="badge-k">built into runnr</span>` : ""}<div class="muted small"><code>${esc(f.path)}</code></div></td>
         <td class="small">${f.missing ? `<span class="error-text">not stored</span>` : f.exists && take(f) ? `<span class="warn-text">⚠ a file is there</span>` : ""}</td></tr>`).join("")}</table>
       ${there.length ? `<label class="check small"><input type="checkbox" data-overwrite ${st.overwrite ? "checked" : ""}> Write over the ${there.length} file${there.length === 1 ? "" : "s"} already there</label>` : ""}` : "";
     dlg.querySelectorAll("[data-lib]").forEach((c) => (c.onchange = () => { c.checked ? st.libs.add(c.dataset.lib) : st.libs.delete(c.dataset.lib); draw(); }));

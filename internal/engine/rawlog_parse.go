@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Reading a raw log (RawLog's text) back into a run, to import it. Most of
@@ -18,11 +20,11 @@ import (
 
 var (
 	rlRunSep   = regexp.MustCompile(`(?m)^════ \d+ of \d+: run \S+ ════\n`)
-	rlHead     = regexp.MustCompile(`^run (\S+) · (.+?)(?: v(\d+))? · ([a-z-]+)( · dry run)?$`)
+	rlHead     = regexp.MustCompile(`^run (\S+) · (.+?)(?: v\d+| @([0-9a-f]{64}))? · ([a-z-]+)( · dry run)?$`)
 	rlStarted  = regexp.MustCompile(`^started (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+) · ([a-z]+)(?: after (\S+))?$`)
 	rlWindow   = regexp.MustCompile(`^maintenance window: opened (\S+)(?:, closed (\S+) \((\S*)\))?$`)
 	rlNote     = regexp.MustCompile(`^ *note \((.*), (\d\d:\d\d:\d\d|--:--:--)\): (.*)$`)
-	rlResumed  = regexp.MustCompile(`^resumed (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) from step (\d+) \((.*?)\)(?: with runbook version (\d+) \(it had run version (\d+)\))?$`)
+	rlResumed  = regexp.MustCompile(`^resumed (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) from step (\d+) \((.*?)\)(?: with runbook version (\w*) \(it had run version (\w*)\))?$`)
 	rlPending  = regexp.MustCompile(`^\[--:--:--\] ○ (\d+)\. (.*) — not reached$`)
 	rlStart    = regexp.MustCompile(`^\[(\d\d:\d\d:\d\d|--:--:--)\] ▶ (\d+)\. (.*) \(([a-z-]+)((?:, [^,()]+)*)\)$`)
 	rlEnd      = regexp.MustCompile(`^\[(\d\d:\d\d:\d\d|--:--:--)\] \S+ (succeeded|failed|skipped|aborted|suspended|forced|running|pending|background)((?: · .*)?)$`)
@@ -116,7 +118,7 @@ func parseOneRawLog(text string) (*Run, error) {
 		return nil, errors.New("not a runnr raw log (it starts with “run <id> · <runbook> · <mode>”)")
 	}
 	r := &Run{ID: m[1], Runbook: m[2], Mode: m[4], DryRun: m[5] != "", Inputs: map[string]string{}, FromLog: true}
-	r.RunbookVersion, _ = strconv.Atoi(m[3])
+	r.RunbookVersion = logVersion(m[3])
 	if len(lines) < 2 {
 		return nil, errors.New("the log ends after its first line")
 	}
@@ -178,8 +180,7 @@ func parseOneRawLog(text string) (*Run, error) {
 			from, _ := strconv.Atoi(m[2])
 			rs := Resumption{At: at, From: from - 1}
 			rs.Status, rs.Error = howItEnded(m[3])
-			rs.RunbookVersion, _ = strconv.Atoi(m[4])
-			rs.Was, _ = strconv.Atoi(m[5])
+			rs.RunbookVersion, rs.Was = logVersion(m[4]), logVersion(m[5])
 			r.Resumptions = append(r.Resumptions, rs)
 		}
 	}
@@ -376,3 +377,12 @@ func parseStepBody(lines []string, i int, s *StepResult, c *clock) int {
 // stepPart says whether a line indented two spaces is a step's check or
 // shell rather than more of its command.
 func stepPart(l string) bool { return rlCheck.MatchString(l) || rlShell.MatchString(l) }
+
+// logVersion reads a version from a raw log: a hash; a number (a log from
+// before versions were hashes) isn't one.
+func logVersion(s string) ver.ID {
+	if len(s) == 64 {
+		return ver.ID(s)
+	}
+	return ""
+}

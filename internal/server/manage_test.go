@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Deleting a runbook takes it out of its collections and removes its
@@ -58,7 +59,8 @@ func TestManageDeleteRestore(t *testing.T) {
 	}
 	res = do(t, "POST", ts.URL+"/api/manage/restore", `{"items":[{"kind":"runbook","name":"rb"}]}`, nil)
 	json.NewDecoder(res.Body).Decode(&out)
-	if !out.Results[0].OK || out.Results[0].Version != 2 {
+	// Restoring makes its last version current again.
+	if !out.Results[0].OK || out.Results[0].Version != ver.Of([]byte("name: rb\nlibraries: [helpers]\nsteps:\n  - {name: one, run: 'hi'}\n")) {
 		t.Fatalf("restore %+v", out)
 	}
 	if res := do(t, "DELETE", ts.URL+"/api/runs/nope", "", nil); res.StatusCode != http.StatusNotFound {

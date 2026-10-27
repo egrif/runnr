@@ -10,6 +10,7 @@ import (
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Masked is runs as they leave runnr (an export, a raw log, a timeline):
@@ -173,3 +174,26 @@ func Scrub(st *store.Store, ids []string, dry bool) ([]Scrubbed, error) {
 
 // MaskedRun is Masked for one run.
 func MaskedRun(st *store.Store, r *engine.Run) *engine.Run { return Masked(st, []*engine.Run{r})[0] }
+
+// WithDefinitions are runs (copies) carrying the texts of the runbook and
+// library versions they ran, for exporting.
+func WithDefinitions(st *store.Store, runs []*engine.Run) []*engine.Run {
+	out := make([]*engine.Run, len(runs))
+	for i, r := range runs {
+		c := *r
+		c.Definitions = map[ver.ID]string{}
+		if raw, _, err := st.RawVersion(r.Runbook, string(r.RunbookVersion)); err == nil && r.RunbookVersion != "" {
+			c.Definitions[r.RunbookVersion] = string(raw)
+		}
+		for name, v := range r.Libraries {
+			if raw, _, err := st.RawLibraryVersion(name, string(v)); err == nil && v != "" {
+				c.Definitions[v] = string(raw)
+			}
+		}
+		if len(c.Definitions) == 0 {
+			c.Definitions = nil
+		}
+		out[i] = &c
+	}
+	return out
+}

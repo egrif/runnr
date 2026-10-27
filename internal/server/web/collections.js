@@ -210,7 +210,7 @@ async function viewCollection(name) {
       ${runbooks.some((r) => !c.runbooks.includes(r.name)) ? `<select id="add-rb"><option value="">+ Add a runbook…</option>${runbooks.filter((r) => !c.runbooks.includes(r.name)).map((r) => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join("")}</select>` : ""}` : ""}
     <div class="row" style="margin:12px 0 8px">
       <button class="primary" id="save">Save</button>
-      ${d.version ? `<span class="muted">version ${d.version}</span>` : ""}
+      ${d.version ? `<span class="muted">version ${shortVer(d.version)}</span>` : ""}
       <span class="spacer"></span>${isNew ? "" : `<button class="danger" id="delete">Delete</button>`}
     </div>
     <div id="validation" class="validation">${d.error ? esc(d.error) : ""}</div>

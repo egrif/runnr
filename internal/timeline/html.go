@@ -19,9 +19,9 @@ func (t *Timeline) HTML() []byte {
 <title>Timeline · %s</title>
 <style>%s</style></head><body>
 <header><h1>%s <span class="muted">· run %s</span></h1>
-<p class="meta"><span class="badge s-%s">%s</span> %s → %s · %s · %s run · runbook version %d</p></header>
+<p class="meta"><span class="badge s-%s">%s</span> %s → %s · %s · %s run · runbook version %s</p></header>
 `, e(r.Runbook+" "+r.ID), pageCSS, e(r.Runbook), e(r.ID), e(string(r.Status)), e(string(r.Status)),
-		e(t.Start.Local().Format("Mon Jan 2 2006, 15:04:05")), e(clock(t.End, t.Start)), e(Dur(t.End.Sub(t.Start))), e(r.Mode), r.RunbookVersion)
+		e(t.Start.Local().Format("Mon Jan 2 2006, 15:04:05")), e(clock(t.End, t.Start)), e(Dur(t.End.Sub(t.Start))), e(r.Mode), e(r.RunbookVersion.Short()))
 
 	// What it comes to.
 	count := map[engine.Status]int{}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 var collectionKind = docKind{noun: "collection", table: "collections", versions: "collection_versions",
@@ -23,7 +24,7 @@ var collectionKind = docKind{noun: "collection", table: "collections", versions:
 type CollectionDoc struct {
 	Name       string              `json:"name"`
 	Raw        string              `json:"raw"`
-	Version    int                 `json:"version"`
+	Version    ver.ID              `json:"version"`
 	UpdatedAt  time.Time           `json:"updated_at"`
 	Collection *runbook.Collection `json:"collection,omitempty"`
 	Err        string              `json:"error,omitempty"`
@@ -61,16 +62,13 @@ func (s *Store) LoadCollection(name string) (*CollectionDoc, error) {
 	return &d, nil
 }
 
-func (s *Store) SaveCollection(raw []byte, o SaveOpts) (string, int, error) {
+func (s *Store) SaveCollection(raw []byte, o SaveOpts) (string, ver.ID, error) {
 	return s.saveDoc(collectionKind, raw, o)
 }
 
 func (s *Store) DeleteCollection(name string) error { return s.deleteDoc(collectionKind, name) }
 func (s *Store) CollectionVersions(name string) ([]Version, error) {
 	return s.docVersions(collectionKind, name)
-}
-func (s *Store) RawCollectionVersion(name string, v int) ([]byte, error) {
-	return s.rawDocVersion(collectionKind, name, v)
 }
 
 // CollectionsOf lists the collections that include a runbook.
@@ -92,35 +90,35 @@ func (s *Store) CollectionsOf(runbookName string) ([]string, error) {
 // keeping the rest of its YAML. With create, a missing collection is made
 // first. It returns the version saved (the current one if nothing changed)
 // and whether the collection was created.
-func (s *Store) EditCollectionRunbooks(name string, create bool, fn func([]string) ([]string, error)) (version int, created bool, err error) {
+func (s *Store) EditCollectionRunbooks(name string, create bool, fn func([]string) ([]string, error)) (version ver.ID, created bool, err error) {
 	d, err := s.LoadCollection(name)
 	var raw []byte
-	var base int
+	var base ver.ID
 	var list []string
 	switch {
 	case errors.Is(err, ErrNotFound) && create:
 		created = true
 		raw = []byte("name: " + name + "\nrunbooks: []\n")
 	case err != nil:
-		return 0, false, err
+		return "", false, err
 	case d.Collection == nil:
-		return 0, false, fmt.Errorf("collection %q doesn't parse: %s", name, d.Err)
+		return "", false, fmt.Errorf("collection %q doesn't parse: %s", name, d.Err)
 	default:
 		raw, base, list = []byte(d.Raw), d.Version, d.Collection.Runbooks
 	}
 	next, err := fn(slices.Clone(list))
 	if err != nil {
-		return 0, false, err
+		return "", false, err
 	}
 	if !created && slices.Equal(next, list) {
 		return base, false, nil
 	}
 	if raw, err = runbook.SetCollectionRunbooks(raw, next); err != nil {
-		return 0, false, err
+		return "", false, err
 	}
 	o := SaveOpts{}
 	if !created {
-		o = SaveOpts{OldName: name, BaseVersion: base}
+		o = SaveOpts{OldName: name, Base: base}
 	}
 	_, version, err = s.SaveCollection(raw, o)
 	return version, created, err
@@ -128,10 +126,10 @@ func (s *Store) EditCollectionRunbooks(name string, create bool, fn func([]strin
 
 // AddToCollection appends runbooks (which must exist) to a collection,
 // creating it if create is set. Runbooks already in it stay where they are.
-func (s *Store) AddToCollection(name string, create bool, runbooks ...string) (version int, created bool, err error) {
+func (s *Store) AddToCollection(name string, create bool, runbooks ...string) (version ver.ID, created bool, err error) {
 	for _, r := range runbooks {
 		if !s.Exists(r) {
-			return 0, false, fmt.Errorf("runbook %q: %w", r, ErrNotFound)
+			return "", false, fmt.Errorf("runbook %q: %w", r, ErrNotFound)
 		}
 	}
 	return s.EditCollectionRunbooks(name, create, func(list []string) ([]string, error) {
@@ -145,7 +143,7 @@ func (s *Store) AddToCollection(name string, create bool, runbooks ...string) (v
 }
 
 // RemoveFromCollection takes runbooks out of a collection (they stay in runnr).
-func (s *Store) RemoveFromCollection(name string, runbooks ...string) (int, error) {
+func (s *Store) RemoveFromCollection(name string, runbooks ...string) (ver.ID, error) {
 	v, _, err := s.EditCollectionRunbooks(name, false, func(list []string) ([]string, error) {
 		for _, r := range runbooks {
 			if !slices.Contains(list, r) {
@@ -191,7 +189,7 @@ func (s *Store) MoveRunbook(runbookName, from, to string, create bool) (moved st
 
 // SetCollectionRunbooks replaces a collection's runbook list (any order);
 // runbooks new to it must exist.
-func (s *Store) SetCollectionRunbooks(name string, runbooks []string) (int, error) {
+func (s *Store) SetCollectionRunbooks(name string, runbooks []string) (ver.ID, error) {
 	v, _, err := s.EditCollectionRunbooks(name, false, func(list []string) ([]string, error) {
 		seen := map[string]bool{}
 		for _, r := range runbooks {
@@ -210,10 +208,10 @@ func (s *Store) SetCollectionRunbooks(name string, runbooks []string) (int, erro
 
 // UpdateCollection changes a collection's name, description or expect
 // (nil leaves one as it is), keeping the rest of its YAML.
-func (s *Store) UpdateCollection(name string, newName, description, expect *string) (string, int, error) {
+func (s *Store) UpdateCollection(name string, newName, description, expect *string) (string, ver.ID, error) {
 	d, err := s.LoadCollection(name)
 	if err != nil {
-		return "", 0, err
+		return "", "", err
 	}
 	raw := []byte(d.Raw)
 	for key, v := range map[string]*string{"name": newName, "description": description, "expect": expect} {
@@ -221,11 +219,11 @@ func (s *Store) UpdateCollection(name string, newName, description, expect *stri
 			continue
 		}
 		if key == "name" && strings.TrimSpace(*v) == "" {
-			return "", 0, errors.New("a collection needs a name")
+			return "", "", errors.New("a collection needs a name")
 		}
 		if raw, err = runbook.SetCollectionField(raw, key, strings.TrimSpace(*v)); err != nil {
-			return "", 0, err
+			return "", "", err
 		}
 	}
-	return s.SaveCollection(raw, SaveOpts{OldName: name, BaseVersion: d.Version})
+	return s.SaveCollection(raw, SaveOpts{OldName: name, Base: d.Version})
 }

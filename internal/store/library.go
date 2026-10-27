@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 var libraryKind = docKind{noun: "library", table: "libraries", versions: "library_versions",
@@ -23,10 +24,10 @@ type LibraryEntry struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description,omitempty"`
 	Functions   []string  `json:"functions"`
-	Version     int       `json:"version"`
+	Version     ver.ID    `json:"version"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	Err         string    `json:"error,omitempty"`
-	// Builtin: it ships with runnr (version 0); saving one by that name
+	// Builtin: it ships with runnr (its version is its text's, like any other); saving one by that name
 	// replaces it.
 	Builtin bool `json:"builtin,omitempty"`
 }
@@ -53,7 +54,7 @@ func (s *Store) ListLibraries() ([]LibraryEntry, error) {
 		if slices.ContainsFunc(out, func(e LibraryEntry) bool { return e.Name == n }) {
 			continue
 		}
-		e := LibraryEntry{Name: n, Builtin: true, Functions: []string{}}
+		e := LibraryEntry{Name: n, Version: ver.Of(runbook.BuiltinLibrary(n)), Builtin: true, Functions: []string{}}
 		if lib, err := runbook.ParseLibrary(runbook.BuiltinLibrary(n)); err == nil {
 			e.Description = lib.Description
 			for f := range lib.Functions {
@@ -69,7 +70,7 @@ func (s *Store) ListLibraries() ([]LibraryEntry, error) {
 type LibraryDoc struct {
 	Name      string
 	Raw       []byte
-	Version   int
+	Version   ver.ID
 	UpdatedAt time.Time
 	Library   *runbook.Library
 	ParseErr  error
@@ -80,7 +81,7 @@ func (s *Store) LoadLibrary(name string) (*LibraryDoc, error) {
 	r, err := s.loadDoc(libraryKind, name)
 	if errors.Is(err, ErrNotFound) {
 		if raw := runbook.BuiltinLibrary(name); raw != nil {
-			d := &LibraryDoc{Name: name, Raw: raw, Builtin: true}
+			d := &LibraryDoc{Name: name, Raw: raw, Version: ver.Of(raw), Builtin: true}
 			d.Library, d.ParseErr = runbook.ParseLibrary(raw)
 			return d, nil
 		}
@@ -111,9 +112,9 @@ func (s *Store) Libraries(names []string) ([]*runbook.Library, error) {
 }
 
 // SaveLibrary validates raw YAML and stores it as a new version.
-func (s *Store) SaveLibrary(raw []byte, o SaveOpts) (*runbook.Library, int, error) {
+func (s *Store) SaveLibrary(raw []byte, o SaveOpts) (*runbook.Library, ver.ID, error) {
 	if _, ver, err := s.saveDoc(libraryKind, raw, o); err != nil {
-		return nil, 0, err
+		return nil, "", err
 	} else {
 		lib, _ := runbook.ParseLibrary(raw)
 		return lib, ver, nil
@@ -124,6 +125,21 @@ func (s *Store) DeleteLibrary(name string) error { return s.deleteDoc(libraryKin
 func (s *Store) LibraryVersions(name string) ([]Version, error) {
 	return s.docVersions(libraryKind, name)
 }
-func (s *Store) RawLibraryVersion(name string, v int) ([]byte, error) {
-	return s.rawDocVersion(libraryKind, name, v)
+func (s *Store) RawLibraryVersion(name, ref string) ([]byte, ver.ID, error) {
+	return s.rawDocVersion(libraryKind, name, ref)
+}
+
+// LibrariesUsed are the current versions of the named libraries (built-in
+// ones too), for a run's record; a missing one is left out.
+func (s *Store) LibrariesUsed(names []string) map[string]ver.ID {
+	out := map[string]ver.ID{}
+	for _, n := range names {
+		if d, err := s.LoadLibrary(n); err == nil {
+			out[n] = d.Version
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

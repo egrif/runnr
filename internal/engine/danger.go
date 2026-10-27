@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/runbook"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // DangerChecker is implemented by interactors that can ask a human to
@@ -109,8 +110,8 @@ type Resumption struct {
 	Ended  time.Time `json:"ended,omitzero"`
 	// RunbookVersion is the version it carried on with; Was, the one before
 	// (when they differ).
-	RunbookVersion int `json:"runbook_version,omitempty"`
-	Was            int `json:"was_version,omitempty"`
+	RunbookVersion ver.ID `json:"runbook_version,omitempty"`
+	Was            ver.ID `json:"was_version,omitempty"`
 }
 
 // continueRun takes up the run being resumed, in place: its start, input

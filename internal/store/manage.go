@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Deleting keeps a document's versions, so a deleted runbook, library,
@@ -25,14 +26,14 @@ const (
 type Deleted struct {
 	Kind    string    `json:"kind"`
 	Name    string    `json:"name"`
-	Version int       `json:"version"`
+	Version ver.ID    `json:"version"`
 	SavedAt time.Time `json:"saved_at"`
 }
 
 func tables(kind string) (table, versions string, err error) {
 	switch kind {
 	case KindRunbook:
-		return "runbooks", "runbook_versions", nil
+		return runbookKind.table, runbookKind.versions, nil
 	case KindLibrary:
 		return libraryKind.table, libraryKind.versions, nil
 	case KindFakes:
@@ -45,14 +46,15 @@ func tables(kind string) (table, versions string, err error) {
 	return "", "", fmt.Errorf("unknown kind %q", kind)
 }
 
-// ListDeleted lists the deleted documents of a kind.
+// ListDeleted lists the deleted documents of a kind, each with its last
+// saved version.
 func (s *Store) ListDeleted(kind string) ([]Deleted, error) {
 	table, versions, err := tables(kind)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT v.name, MAX(v.version), MAX(v.created_at) FROM ` + versions + ` v
-		WHERE v.name NOT IN (SELECT name FROM ` + table + `) GROUP BY v.name ORDER BY v.name`)
+	rows, err := s.db.Query(`SELECT v.name, v.hash, v.created_at FROM ` + versions + ` v
+		WHERE v.name NOT IN (SELECT name FROM ` + table + `) ORDER BY v.name, v.created_at DESC, v.hash`)
 	if err != nil {
 		return nil, err
 	}
@@ -64,32 +66,35 @@ func (s *Store) ListDeleted(kind string) ([]Deleted, error) {
 		if err := rows.Scan(&d.Name, &d.Version, &at); err != nil {
 			return nil, err
 		}
+		if len(out) > 0 && out[len(out)-1].Name == d.Name {
+			continue
+		}
 		d.SavedAt = parseTS(at)
 		out = append(out, d)
 	}
 	return out, rows.Err()
 }
 
-// Restore saves a deleted document's last version again (as its next
-// version), returning it.
-func (s *Store) Restore(kind, name string) (int, error) {
+// Restore makes a deleted document's last saved version current again,
+// returning it.
+func (s *Store) Restore(kind, name string) (ver.ID, error) {
 	table, versions, err := tables(kind)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 	var n int
 	if err := s.db.QueryRow(s.q(`SELECT COUNT(*) FROM `+table+` WHERE name = ?`), name).Scan(&n); err != nil {
-		return 0, err
+		return "", err
 	}
 	if n > 0 {
-		return 0, fmt.Errorf("%s %q isn't deleted", kind, name)
+		return "", fmt.Errorf("%s %q isn't deleted", kind, name)
 	}
 	var raw string
-	err = s.db.QueryRow(s.q(`SELECT raw FROM `+versions+` WHERE name = ? ORDER BY version DESC LIMIT 1`), name).Scan(&raw)
+	err = s.db.QueryRow(s.q(`SELECT raw FROM `+versions+` WHERE name = ? ORDER BY created_at DESC, hash LIMIT 1`), name).Scan(&raw)
 	if err != nil {
-		return 0, fmt.Errorf("%s %q: no saved version: %w", kind, name, ErrNotFound)
+		return "", fmt.Errorf("%s %q: no saved version: %w", kind, name, ErrNotFound)
 	}
-	var v int
+	var v ver.ID
 	switch kind {
 	case KindRunbook:
 		_, v, err = s.Save([]byte(raw), SaveOpts{})

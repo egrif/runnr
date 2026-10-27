@@ -51,7 +51,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr list` | List runbooks (`--json`) |
 | `runnr new <name>` | Create from a starter template and open `$EDITOR` |
 | `runnr edit <name>` | Edit in `$EDITOR`; only saved once it validates |
-| `runnr show <name>` | Print YAML (`--version N` for an older save) |
+| `runnr show <name>` | Print YAML (`--version V` for an older save: its hash, a prefix of it, or its short form) |
 | `runnr inspect <name> [step]` | Explore what will run: all steps, or one step's code, expected outcome and outputs (`-v` fills in inputs, `--all`) |
 | `runnr versions <name>` | List saved versions |
 | `runnr lib list/show/new/edit/import/delete/versions` | Manage function libraries |
@@ -62,7 +62,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**); `-f yaml` (or `-o file.yaml`) writes the runbook as written with the libraries it uses beside it (`--lib`, `--no-libs`), so the folder imports again (**⇩ Export…** on the runbook's page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export db-helpers)"` |
-| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (saved as its next version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
+| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (made its current version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
 | `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
 | `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
 | `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
@@ -99,13 +99,28 @@ runnr db import ~/.runnr-old    # optional: bring in file-based runbooks and run
 
 runnr creates its tables on first connect. It stores:
 
-- **runbooks**: current YAML per name, with a version number.
+- **runbooks**: current YAML per name, and its version.
 - **runbook_versions**: every saved version, kept even after delete or rename.
   Edits from the CLI and GUI are checked against the version you started from,
   so a concurrent save is refused (`409` in the API) rather than overwritten.
 - **runs**: one record per run (inputs, step statuses, last 64 KiB of output per
-  step, the runbook version that ran), updated after every step. Secrets are
-  masked; output of `tty` steps isn't captured. Prune with `runnr history prune`.
+  step, the versions of the runbook and libraries that ran), updated after
+  every step. Secrets are masked; output of `tty` steps isn't captured. Prune
+  with `runnr history prune`.
+
+Libraries, fake libraries, test suites and collections are kept the same way.
+
+**Versions** are the SHA-256 of the text, shown as its first and last four
+characters (`3f2a…9c1d`); anywhere a version is asked for, that short form,
+the whole hash or a prefix of it will do. The same text is the same version
+in any runnr, so versions compare across installations. Saving text a
+document had before makes that version current again rather than adding
+one. An exported run carries the runbook and library text it ran; importing
+it into another runnr keeps them as versions there.
+
+A database from before versions were hashes is converted the first time
+this runnr opens it (a SQLite file is copied aside first, as
+`runnr.db.before-hashes-<time>`): runs then name the hash of what they ran.
 
 Older versions of runnr kept YAML and JSON files under `~/.runnr`; the default
 SQLite database imports them once, on first use, and leaves the files alone.

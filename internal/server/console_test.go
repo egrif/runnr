@@ -11,6 +11,7 @@ import (
 
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // The console sees the runbook saved as a newer version mid-run, and moves
@@ -53,23 +54,25 @@ func TestRunPlanAndAdoptVersion(t *testing.T) {
 	}
 	q := next("question")
 
-	// Someone saves version 2 while the run waits at step 1.
-	if _, _, err := st.Save([]byte(strings.Replace(v1, "echo old c", "echo new c", 1)), store.SaveOpts{Overwrite: true}); err != nil {
+	// Someone saves a new version while the run waits at step 1.
+	v2 := strings.Replace(v1, "echo old c", "echo new c", 1)
+	if _, _, err := st.Save([]byte(v2), store.SaveOpts{Overwrite: true}); err != nil {
 		t.Fatal(err)
 	}
+	h1, h2 := ver.Of([]byte(v1)), ver.Of([]byte(v2))
 	var p runPlan
 	json.NewDecoder(do(t, "GET", ts.URL+"/api/runs/"+id+"/plan", "", nil).Body).Decode(&p)
-	if !p.Live || p.Version != 1 || p.Latest != 2 || len(p.Changed) != 1 || p.Changed[0] != 3 || len(p.Steps) != 3 {
+	if !p.Live || p.Version != h1 || p.Latest != h2 || len(p.Changed) != 1 || p.Changed[0] != 3 || len(p.Steps) != 3 {
 		t.Fatalf("plan: %+v", p)
 	}
-	if r := do(t, "POST", ts.URL+"/api/runs/"+id+"/adopt-version", `{"version":2}`, nil); r.StatusCode != http.StatusOK {
+	if r := do(t, "POST", ts.URL+"/api/runs/"+id+"/adopt-version", `{"version":"`+h2.Short()+`"}`, nil); r.StatusCode != http.StatusOK {
 		t.Fatalf("adopt: %d", r.StatusCode)
 	}
 	body, _ := json.Marshal(Answer{QuestionID: q.Question.ID, Value: "run"})
 	do(t, "POST", ts.URL+"/api/runs/"+id+"/answer", string(body), nil)
 	final := next(engine.EventRunFinished).Run
-	if final.Status != engine.StatusSucceeded || final.Steps[2].Output != "new c\n" || final.RunbookVersion != 2 {
-		t.Fatalf("%s %q v%d", final.Status, final.Steps[2].Output, final.RunbookVersion)
+	if final.Status != engine.StatusSucceeded || final.Steps[2].Output != "new c\n" || final.RunbookVersion != h2 {
+		t.Fatalf("%s %q %s", final.Status, final.Steps[2].Output, final.RunbookVersion)
 	}
 
 	// A finished run's plan: the steps as it ran them, and nothing to adopt.
@@ -88,22 +91,22 @@ func TestEditRunbookStepOverHTTP(t *testing.T) {
 	do(t, "POST", ts.URL+"/api/runbooks", rb, nil)
 	var got struct {
 		YAML    string `json:"yaml"`
-		Version int    `json:"version"`
+		Version ver.ID `json:"version"`
 	}
 	json.NewDecoder(do(t, "GET", ts.URL+"/api/runbooks/demo/steps/2", "", nil).Body).Decode(&got)
-	if !strings.Contains(got.YAML, "echo b") || got.Version != 1 {
+	if !strings.Contains(got.YAML, "echo b") || got.Version != ver.Of([]byte(rb)) {
 		t.Fatalf("%+v", got)
 	}
-	res := do(t, "PUT", ts.URL+"/api/runbooks/demo/steps/2", strings.Replace(got.YAML, "echo b", "echo B", 1), map[string]string{"If-Match": "1", "Content-Type": "application/yaml"})
+	res := do(t, "PUT", ts.URL+"/api/runbooks/demo/steps/2", strings.Replace(got.YAML, "echo b", "echo B", 1), map[string]string{"If-Match": string(got.Version), "Content-Type": "application/yaml"})
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("put: %d", res.StatusCode)
 	}
 	d, _ := st.Load("demo")
-	if d.Version != 2 || !strings.Contains(string(d.Raw), "echo B") || !strings.Contains(string(d.Raw), "# keep me") || !strings.Contains(string(d.Raw), "# and me") {
-		t.Fatalf("v%d:\n%s", d.Version, d.Raw)
+	if d.Version != ver.Of(d.Raw) || d.Version == got.Version || !strings.Contains(string(d.Raw), "echo B") || !strings.Contains(string(d.Raw), "# keep me") || !strings.Contains(string(d.Raw), "# and me") {
+		t.Fatalf("%s:\n%s", d.Version, d.Raw)
 	}
 	// Edited from an old version: a conflict, not a silent overwrite.
-	if res := do(t, "PUT", ts.URL+"/api/runbooks/demo/steps/2", got.YAML, map[string]string{"If-Match": "1"}); res.StatusCode != http.StatusConflict {
+	if res := do(t, "PUT", ts.URL+"/api/runbooks/demo/steps/2", got.YAML, map[string]string{"If-Match": string(got.Version)}); res.StatusCode != http.StatusConflict {
 		t.Fatalf("stale edit: %d", res.StatusCode)
 	}
 }

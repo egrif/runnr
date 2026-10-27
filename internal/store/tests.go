@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/egrif/runnr/internal/runtest"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Fake libraries and test suites are stored like function libraries:
@@ -31,7 +32,7 @@ var (
 type TestDoc struct {
 	Name      string    `json:"name"`
 	Raw       []byte    `json:"-"`
-	Version   int       `json:"version"`
+	Version   ver.ID    `json:"version"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -65,7 +66,7 @@ func (s *Store) Fakes(name string) (*runtest.Library, error) {
 	return runtest.ParseLibrary(d.Raw)
 }
 
-func (s *Store) SaveFakes(raw []byte, o SaveOpts) (string, int, error) {
+func (s *Store) SaveFakes(raw []byte, o SaveOpts) (string, ver.ID, error) {
 	return s.saveDoc(fakesKind, raw, o)
 }
 func (s *Store) DeleteFakes(name string) error { return s.deleteDoc(fakesKind, name) }
@@ -83,7 +84,7 @@ func (s *Store) LoadSuite(name string) (*TestDoc, error) {
 	return &TestDoc{Name: r.Name, Raw: r.Raw, Version: r.Version, UpdatedAt: r.UpdatedAt}, nil
 }
 
-func (s *Store) SaveSuite(raw []byte, o SaveOpts) (string, int, error) {
+func (s *Store) SaveSuite(raw []byte, o SaveOpts) (string, ver.ID, error) {
 	return s.saveDoc(suiteKind, raw, o)
 }
 func (s *Store) DeleteSuite(name string) error { return s.deleteDoc(suiteKind, name) }

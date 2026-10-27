@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/egrif/runnr/internal/ver"
 )
 
-// Saver stores a file of a kind (overwrite: as the next version of the
+// Saver stores a file of a kind (overwrite: as the current version of the
 // one by its name), returning the version it's at.
-type Saver func(kind string, raw []byte, overwrite bool) (int, error)
+type Saver func(kind string, raw []byte, overwrite bool) (ver.ID, error)
 
 // Result is what importing a file did.
 type Result struct {
@@ -18,8 +20,8 @@ type Result struct {
 	// Status: imported, replaced, unchanged, skipped, exists (its name is
 	// taken and replacing wasn't chosen) or failed.
 	Status   string `json:"status"`
-	Version  int    `json:"version,omitempty"`
-	Replaced int    `json:"replaced,omitempty"`
+	Version  ver.ID `json:"version,omitempty"`
+	Replaced ver.ID `json:"replaced,omitempty"`
 	Error    string `json:"error,omitempty"`
 }
 
@@ -29,24 +31,24 @@ func (r Result) String() string {
 		if r.Kind == Run {
 			return fmt.Sprintf("imported %s → run %s", r.Rel, r.Name)
 		}
-		return fmt.Sprintf("imported %s → %s %s (version %d)", r.Rel, r.Kind, r.Name, r.Version)
+		return fmt.Sprintf("imported %s → %s %s (version %s)", r.Rel, r.Kind, r.Name, r.Version.Short())
 	case "replaced":
-		return fmt.Sprintf("replaced %s %s with %s (version %d → %d)", r.Kind, r.Name, r.Rel, r.Replaced, r.Version)
+		return fmt.Sprintf("replaced %s %s with %s (version %s → %s)", r.Kind, r.Name, r.Rel, r.Replaced.Short(), r.Version.Short())
 	case "unchanged":
 		if r.Kind == Run {
 			return fmt.Sprintf("already there %s → run %s", r.Rel, r.Name)
 		}
-		return fmt.Sprintf("unchanged %s → %s %s (version %d)", r.Rel, r.Kind, r.Name, r.Version)
+		return fmt.Sprintf("unchanged %s → %s %s (version %s)", r.Rel, r.Kind, r.Name, r.Version.Short())
 	case "skipped":
 		return fmt.Sprintf("skipped %s", r.Rel)
 	case "exists":
-		return fmt.Sprintf("not imported %s: %s %s already exists (version %d); replace it (--force) or rename it (--rename %s=NEW)", r.Rel, r.Kind, r.Name, r.Version, r.Name)
+		return fmt.Sprintf("not imported %s: %s %s already exists (version %s); replace it (--force) or rename it (--rename %s=NEW)", r.Rel, r.Kind, r.Name, r.Version.Short(), r.Name)
 	}
 	return fmt.Sprintf("failed %s: %s", r.Rel, r.Error)
 }
 
 // Apply saves the plan's files, what they refer to first. A file whose
-// name is taken is saved as the next version only if replace says so. A
+// name is taken is saved as its current version only if replace says so. A
 // file with an error, a placeholder without a value or a reference that's
 // missing isn't saved.
 func Apply(p *Plan, replace func(Doc) bool, save Saver) []Result {

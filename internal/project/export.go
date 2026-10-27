@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/egrif/runnr/internal/store"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Exporting a runbook to a file, as written (comments and all), with the
@@ -19,7 +20,7 @@ type ExportFile struct {
 	Kind    string `json:"kind"`
 	Name    string `json:"name"`
 	Path    string `json:"path"`
-	Version int    `json:"version,omitempty"`
+	Version ver.ID `json:"version,omitempty"`
 	// Exists: there's a file at Path already (written over only if asked).
 	Exists bool `json:"exists,omitempty"`
 	// Builtin: one of runnr's own libraries (left out unless asked).

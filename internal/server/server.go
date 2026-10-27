@@ -24,6 +24,7 @@ import (
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
 	"github.com/egrif/runnr/internal/timeline"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 //go:embed web
@@ -293,7 +294,7 @@ func (s *Server) getRunbook(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp["runbook"] = d.Runbook
 	}
-	w.Header().Set("ETag", strconv.Itoa(d.Version))
+	w.Header().Set("ETag", string(d.Version))
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -310,7 +311,7 @@ func (s *Server) createRunbook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	rb, ver, err := s.st.Save(raw, store.SaveOpts{})
+	rb, rev, err := s.st.Save(raw, store.SaveOpts{})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -319,22 +320,15 @@ func (s *Server) createRunbook(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("saved %s, but adding it to collection %s failed: %w", rb.Name, col, err))
 		return
 	}
-	w.Header().Set("ETag", strconv.Itoa(ver))
-	writeJSON(w, http.StatusCreated, map[string]any{"name": rb.Name, "version": ver, "runbook": rb, "collection": col})
+	w.Header().Set("ETag", string(rev))
+	writeJSON(w, http.StatusCreated, map[string]any{"name": rb.Name, "version": rev, "runbook": rb, "collection": col})
 }
 
 // updateRunbook saves a new version. Send "If-Match: <version>" to fail with
 // 409 instead of overwriting someone else's newer save.
 func (s *Server) updateRunbook(w http.ResponseWriter, r *http.Request) {
 	o := store.SaveOpts{OldName: r.PathValue("name")}
-	if m := strings.Trim(r.Header.Get("If-Match"), `" `); m != "" {
-		v, err := strconv.Atoi(m)
-		if err != nil {
-			writeErr(w, fmt.Errorf("If-Match must be a version number"))
-			return
-		}
-		o.BaseVersion = v
-	}
+	o.Base = ifMatch(r)
 	s.saveRunbook(w, r, o, http.StatusOK)
 }
 
@@ -344,13 +338,13 @@ func (s *Server) saveRunbook(w http.ResponseWriter, r *http.Request, o store.Sav
 		writeErr(w, err)
 		return
 	}
-	rb, ver, err := s.st.Save(raw, o)
+	rb, rev, err := s.st.Save(raw, o)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	w.Header().Set("ETag", strconv.Itoa(ver))
-	writeJSON(w, code, map[string]any{"name": rb.Name, "version": ver, "runbook": rb})
+	w.Header().Set("ETag", string(rev))
+	writeJSON(w, code, map[string]any{"name": rb.Name, "version": rev, "runbook": rb})
 }
 
 func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
@@ -363,12 +357,7 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
-	v, err := strconv.Atoi(r.PathValue("version"))
-	if err != nil {
-		writeErr(w, fmt.Errorf("bad version"))
-		return
-	}
-	raw, err := s.st.RawVersion(r.PathValue("name"), v)
+	raw, v, err := s.st.RawVersion(r.PathValue("name"), r.PathValue("version"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -492,7 +481,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	rb, ver, err := s.st.Get(req.Runbook)
+	rb, rev, err := s.st.Get(req.Runbook)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -504,7 +493,7 @@ func (s *Server) startRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.launch(w, r, rb, ver, req, start, nil, nil)
+	s.launch(w, r, rb, rev, req, start, nil, nil)
 }
 
 func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
@@ -523,7 +512,7 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("run %s has no unfinished steps", prev.ID))
 		return
 	}
-	rb, ver, err := s.st.Get(prev.Runbook)
+	rb, rev, err := s.st.Get(prev.Runbook)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -567,10 +556,10 @@ func (s *Server) resumeRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.launch(w, r, rb, ver, req, start, prev, engine.ResumeState(prev))
+	s.launch(w, r, rb, rev, req, start, prev, engine.ResumeState(prev))
 }
 
-func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, ver int, req startReq, start int, resumed *engine.Run, state map[string]string) {
+func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runbook, rev ver.ID, req startReq, start int, resumed *engine.Run, state map[string]string) {
 	resumes, cont := "", resumed != nil && !req.NewRun
 	if resumed != nil && !cont {
 		resumes = resumed.ID
@@ -643,22 +632,23 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		defer s.wg.Done()
 		defer cancel(nil)
 		done <- engine.Execute(ctx, rb, ui, id, engine.Options{
-			Owner:          engine.ThisProcess("server"),
-			Vars:           req.Vars,
-			DryRun:         req.DryRun,
-			Interactive:    !req.Unattended,
-			StartAt:        start,
-			Controls:       l.ctl,
-			Previous:       previous,
-			Libraries:      libs,
-			State:          state,
-			Resumes:        resumes,
-			Resumed:        resumed,
-			Continue:       cont,
-			RunbookVersion: ver,
+			Owner:           engine.ThisProcess("server"),
+			Vars:            req.Vars,
+			DryRun:          req.DryRun,
+			Interactive:     !req.Unattended,
+			StartAt:         start,
+			Controls:        l.ctl,
+			Previous:        previous,
+			Libraries:       libs,
+			State:           state,
+			Resumes:         resumes,
+			Resumed:         resumed,
+			Continue:        cont,
+			RunbookVersion:  rev,
+			LibraryVersions: s.st.LibrariesUsed(rb.Libraries),
 			// Only a recorded run of a saved runbook can run dangerous
 			// steps without a double check.
-			Sanctioned: !req.test && !req.DryRun && ver > 0,
+			Sanctioned: !req.test && !req.DryRun && s.st.HasVersion(rb.Name, rev),
 			// Unless the operator chose the steps, a resume leaves out
 			// every step that finished, not only those before start.
 			CarryDone: resumed != nil && req.Skip == nil,
@@ -1156,15 +1146,15 @@ func (s *Server) saveRunEdits(w http.ResponseWriter, r *http.Request) {
 	if ed != nil {
 		run.Edits = ed.Edits() // the record may not have the latest yet
 	}
-	ver, err := s.st.SaveRunEdits(run)
+	rev, err := s.st.SaveRunEdits(run)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	if ed != nil {
-		ed.MarkEditsSaved(ver)
+		ed.MarkEditsSaved(rev)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"version": ver})
+	writeJSON(w, http.StatusOK, map[string]any{"version": rev})
 }
 
 // addNote attaches an operator note to a step (1-based "step"), or to the
@@ -1306,7 +1296,7 @@ func (s *Server) getLibrary(w http.ResponseWriter, r *http.Request) {
 		resp["library"] = d.Library
 		resp["script"] = runbook.FunctionScript(d.Library.Functions)
 	}
-	w.Header().Set("ETag", strconv.Itoa(d.Version))
+	w.Header().Set("ETag", string(d.Version))
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -1316,12 +1306,12 @@ func (s *Server) saveLibrary(w http.ResponseWriter, r *http.Request, o store.Sav
 		writeErr(w, err)
 		return
 	}
-	lib, ver, err := s.st.SaveLibrary(raw, o)
+	lib, rev, err := s.st.SaveLibrary(raw, o)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, code, map[string]any{"name": lib.Name, "version": ver, "library": lib})
+	writeJSON(w, code, map[string]any{"name": lib.Name, "version": rev, "library": lib})
 }
 
 func (s *Server) createLibrary(w http.ResponseWriter, r *http.Request) {
@@ -1330,14 +1320,7 @@ func (s *Server) createLibrary(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateLibrary(w http.ResponseWriter, r *http.Request) {
 	o := store.SaveOpts{OldName: r.PathValue("name")}
-	if m := strings.Trim(r.Header.Get("If-Match"), `" `); m != "" {
-		v, err := strconv.Atoi(m)
-		if err != nil {
-			writeErr(w, fmt.Errorf("If-Match must be a version number"))
-			return
-		}
-		o.BaseVersion = v
-	}
+	o.Base = ifMatch(r)
 	s.saveLibrary(w, r, o, http.StatusOK)
 }
 
@@ -1418,7 +1401,7 @@ func (s *Server) testRun(w http.ResponseWriter, r *http.Request) {
 		state[k] = v
 	}
 	sr := startReq{Vars: vars, Unattended: req.Unattended, Skip: skip, test: true, Previous: "-"}
-	s.launch(w, r, rb, 0, sr, 0, nil, state)
+	s.launch(w, r, rb, "", sr, 0, nil, state)
 }
 
 func (s *Server) getTestValues(w http.ResponseWriter, r *http.Request) {
@@ -1661,12 +1644,12 @@ func (s *Server) addToCollection(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, errors.New("no runbooks given"))
 		return
 	}
-	ver, created, err := s.st.AddToCollection(r.PathValue("name"), body.Create, body.Runbooks...)
+	rev, created, err := s.st.AddToCollection(r.PathValue("name"), body.Create, body.Runbooks...)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"version": ver, "created": created})
+	writeJSON(w, http.StatusOK, map[string]any{"version": rev, "created": created})
 }
 
 // setCollectionRunbooks replaces the list (body {"runbooks": [...]}), e.g.
@@ -1679,12 +1662,12 @@ func (s *Server) setCollectionRunbooks(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	ver, err := s.st.SetCollectionRunbooks(r.PathValue("name"), body.Runbooks)
+	rev, err := s.st.SetCollectionRunbooks(r.PathValue("name"), body.Runbooks)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"version": ver})
+	writeJSON(w, http.StatusOK, map[string]any{"version": rev})
 }
 
 // patchCollection changes name, description or expect (fields left out
@@ -1699,21 +1682,21 @@ func (s *Server) patchCollection(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	name, ver, err := s.st.UpdateCollection(r.PathValue("name"), body.Name, body.Description, body.Expect)
+	name, rev, err := s.st.UpdateCollection(r.PathValue("name"), body.Name, body.Description, body.Expect)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": name, "version": ver})
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "version": rev})
 }
 
 func (s *Server) removeFromCollection(w http.ResponseWriter, r *http.Request) {
-	ver, err := s.st.RemoveFromCollection(r.PathValue("name"), r.PathValue("runbook"))
+	rev, err := s.st.RemoveFromCollection(r.PathValue("name"), r.PathValue("runbook"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"version": ver})
+	writeJSON(w, http.StatusOK, map[string]any{"version": rev})
 }
 
 // moveRunbook moves a runbook to another collection (body {"to", "from"};
@@ -1760,12 +1743,12 @@ func (s *Server) saveCollection(w http.ResponseWriter, r *http.Request, o store.
 		writeErr(w, err)
 		return
 	}
-	name, ver, err := s.st.SaveCollection(raw, o)
+	name, rev, err := s.st.SaveCollection(raw, o)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, code, map[string]any{"name": name, "version": ver})
+	writeJSON(w, code, map[string]any{"name": name, "version": rev})
 }
 
 func (s *Server) createCollection(w http.ResponseWriter, r *http.Request) {
@@ -1774,14 +1757,7 @@ func (s *Server) createCollection(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateCollection(w http.ResponseWriter, r *http.Request) {
 	o := store.SaveOpts{OldName: r.PathValue("name")}
-	if m := strings.Trim(r.Header.Get("If-Match"), `" `); m != "" {
-		v, err := strconv.Atoi(m)
-		if err != nil {
-			writeErr(w, fmt.Errorf("If-Match must be a version number"))
-			return
-		}
-		o.BaseVersion = v
-	}
+	o.Base = ifMatch(r)
 	s.saveCollection(w, r, o, http.StatusOK)
 }
 
@@ -1818,4 +1794,10 @@ func (u unattendedWeb) Bind(se engine.Session) { u.l.Bind(se) }
 
 func (u unattendedWeb) StartBackground(idx int, title string) engine.TermConn {
 	return u.l.StartBackground(idx, title)
+}
+
+// ifMatch is the version an If-Match header names (the one the client
+// edited), or empty.
+func ifMatch(r *http.Request) ver.ID {
+	return ver.ID(strings.Trim(r.Header.Get("If-Match"), `" `))
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/project"
+	"github.com/egrif/runnr/internal/ver"
 )
 
 // Exporting from the GUI, to paths on this machine (or as a download):
@@ -55,7 +56,7 @@ type chainRun struct {
 	Started string        `json:"started"`
 	Ended   string        `json:"ended,omitempty"`
 	Resumes string        `json:"resumes,omitempty"`
-	Version int           `json:"runbook_version,omitempty"`
+	Version ver.ID        `json:"runbook_version,omitempty"`
 	Steps   int           `json:"steps"`
 }
 
@@ -88,7 +89,7 @@ func (s *Server) logFiles(id string, ids []string, format string, single bool) (
 			runs = append(runs, x)
 		}
 	}
-	return project.LogFiles(project.Masked(s.st, runs), format, single, "")
+	return project.LogFiles(project.WithDefinitions(s.st, project.Masked(s.st, runs)), format, single, "")
 }
 
 func (s *Server) downloadLogs(w http.ResponseWriter, r *http.Request) {
