@@ -325,9 +325,10 @@ function renderLaunchSteps(st) {
 // and the folders a run fills them with on this machine, from its
 // collection (or one chosen) and those set for everything; each can be
 // given for this run only. A run doesn't start while one has no folder.
-// prev is the run being resumed or run again (its collection and folders).
-function mountFolders(el, name, prev) {
-  const st = { collection: prev?.collection || "", set: { ...(prev?.folder_set || {}) }, f: null, all: [] };
+// prev is the run being resumed or run again (its collection and folders);
+// keep, the st of an earlier mount (to draw it again where it was).
+function mountFolders(el, name, prev, keep) {
+  const st = keep || { collection: prev?.collection || "", set: { ...(prev?.folder_set || {}) }, f: null, all: [] };
   const from = { run: "this run", collection: "the collection", global: "for everything" };
   const load = async () => {
     const q = new URLSearchParams();
@@ -352,7 +353,8 @@ function mountFolders(el, name, prev) {
     el.querySelector("[data-col]").onchange = (e) => { st.collection = e.target.value; load(); };
     el.querySelectorAll("[data-set]").forEach((i) => (i.onchange = () => { st.set[i.dataset.set] = i.value.trim(); load(); }));
   };
-  api("GET", "/api/collections").then((cs) => { st.all = (cs || []).map((c) => c.name).sort(); draw(); }).catch(() => {});
+  if (keep) draw();
+  else api("GET", "/api/collections").then((cs) => { st.all = (cs || []).map((c) => c.name).sort(); draw(); }).catch(() => {});
   load();
-  return { body: () => ({ collection: st.collection, folders: Object.fromEntries(Object.entries(st.set).filter(([, v]) => v)) }) };
+  return { st, body: () => ({ collection: st.collection, folders: Object.fromEntries(Object.entries(st.set).filter(([, v]) => v)) }) };
 }

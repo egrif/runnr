@@ -1124,7 +1124,11 @@ function cxLaunchRenderAction(state) {
           const hint = [inp.description, inp.secret && "secret: not stored; leave blank to be asked when it's needed"].filter(Boolean).join(" · ");
           return `<label>${esc(inp.name)}${inp.required ? " *" : ""}</label>${ctl}${hint ? `<div class="hint">${esc(hint)}</div>` : ""}`;
         }).join("")}</div>` : `<p class="muted">This runbook takes no inputs.</p>`}
-      </div>`;
+      </div>
+      <div class="card cx-folders" hidden></div>`;
+    // The folders it fills placeholders with (kept across redraws).
+    const fm = mountFolders(body.querySelector(".cx-folders"), state.rb.name, state.mode === "run" ? null : state.prev, state.folders?.st);
+    state.folders = fm;
     body.querySelectorAll(".cx-inputs [name]").forEach((f) => (f.oninput = f.onchange = () => {
       state.vars[f.name] = f.value;
       state.refresh();
@@ -1168,6 +1172,7 @@ async function cxLaunchStart(state) {
   const body = {
     vars: cxLaunchVars(state), unattended: opts.unattended, yes: opts.yes, dry_run: opts.dry, step_mode: opts.step && !opts.unattended,
     skip: nums((i) => !state.include[i]), pause_before: nums((i) => state.before.has(i)), pause_after: nums((i) => state.after.has(i)),
+    ...(state.folders?.body() || { collection: state.mode === "run" ? "" : prev?.collection || "", folders: state.mode === "run" ? {} : prev?.folder_set || {} }),
   };
   if (opts.solo) {
     if (!author()) return toast("Give your name to drive it alone");
@@ -1186,5 +1191,9 @@ async function cxLaunchStart(state) {
       : await api("POST", "/api/runs", { ...body, runbook: rb.name, previous: prev?.id || "" });
     runView("console");
     location.hash = `#/runs/${enc(id)}/console`;
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    toast(e.message);
+    // A placeholder without a folder: show where to give one.
+    if (e.message.startsWith("can't start") && state.selected !== -1) { state.selected = -1; cxLaunchRender(state); }
+  }
 }
