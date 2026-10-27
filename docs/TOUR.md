@@ -102,8 +102,9 @@ values; 💬 marks YAML comments on fields; ⓘ explains every field.
 
 ⇪ Import… in the sidebar imports a project folder from the machine runnr
 runs on: its runbooks, libraries, fake libraries, test suites and run
-records. Placeholders such as `@PROJECT_DIR@` are filled in (others, like
-`@TEAM@` here, take the value you give), references are checked, and a
+records. Placeholders such as `@PROJECT_DIR@` are worked out from where
+each file is and kept as written (others, like `@TEAM@` here, take the
+value you give), references are checked, and a
 library missing from the folder is found elsewhere in the repository. A
 name that's taken is never saved over without a choice; renaming a file
 renames the references to it.

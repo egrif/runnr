@@ -52,7 +52,10 @@ func (s *Server) suiteFor(name string) (*runtest.Suite, ver.ID, error) {
 // suiteDoc is suiteFor with the suite's YAML.
 func (s *Server) suiteDoc(name string) (*runtest.Suite, ver.ID, []byte, error) {
 	if d, err := s.st.LoadSuite(name); err == nil {
-		su, err := runtest.ParseSuite(d.Raw)
+		if d.FillErr != nil {
+			return nil, d.Version, d.Raw, d.FillErr
+		}
+		su, err := runtest.ParseSuite(d.Filled)
 		return su, d.Version, d.Raw, err
 	}
 	docs, err := s.st.ListSuites()
@@ -60,7 +63,7 @@ func (s *Server) suiteDoc(name string) (*runtest.Suite, ver.ID, []byte, error) {
 		return nil, "", nil, err
 	}
 	for _, d := range docs {
-		if su, err := runtest.ParseSuite(d.Raw); err == nil && su.Runbook == name {
+		if su, err := runtest.ParseSuite(d.Filled); err == nil && su.Runbook == name {
 			return su, d.Version, d.Raw, nil
 		}
 	}

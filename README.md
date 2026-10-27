@@ -62,7 +62,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**); `-f yaml` (or `-o file.yaml`) writes the runbook as written with the libraries it uses beside it (`--lib`, `--no-libs`), so the folder imports again (**⇩ Export…** on the runbook's page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export db-helpers)"` |
-| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (made its current version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
+| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders (`@PROJECT_DIR@`, `@REPO_ROOT|-1@`: see [Placeholders](#placeholders)) are worked out for each file from where it is, others `--set NAME=VALUE`, and kept with it; references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (made its current version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
 | `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
 | `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
 | `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
@@ -109,6 +109,29 @@ runnr creates its tables on first connect. It stores:
   with `runnr history prune`.
 
 Libraries, fake libraries, test suites and collections are kept the same way.
+
+### Placeholders
+
+A runbook, library, fake library or test suite can name folders by where
+its file is, so it works from any checkout:
+
+| Placeholder | Is |
+| --- | --- |
+| `@FILE_DIR@` | the file's folder |
+| `@REPO_ROOT@` | the root of the git repository it's in |
+| `@PROJECT_DIR@` | the folder directly under the nearest `projects` folder above it (in `repo/projects/x/runbook/rb.yaml`, `repo/projects/x`) |
+
+Each can go up folders: `@FILE_DIR|-1@` is the file's folder's parent.
+Other names (`@TEAM@`) take `--set TEAM=…`, which also overrides the three.
+A file outside a `projects` folder has no `@PROJECT_DIR@`: use
+`@REPO_ROOT@/…` or `@FILE_DIR|-N@`.
+
+runnr keeps the file as written, placeholders and all (so its version is
+the same from any checkout), with where it was imported from on this
+machine and the values its placeholders take here; they're filled in when
+it runs, is tested or validated. `runnr export <runbook> --format yaml`
+writes it, and its libraries, back to those files. Running a file directly
+(`runnr run path/rb.yaml`) fills them in from where it is.
 
 **Versions** are the SHA-256 of the text, shown as its first and last four
 characters (`3f2a…9c1d`); anywhere a version is asked for, that short form,

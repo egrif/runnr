@@ -294,6 +294,9 @@ func (s *Server) getRunbook(w http.ResponseWriter, r *http.Request) {
 	} else {
 		resp["runbook"] = d.Runbook
 	}
+	if o, _ := s.st.Origin(store.KindRunbook, d.Name); o != nil {
+		resp["origin"] = o
+	}
 	w.Header().Set("ETag", string(d.Version))
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1290,6 +1293,9 @@ func (s *Server) getLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := map[string]any{"raw": string(d.Raw), "version": d.Version, "updated_at": d.UpdatedAt}
+	if o, _ := s.st.Origin(store.KindLibrary, d.Name); o != nil {
+		resp["origin"] = o
+	}
 	if d.ParseErr != nil {
 		resp["error"] = d.ParseErr.Error()
 	} else {

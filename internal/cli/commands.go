@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"golang.org/x/term"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -325,13 +326,11 @@ without a value, a missing reference) is reported and left out.`,
 					o.Paths = append(o.Paths, a)
 				}
 			}
-			for _, kv := range sets {
-				k, v, ok := strings.Cut(kv, "=")
-				if !ok {
-					return fmt.Errorf("--set %s: want NAME=VALUE", kv)
-				}
-				o.Values[strings.Trim(k, "@")] = v
+			set, err := setValues(sets)
+			if err != nil {
+				return err
 			}
+			maps.Copy(o.Values, set)
 			if len(args) == 1 && args[0] == "-" {
 				if showDiff {
 					return errors.New("--diff takes files or a folder, not stdin")
@@ -490,7 +489,10 @@ func importStdin(st *store.Store, force bool, collection string, values map[stri
 	if err != nil {
 		return err
 	}
-	raw, _, unset := project.Fill(raw, values)
+	origin, unset, err := project.OriginFor("", raw, values)
+	if err != nil {
+		return err
+	}
 	if len(unset) > 0 {
 		return fmt.Errorf("placeholders without a value (--set NAME=VALUE): %s", strings.Join(unset, ", "))
 	}
@@ -500,7 +502,7 @@ func importStdin(st *store.Store, force bool, collection string, values map[stri
 			prev = d.Version
 		}
 	}
-	rb, rev, err := st.Save(raw, store.SaveOpts{Overwrite: force})
+	rb, rev, err := st.Save(raw, store.SaveOpts{Overwrite: force, Origin: origin})
 	if err != nil {
 		if !force && prev != "" {
 			err = fmt.Errorf("%w (version %s): --force makes this its current version", err, prev.Short())
@@ -1198,7 +1200,9 @@ files it sources, how it captures published values).
 --format yaml (or -o file.yaml) writes the runbook as written, with the
 libraries it uses beside it as <name>.yaml (runnr's built-in ones left
 out), so the folder imports again: --lib NAME chooses which (repeat),
---no-libs leaves them out, -f writes over files already there.`,
+--no-libs leaves them out, -f writes over files already there.
+--format yaml without -o writes each back to the file it was imported
+from (files that already say the same are left alone; -o - prints it).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format == "yaml" || (format == "" && (strings.HasSuffix(out, ".yaml") || strings.HasSuffix(out, ".yml"))) {
@@ -1253,7 +1257,7 @@ out), so the folder imports again: --lib NAME chooses which (repeat),
 		},
 	}
 	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "fill in an input (key=value)")
-	cmd.Flags().StringVarP(&out, "output", "o", "", "write to this file (default: standard output)")
+	cmd.Flags().StringVarP(&out, "output", "o", "", "write to this file (default: standard output; with --format yaml, back to the files it was imported from)")
 	cmd.Flags().StringVarP(&format, "format", "f", "", "md, html for a page to read (sections and steps that expand, code as written or as runnr runs it), or yaml: the runbook and its libraries as files (default: from -o's extension, else md)")
 	cmd.Flags().StringArrayVar(&libs, "lib", nil, "yaml: a library to write beside it (repeat; default: all it uses but runnr's own)")
 	cmd.Flags().BoolVar(&noLibs, "no-libs", false, "yaml: leave the libraries out")
@@ -1915,6 +1919,7 @@ shells opened from runnr. To use them in any other terminal:
 	}
 	var noEdit, force bool
 	var libAs string
+	var libSets []string
 	newC := &cobra.Command{
 		Use: "new <name>", Short: "Create a library from a starter and open it in $EDITOR", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -1943,8 +1948,20 @@ shells opened from runnr. To use them in any other terminal:
 				if err != nil {
 					return err
 				}
-				if _, _, unset := project.Fill(raw, nil); len(unset) > 0 {
-					return fmt.Errorf("%s: placeholders without a value: %s (runnr import fills them in: --set NAME=VALUE)", f, strings.Join(unset, ", "))
+				path := f
+				if f == "-" {
+					path = ""
+				}
+				set, err := setValues(libSets)
+				if err != nil {
+					return err
+				}
+				origin, unset, err := project.OriginFor(path, raw, set)
+				if err != nil {
+					return fmt.Errorf("%s: %w", f, err)
+				}
+				if len(unset) > 0 {
+					return fmt.Errorf("%s: placeholders without a value: %s (--set NAME=VALUE)", f, strings.Join(unset, ", "))
 				}
 				if libAs != "" {
 					if raw, err = runbook.SetName(raw, libAs); err != nil {
@@ -1957,7 +1974,7 @@ shells opened from runnr. To use them in any other terminal:
 						prev = d.Version
 					}
 				}
-				lib, rev, err := s().SaveLibrary(raw, store.SaveOpts{Overwrite: force})
+				lib, rev, err := s().SaveLibrary(raw, store.SaveOpts{Overwrite: force, Origin: origin})
 				if err != nil {
 					if !force && prev != "" {
 						err = fmt.Errorf("%w (version %s): --force makes this its current version, --as NAME imports it under another name", err, prev.Short())
@@ -1971,6 +1988,7 @@ shells opened from runnr. To use them in any other terminal:
 	}
 	importC.Flags().BoolVarP(&force, "force", "f", false, "save over libraries with the same name (as their current version)")
 	importC.Flags().StringVar(&libAs, "as", "", "import the library under this name (its name: is changed)")
+	importC.Flags().StringArrayVar(&libSets, "set", nil, "a placeholder's value (NAME=VALUE, for @NAME@)")
 	var rev string
 	showC := &cobra.Command{
 		Use: "show <name>", Short: "Print a library's YAML (--version V for an older save)", Args: cobra.ExactArgs(1),
@@ -2360,7 +2378,13 @@ with a kind and a name, it saves the last version again.`,
 
 // exportYAML writes runbook name to file with the libraries chosen.
 func exportYAML(st *store.Store, name, file string, libs []string, noLibs, force bool) error {
-	if file == "" || file == "-" {
+	if file == "" {
+		// Back where it came from, if it was imported from a file here.
+		if o, _ := st.Origin(store.KindRunbook, name); o == nil || o.Path == "" {
+			file = "-"
+		}
+	}
+	if file == "-" {
 		d, err := st.Load(name)
 		if err != nil {
 			return err
@@ -2390,9 +2414,27 @@ func exportYAML(st *store.Store, name, file string, libs []string, noLibs, force
 		fmt.Fprintf(os.Stderr, "wrote %s %s → %s\n", f.Kind, f.Name, f.Path)
 	}
 	for _, f := range plan {
+		if f.Same && (f.Kind == project.Runbook || slices.Contains(libs, f.Name)) {
+			fmt.Fprintf(os.Stderr, "unchanged %s %s (%s)\n", f.Kind, f.Name, f.Path)
+		}
+	}
+	for _, f := range plan {
 		if f.Kind == project.Library && !slices.Contains(libs, f.Name) {
 			fmt.Fprintf(os.Stderr, "left out library %s%s\n", f.Name, map[bool]string{true: " (built into runnr)"}[f.Builtin])
 		}
 	}
 	return nil
+}
+
+// setValues reads --set NAME=VALUE flags.
+func setValues(sets []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, kv := range sets {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			return nil, fmt.Errorf("--set %s: want NAME=VALUE", kv)
+		}
+		out[strings.Trim(k, "@")] = v
+	}
+	return out, nil
 }

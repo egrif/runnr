@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.11.0 — 2026-10-26
+
+Placeholders are worked out from where each file is, and kept.
+
+### Changed
+
+- **Placeholders come from the file's own place**, not the folder runnr
+  was run in: `@FILE_DIR@` (the file's folder), `@REPO_ROOT@` (its git
+  root) and `@PROJECT_DIR@` (the folder directly under the nearest
+  `projects` folder above it; none outside one). Any of them goes up
+  folders with `|-N`, e.g. `@FILE_DIR|-1@`. `--set` still gives others
+  and overrides these. The same for `runnr import`, `runnr lib import`,
+  `runnr tests|fakes import` (all take `--set` now) and the GUI.
+- **Files are stored as written, placeholders and all**, so a runbook's
+  version is the same from any checkout. Where each was imported from
+  (file, repository, remote, path in it) and its placeholders' values
+  here are kept beside it, and filled in when it runs, is tested or
+  validated. A runbook stored with values filled in by an older runnr
+  reads as changed the first time it's imported again (`-f`).
+- **`runnr export <runbook> --format yaml` without `-o` writes it back to
+  where it was imported from**, each library to its own file; files that
+  already say the same are left alone, others need `-f` (`-o -` prints
+  it). The GUI's export starts at those files.
+- Running or validating a file (`runnr run path/rb.yaml`) fills in its
+  placeholders from where it is.
+
 ## v0.10.0 — 2026-10-26
 
 Versions are content hashes, the same in every runnr.

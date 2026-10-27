@@ -184,8 +184,9 @@ jobs on a row under it), the run's row with the maintenance window, notes
   it also has what the run's steps published (secret values aren't saved,
   so those it can't restore).
 - `runnr import <folder|files>` adds runbooks, libraries, fake libraries,
-  test suites and run records, filling in `@PROJECT_DIR@`-style
-  placeholders (`--set`), checking references and finding missing
+  test suites and run records, working out `@PROJECT_DIR@`-style
+  placeholders from where each file is (`--set` for others) and keeping
+  them as written, checking references and finding missing
   libraries in the repository. A taken name needs `-f` (made its current version) or
   `--rename`; `-n` shows what it would do, and `--diff` also what saving
   over each taken name would change.

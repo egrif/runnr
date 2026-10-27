@@ -13,11 +13,11 @@ import (
 // project folder with its runbook, library, fakes and suite.
 func repo(t *testing.T) (root, proj string) {
 	root = t.TempDir()
-	proj = filepath.Join(root, "proj")
+	proj = filepath.Join(root, "projects", "proj")
 	files := map[string]string{
 		".git/HEAD":           "ref: refs/heads/main\n",
 		"helpers/shared.yaml": "name: shared\nfunctions:\n  hi: {body: 'echo hi'}\n",
-		"proj/runbook/rb.yaml": `name: rb
+		"projects/proj/runbook/rb.yaml": `name: rb
 libraries: [shared, local]   # keep this comment
 inputs:
   - {name: tools, default: "@PROJECT_DIR@/tools"}
@@ -25,11 +25,11 @@ inputs:
 steps:
   - {name: one, run: 'echo "@REPO_ROOT@"'}
 `,
-		"proj/runbook/local.yaml":  "name: local\nfunctions:\n  lo: {body: 'echo lo'}\n",
-		"proj/tests/rb.test.yaml":  "runbook: rb\nuses: [fk]\nscenarios:\n  - {name: works}\n",
-		"proj/tests/fakes/fk.yaml": "name: fk\nfakes:\n  - {command: aws, stdout: ok}\n",
-		"proj/deploy/k8s.yaml":     "apiVersion: v1\nkind: ConfigMap\n",
-		"proj/.hidden/skipme.yaml": "name: nope\nsteps: []\n",
+		"projects/proj/runbook/local.yaml":  "name: local\nfunctions:\n  lo: {body: 'echo lo'}\n",
+		"projects/proj/tests/rb.test.yaml":  "runbook: rb\nuses: [fk]\nscenarios:\n  - {name: works}\n",
+		"projects/proj/tests/fakes/fk.yaml": "name: fk\nfakes:\n  - {command: aws, stdout: ok}\n",
+		"projects/proj/deploy/k8s.yaml":     "apiVersion: v1\nkind: ConfigMap\n",
+		"projects/proj/.hidden/skipme.yaml": "name: nope\nsteps: []\n",
 	}
 	for p, body := range files {
 		path := filepath.Join(root, p)
@@ -66,8 +66,9 @@ func TestScan(t *testing.T) {
 		t.Fatalf("order %v", kinds)
 	}
 	rb := doc(p, Runbook, "rb")
-	if !strings.Contains(string(rb.Raw), proj+"/tools") || !strings.Contains(string(rb.Raw), root) || !strings.Contains(string(rb.Raw), "@TEAM@") {
-		t.Fatalf("filled %s", rb.Raw)
+	// Kept as written; the values are worked out from where it is.
+	if !strings.Contains(string(rb.Raw), `"@PROJECT_DIR@/tools"`) || rb.Values["PROJECT_DIR"] != proj || rb.Values["REPO_ROOT"] != root {
+		t.Fatalf("raw %s values %v", rb.Raw, rb.Values)
 	}
 	if strings.Join(p.Unset, ",") != "TEAM" {
 		t.Fatalf("unset %v", p.Unset)
@@ -118,10 +119,9 @@ func TestApply(t *testing.T) {
 		raw, ok := stored[kind+":"+name]
 		return Stored{Version: ver.Of(raw), Raw: raw}, ok
 	}
-	save := func(kind string, raw []byte, overwrite bool) (ver.ID, error) {
-		_, n, _ := nameOf(kind, raw)
-		stored[kind+":"+n] = raw
-		return ver.Of(raw), nil
+	save := func(d Doc, overwrite bool) (ver.ID, error) {
+		stored[d.Kind+":"+d.Name] = d.Raw
+		return ver.Of(d.Raw), nil
 	}
 	opts := Options{Dir: proj, Values: map[string]string{"TEAM": "x"}, Lookup: lookup}
 	p, _ := Scan(opts)

@@ -61,10 +61,10 @@ func TestImport(t *testing.T) {
 func TestImportProject(t *testing.T) {
 	root := t.TempDir()
 	for p, body := range map[string]string{
-		".git/HEAD":         "x",
-		"lib/shared.yaml":   "name: shared\nfunctions:\n  hi: {body: 'echo hi'}\n",
-		"proj/rb.yaml":      "name: rb\nlibraries: [shared]\nsteps:\n  - {name: one, run: 'echo @PROJECT_DIR@ @TEAM@'}\n",
-		"proj/rb.test.yaml": "runbook: rb\nscenarios:\n  - {name: works}\n",
+		".git/HEAD":                  "x",
+		"lib/shared.yaml":            "name: shared\nfunctions:\n  hi: {body: 'echo hi'}\n",
+		"projects/proj/rb.yaml":      "name: rb\nlibraries: [shared]\nsteps:\n  - {name: one, run: 'echo @PROJECT_DIR@ @TEAM@'}\n",
+		"projects/proj/rb.test.yaml": "runbook: rb\nscenarios:\n  - {name: works}\n",
 	} {
 		os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755)
 		os.WriteFile(filepath.Join(root, p), []byte(body), 0o644)
@@ -82,7 +82,7 @@ func TestImportProject(t *testing.T) {
 		}
 		return m
 	}
-	dir := filepath.Join(root, "proj")
+	dir := filepath.Join(root, "projects", "proj")
 	plan := post("/api/import/scan", map[string]any{"dir": dir})
 	if fmt.Sprint(plan["unset"]) != "[TEAM]" {
 		t.Fatalf("unset %v", plan["unset"])
@@ -92,8 +92,12 @@ func TestImportProject(t *testing.T) {
 	if got := statusList(out); got != "imported,imported,imported" {
 		t.Fatalf("first %s", got)
 	}
-	if d, err := st.Load("rb"); err != nil || !strings.Contains(string(d.Raw), "echo "+dir+" x") {
+	// Stored as written; filled in from where it was imported from.
+	if d, err := st.Load("rb"); err != nil || !strings.Contains(string(d.Raw), "echo @PROJECT_DIR@ @TEAM@") || d.Runbook.Steps[0].Run != "echo "+dir+" x" {
 		t.Fatalf("%v %s", err, d.Raw)
+	}
+	if o, _ := st.Origin(store.KindRunbook, "rb"); o == nil || o.Path != filepath.Join(dir, "rb.yaml") || o.RepoRoot != root || o.RepoPath != "projects/proj/rb.yaml" {
+		t.Fatalf("origin %+v", o)
 	}
 	os.WriteFile(filepath.Join(root, "lib/shared.yaml"), []byte("name: shared\nfunctions:\n  hi: {body: 'echo HI'}\n"), 0o644)
 	if got := statusList(post("/api/import/project", req)); got != "exists,unchanged,unchanged" {
@@ -134,7 +138,7 @@ func TestImportPlaceholders(t *testing.T) {
 	if code, m := post("/api/import?set=TEAM=dbre"); code != http.StatusCreated {
 		t.Fatalf("set: %d %v", code, m)
 	}
-	if d, _ := st.Load("p"); !strings.Contains(string(d.Raw), "echo dbre") {
+	if d, _ := st.Load("p"); !strings.Contains(string(d.Raw), "echo @TEAM@") || d.Runbook.Steps[0].Run != "echo dbre" {
 		t.Fatalf("%s", d.Raw)
 	}
 }

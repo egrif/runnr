@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
@@ -44,11 +45,13 @@ type importCheck struct {
 	Error        string   `json:"error,omitempty"`
 }
 
-func (s *Server) checkImport(raw []byte) importCheck {
-	c := importCheck{Kind: runbook.DocKind(raw)}
+// checkImport says what importing raw (as written; full, with its
+// placeholders filled in) would do.
+func (s *Server) checkImport(raw, full []byte) importCheck {
+	c := importCheck{Kind: runbook.DocKind(full)}
 	switch c.Kind {
 	case "runbook":
-		rb, err := runbook.Parse(raw)
+		rb, err := runbook.Parse(full)
 		if err != nil {
 			c.Error = err.Error()
 			return c
@@ -59,7 +62,7 @@ func (s *Server) checkImport(raw []byte) importCheck {
 			c.Diff = project.Diff(string(d.Raw), string(raw), fmt.Sprintf("%s (version %s, stored)", rb.Name, d.Version.Short()), "this file", 3)
 		}
 	case "library":
-		lib, err := runbook.ParseLibrary(raw)
+		lib, err := runbook.ParseLibrary(full)
 		if err != nil {
 			c.Error = err.Error()
 			return c
@@ -85,24 +88,28 @@ func (s *Server) importCheck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	_, used, _ := project.Fill(raw, nil)
-	raw, unset := fillFromQuery(raw, r)
-	c := s.checkImport(raw)
-	c.Placeholders, c.Unset = used, unset
+	full, _, unset, err := fillFromQuery(raw, r)
+	c := s.checkImport(raw, full)
+	if err != nil && c.Error == "" {
+		c.Error = err.Error()
+	}
+	c.Placeholders, c.Unset = placeholder.Tokens(raw), unset
 	writeJSON(w, http.StatusOK, c)
 }
 
 // fillFromQuery fills in a file's placeholders from set=NAME=VALUE
-// parameters, returning those left without a value.
-func fillFromQuery(raw []byte, r *http.Request) ([]byte, []string) {
-	values := map[string]string{}
+// parameters (an uploaded file has no folder to work them out from),
+// returning the values and the placeholders left without one.
+func fillFromQuery(raw []byte, r *http.Request) ([]byte, map[string]string, []string, error) {
+	set := map[string]string{}
 	for _, kv := range r.URL.Query()["set"] {
 		if k, v, ok := strings.Cut(kv, "="); ok {
-			values[strings.Trim(k, "@")] = v
+			set[strings.Trim(k, "@")] = v
 		}
 	}
-	out, _, unset := project.Fill(raw, values)
-	return out, unset
+	values, unset, err := placeholder.Resolve("", set, placeholder.Tokens(raw))
+	full, _, _ := placeholder.Fill(raw, values)
+	return full, values, unset, err
 }
 
 func (s *Server) importDoc(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +118,11 @@ func (s *Server) importDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	raw, unset := fillFromQuery(raw, r)
+	_, values, unset, err := fillFromQuery(raw, r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	if len(unset) > 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "placeholders without a value: " + strings.Join(unset, ", ") + " (give them with set=NAME=VALUE)", "unset": unset})
 		return
@@ -122,7 +133,8 @@ func (s *Server) importDoc(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	c := s.checkImport(raw)
+	full, _, _ := placeholder.Fill(raw, values)
+	c := s.checkImport(raw, full)
 	if c.Error != "" {
 		writeErr(w, errors.New(c.Error))
 		return
@@ -132,7 +144,7 @@ func (s *Server) importDoc(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": c.Kind + " " + c.Name + " already exists", "check": c})
 		return
 	}
-	o := store.SaveOpts{Overwrite: replace}
+	o := store.SaveOpts{Overwrite: replace, Origin: &store.Origin{Values: values, ImportedAt: time.Now()}}
 	var rev ver.ID
 	if c.Kind == "runbook" {
 		_, rev, err = s.st.Save(raw, o)

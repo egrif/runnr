@@ -10,7 +10,7 @@ import (
 // Fake libraries and test suites are stored like function libraries:
 // named, versioned YAML documents.
 var (
-	fakesKind = docKind{noun: "fake library", table: "fake_libraries", versions: "fake_library_versions",
+	fakesKind = docKind{kind: KindFakes, noun: "fake library", table: "fake_libraries", versions: "fake_library_versions",
 		parse: func(raw []byte) (string, error) {
 			l, err := runtest.ParseLibrary(raw)
 			if err != nil {
@@ -18,7 +18,7 @@ var (
 			}
 			return l.Name, nil
 		}}
-	suiteKind = docKind{noun: "test suite", table: "test_suites", versions: "test_suite_versions",
+	suiteKind = docKind{kind: KindSuite, noun: "test suite", table: "test_suites", versions: "test_suite_versions",
 		parse: func(raw []byte) (string, error) {
 			s, err := runtest.ParseSuite(raw)
 			if err != nil {
@@ -30,8 +30,12 @@ var (
 
 // TestDoc is a stored fake library or test suite, as written.
 type TestDoc struct {
-	Name      string    `json:"name"`
+	Name string `json:"name"`
+	// Raw as written; Filled, its placeholders filled in (FillErr if it
+	// can't be).
 	Raw       []byte    `json:"-"`
+	Filled    []byte    `json:"-"`
+	FillErr   error     `json:"-"`
 	Version   ver.ID    `json:"version"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -39,7 +43,7 @@ type TestDoc struct {
 func docs(rows []docRow) []TestDoc {
 	out := []TestDoc{}
 	for _, r := range rows {
-		out = append(out, TestDoc{Name: r.Name, Raw: r.Raw, Version: r.Version, UpdatedAt: r.UpdatedAt})
+		out = append(out, TestDoc{Name: r.Name, Raw: r.Raw, Filled: r.Filled, FillErr: r.FillErr, Version: r.Version, UpdatedAt: r.UpdatedAt})
 	}
 	return out
 }
@@ -54,7 +58,7 @@ func (s *Store) LoadFakes(name string) (*TestDoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TestDoc{Name: r.Name, Raw: r.Raw, Version: r.Version, UpdatedAt: r.UpdatedAt}, nil
+	return &TestDoc{Name: r.Name, Raw: r.Raw, Filled: r.Filled, FillErr: r.FillErr, Version: r.Version, UpdatedAt: r.UpdatedAt}, nil
 }
 
 // Fakes loads a fake library, failing if it's missing or invalid.
@@ -63,7 +67,10 @@ func (s *Store) Fakes(name string) (*runtest.Library, error) {
 	if err != nil {
 		return nil, err
 	}
-	return runtest.ParseLibrary(d.Raw)
+	if d.FillErr != nil {
+		return nil, d.FillErr
+	}
+	return runtest.ParseLibrary(d.Filled)
 }
 
 func (s *Store) SaveFakes(raw []byte, o SaveOpts) (string, ver.ID, error) {
@@ -81,7 +88,7 @@ func (s *Store) LoadSuite(name string) (*TestDoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TestDoc{Name: r.Name, Raw: r.Raw, Version: r.Version, UpdatedAt: r.UpdatedAt}, nil
+	return &TestDoc{Name: r.Name, Raw: r.Raw, Filled: r.Filled, FillErr: r.FillErr, Version: r.Version, UpdatedAt: r.UpdatedAt}, nil
 }
 
 func (s *Store) SaveSuite(raw []byte, o SaveOpts) (string, ver.ID, error) {

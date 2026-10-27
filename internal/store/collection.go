@@ -11,7 +11,7 @@ import (
 	"github.com/egrif/runnr/internal/ver"
 )
 
-var collectionKind = docKind{noun: "collection", table: "collections", versions: "collection_versions",
+var collectionKind = docKind{kind: KindCollection, noun: "collection", table: "collections", versions: "collection_versions",
 	parse: func(raw []byte) (string, error) {
 		c, err := runbook.ParseCollection(raw)
 		if err != nil {

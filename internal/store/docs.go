@@ -13,6 +13,7 @@ import (
 // libraries, collections, fake libraries, test suites). A version is the
 // hash of the document's text (ver.ID); every version is kept.
 type docKind struct {
+	kind     string // KindRunbook …
 	noun     string // for messages
 	table    string
 	versions string
@@ -43,10 +44,18 @@ func docKinds() []docKind {
 }
 
 type docRow struct {
-	Name      string
+	Name string
+	// Raw is the document as written (placeholders and all); Filled, with
+	// its placeholders filled in (FillErr if some have no value here).
 	Raw       []byte
+	Filled    []byte
+	FillErr   error
 	Version   ver.ID
 	UpdatedAt time.Time
+}
+
+func (s *Store) fill(k docKind, r *docRow) {
+	r.Filled, r.FillErr = filled(k.noun, r.Name, r.Raw, s.values(k.kind, r.Name, nil))
 }
 
 func (s *Store) listDocs(k docKind) ([]docRow, error) {
@@ -65,7 +74,14 @@ func (s *Store) listDocs(k docKind) ([]docRow, error) {
 		r.Raw, r.UpdatedAt = []byte(raw), parseTS(updated)
 		out = append(out, r)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close() // SQLite has one connection: free it for the origins
+	for i := range out {
+		s.fill(k, &out[i])
+	}
+	return out, nil
 }
 
 func (s *Store) loadDoc(k docKind, name string) (*docRow, error) {
@@ -79,13 +95,24 @@ func (s *Store) loadDoc(k docKind, name string) (*docRow, error) {
 		return nil, err
 	}
 	r.Raw, r.UpdatedAt = []byte(raw), parseTS(updated)
+	s.fill(k, r)
 	return r, nil
 }
 
 // saveDoc validates raw and makes it the current version of its name. Text
-// saved before under this name is that version again, not a new one.
+// saved before under this name is that version again, not a new one. raw
+// is kept as written; it's validated with its placeholders filled in (from
+// o.Origin, else where the document came from before).
 func (s *Store) saveDoc(k docKind, raw []byte, o SaveOpts) (string, ver.ID, error) {
-	name, err := k.parse(raw)
+	was := o.OldName
+	if was == "" {
+		was, _ = k.parse(raw) // its name, if it parses as written
+	}
+	full, err := filled(k.noun, was, raw, s.values(k.kind, was, o.Origin))
+	if err != nil {
+		return "", "", err
+	}
+	name, err := k.parse(full)
 	if err != nil {
 		return "", "", err
 	}
@@ -121,12 +148,22 @@ func (s *Store) saveDoc(k docKind, raw []byte, o SaveOpts) (string, ver.ID, erro
 			return "", "", fmt.Errorf("%s %q already exists", k.noun, name)
 		}
 	}
+	if o.Origin != nil {
+		if err := s.setOrigin(tx, k.kind, name, o.Origin); err != nil {
+			return "", "", err
+		}
+	} else if o.OldName != "" && o.OldName != name {
+		// Renamed: where it came from follows it.
+		if _, err := tx.Exec(s.q(`UPDATE doc_origins SET name = ? WHERE kind = ? AND name = ?`), name, k.kind, o.OldName); err != nil {
+			return "", "", err
+		}
+	}
 	id := ver.Of(raw)
 	if o.OldName == "" || o.OldName == name {
 		if v, ok, err := current(name); err != nil {
 			return "", "", err
 		} else if ok && v == id {
-			return name, id, nil
+			return name, id, tx.Commit() // the origin may be new
 		}
 	}
 	now := ts(time.Now())

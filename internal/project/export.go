@@ -1,7 +1,7 @@
 package project
 
 import (
-	"errors"
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,9 +11,11 @@ import (
 	"github.com/egrif/runnr/internal/ver"
 )
 
-// Exporting a runbook to a file, as written (comments and all), with the
-// libraries it uses beside it (each <name>.yaml in the same folder), so
-// the folder imports again as a project.
+// Exporting a runbook to a file, as written (comments and placeholders and
+// all), with the libraries it uses beside it (each <name>.yaml in the same
+// folder), so the folder imports again as a project. Without a file, each
+// goes back where it was imported from (a library that wasn't imported
+// from a file goes beside the runbook).
 
 // ExportFile is a file an export writes.
 type ExportFile struct {
@@ -21,8 +23,10 @@ type ExportFile struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
 	Version ver.ID `json:"version,omitempty"`
-	// Exists: there's a file at Path already (written over only if asked).
+	// Exists: there's a file at Path already (written over only if asked);
+	// Same: and it's what would be written (it's left alone).
 	Exists bool `json:"exists,omitempty"`
+	Same   bool `json:"same,omitempty"`
 	// Builtin: one of runnr's own libraries (left out unless asked).
 	Builtin bool   `json:"builtin,omitempty"`
 	Missing bool   `json:"missing,omitempty"`
@@ -41,8 +45,16 @@ func ExportPlan(st *store.Store, name, file string) ([]ExportFile, error) {
 		return nil, fmt.Errorf("runbook %s isn't valid: %v", name, d.ParseErr)
 	}
 	file = expand(file)
-	if file == "" {
-		return nil, errors.New("give a file to export to")
+	back := file == "" // to where each came from
+	if back {
+		o, err := st.Origin(store.KindRunbook, name)
+		if err != nil {
+			return nil, err
+		}
+		if o == nil || o.Path == "" {
+			return nil, fmt.Errorf("runbook %s wasn't imported from a file here: give a file to export to", name)
+		}
+		file = o.Path
 	}
 	if st, err := os.Stat(file); (err == nil && st.IsDir()) || strings.HasSuffix(file, "/") {
 		file = filepath.Join(file, name+".yaml")
@@ -56,10 +68,17 @@ func ExportPlan(st *store.Store, name, file string) ([]ExportFile, error) {
 		} else {
 			f.Version, f.Builtin, f.raw = ld.Version, ld.Builtin, ld.Raw
 		}
+		if back {
+			if o, _ := st.Origin(store.KindLibrary, l); o != nil && o.Path != "" {
+				f.Path = o.Path
+			}
+		}
 		out = append(out, f)
 	}
 	for i := range out {
-		if _, err := os.Stat(out[i].Path); err == nil {
+		if b, err := os.ReadFile(out[i].Path); err == nil {
+			out[i].Exists, out[i].Same = true, bytes.Equal(b, out[i].raw)
+		} else if _, err := os.Stat(out[i].Path); err == nil {
 			out[i].Exists = true
 		}
 	}
@@ -86,6 +105,9 @@ func Export(st *store.Store, name, file string, libs []string, overwrite bool) (
 		if f.Missing {
 			return nil, fmt.Errorf("library %s isn't stored", f.Name)
 		}
+		if f.Same {
+			continue
+		}
 		if f.Exists && !overwrite {
 			there = append(there, f.Path)
 		}
@@ -94,10 +116,10 @@ func Export(st *store.Store, name, file string, libs []string, overwrite bool) (
 	if len(there) > 0 {
 		return nil, fmt.Errorf("already there (write over them, or choose another file): %s", strings.Join(there, ", "))
 	}
-	if err := os.MkdirAll(filepath.Dir(plan[0].Path), 0o755); err != nil {
-		return nil, err
-	}
 	for _, f := range todo {
+		if err := os.MkdirAll(filepath.Dir(f.Path), 0o755); err != nil {
+			return nil, err
+		}
 		if err := os.WriteFile(f.Path, f.raw, 0o644); err != nil {
 			return nil, err
 		}

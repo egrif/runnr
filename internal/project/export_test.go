@@ -31,6 +31,12 @@ func TestExport(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "std.yaml")); err == nil {
 		t.Fatal("wrote a library left out")
 	}
+	// Files that already say the same are left alone; others aren't
+	// written over unless asked.
+	if w, err := Export(st, "rb", dir, []string{"helpers"}, false); err != nil || len(w) != 0 {
+		t.Fatalf("unchanged: %v %v", w, err)
+	}
+	os.WriteFile(filepath.Join(dir, "rb.yaml"), []byte("name: rb\n"), 0o644)
 	if _, err := Export(st, "rb", dir, []string{"helpers"}, false); err == nil || !strings.Contains(err.Error(), "already there") {
 		t.Fatalf("overwrote: %v", err)
 	}
@@ -42,6 +48,49 @@ func TestExport(t *testing.T) {
 	p, _ := Scan(Options{Dir: dir, Lookup: StoreLookup(st2)})
 	if res := Apply(p, func(Doc) bool { return false }, StoreSaver(st2)); statuses(res) != "imported,imported" {
 		t.Fatalf("%v", res)
+	}
+}
+
+// Imported from a project folder, a runbook exports back to its own files,
+// placeholders and all: the runbook and its library each to where it was.
+func TestExportBackToOrigin(t *testing.T) {
+	root := t.TempDir()
+	os.Mkdir(filepath.Join(root, ".git"), 0o755)
+	proj := filepath.Join(root, "projects", "p")
+	files := map[string]string{
+		"projects/p/runbook/rb.yaml": "name: rb\nlibraries: [shared]\ninputs:\n  - {name: tools, default: \"@PROJECT_DIR@/tools\"}\nsteps:\n  - {name: one, run: 'echo \"@FILE_DIR|-1@\"'}\n",
+		"helpers/shared.yaml":        "name: shared\nfunctions:\n  hi: {body: 'echo hi'}\n",
+	}
+	for p, body := range files {
+		os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755)
+		os.WriteFile(filepath.Join(root, p), []byte(body), 0o644)
+	}
+	st, _ := store.Open(t.TempDir(), "")
+	p, _ := Scan(Options{Dir: proj, Lookup: StoreLookup(st), Include: []string{filepath.Join(root, "helpers/shared.yaml")}})
+	if res := Apply(p, func(Doc) bool { return false }, StoreSaver(st)); statuses(res) != "imported,imported" {
+		t.Fatalf("%v", res)
+	}
+	d, _ := st.Load("rb")
+	if d.Runbook == nil || d.Runbook.Inputs[0].Default != proj+"/tools" || d.Runbook.Steps[0].Run != `echo "`+proj+`"` {
+		t.Fatalf("filled: %+v %v", d.Runbook, d.ParseErr)
+	}
+	plan, err := ExportPlan(st, "rb", "")
+	if err != nil || plan[0].Path != filepath.Join(proj, "runbook/rb.yaml") || plan[1].Path != filepath.Join(root, "helpers/shared.yaml") || !plan[0].Same || !plan[1].Same {
+		t.Fatalf("%v %+v", err, plan)
+	}
+	// Changed in runnr: written back, placeholders and all.
+	changed := strings.Replace(files["projects/p/runbook/rb.yaml"], "name: one", "name: first", 1)
+	if _, _, err := st.Save([]byte(changed), store.SaveOpts{OldName: "rb"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Export(st, "rb", "", []string{"shared"}, false); err == nil {
+		t.Fatal("wrote over the changed file without being asked")
+	}
+	if w, err := Export(st, "rb", "", []string{"shared"}, true); err != nil || len(w) != 1 {
+		t.Fatalf("%v %+v", err, w)
+	}
+	if b, _ := os.ReadFile(filepath.Join(proj, "runbook/rb.yaml")); string(b) != changed {
+		t.Fatalf("written %s", b)
 	}
 }
 

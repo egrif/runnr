@@ -84,11 +84,10 @@ func (s *Server) getRunPlan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runRunbook(run *engine.Run) (*runbook.Runbook, error) {
 	var rb *runbook.Runbook
 	if run.RunbookVersion != "" {
-		if raw, _, err := s.st.RawVersion(run.Runbook, string(run.RunbookVersion)); err == nil {
-			rb, err = runbook.Parse(raw)
-			if err != nil {
-				return nil, err
-			}
+		if at, _, err := s.st.RunbookAt(run.Runbook, string(run.RunbookVersion)); err == nil {
+			rb = at
+		} else if !errors.Is(err, store.ErrNotFound) {
+			return nil, err
 		}
 	}
 	if rb == nil {
@@ -135,12 +134,7 @@ func (s *Server) adoptVersion(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	raw, v, err := s.st.RawVersion(run.Runbook, string(req.Version))
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	rb, err := runbook.Parse(raw)
+	rb, v, err := s.st.RunbookAt(run.Runbook, string(req.Version))
 	if err != nil {
 		writeErr(w, err)
 		return

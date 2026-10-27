@@ -25,7 +25,7 @@ proxy) off-host.
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/api/runbooks` | | `[{name, version, updated_at, description, tags, steps, error?}]` |
-| GET | `/api/runbooks/{name}` | | `{raw, version, updated_at, runbook?, error?}` (+ `ETag: <version>`) |
+| GET | `/api/runbooks/{name}` | | `{raw, version, updated_at, runbook?, origin?, error?}` (+ `ETag: <version>`); `raw` as written, `runbook` with its placeholders filled in; `origin`: `{path, repo_root, remote, repo_path, values, imported_at}`, where it was imported from |
 | POST | `/api/runbooks` | YAML | `201 {name, version, runbook}` (`400` if invalid or exists) |
 | PUT | `/api/runbooks/{name}` | YAML | `{name, version, runbook}`; renames if `name` changed |
 | DELETE | `/api/runbooks/{name}` | | `204`: version history is kept; it's taken out of its collections and its scheduled runs are removed |
@@ -56,7 +56,7 @@ Paths are on the machine runnr runs on.
 | POST | `/api/import/scan` | `{dir, values?, renames?, include?, skip?}` | the plan for a project folder: `{dir, repo_root, docs, values, unset, ignored}` (a doc whose name is taken has `diff`: what saving over it would change) |
 | POST | `/api/import/project` | as scan, `+ {replace?, replace_all?, collection?}` | `{plan, results: [{rel, kind, name, status, version?, replaced?, error?}]}` |
 | GET | `/api/fs?path=&hidden=1` | | `{path, parent, home, entries: [{name, dir, size?, mod?}], asked, exists, is_dir}`: the folder at `path` (or holding it, or the nearest that exists) |
-| POST | `/api/runbooks/{name}/files/plan` | `{path}` | `{files: [{kind, name, path, version?, exists?, builtin?, missing?}]}`: the runbook and the libraries it uses (beside it as `<name>.yaml`) |
+| POST | `/api/runbooks/{name}/files/plan` | `{path}` | `{files: [{kind, name, path, version?, exists?, same?, builtin?, missing?}]}`: the runbook and the libraries it uses (beside it as `<name>.yaml`); an empty `path` means back to the files they were imported from; `same`: the file there already says this (it's left alone) |
 | POST | `/api/runbooks/{name}/files` | `{path, libraries, overwrite?}` | `{written: [...]}`; files already there are refused without `overwrite` |
 | GET | `/api/manage` | | `{items: [{kind, name, version, updated_at, used_by, schedules?, builtin?, error?}], deleted: [{kind, name, version, saved_at}]}` |
 | POST | `/api/manage/delete` | `{items: [{kind, name}]}` | `{results: [{kind, name, ok, error?, also?}]}` (`also`: collections and scheduled runs a runbook was taken out of) |
@@ -65,8 +65,10 @@ Paths are on the machine runnr runs on.
 A project folder's `docs` are `{path, rel, kind, name, original, error?,
 placeholders?, refs?, included?, skipped?, exists, version?, updated_at?,
 same?, builtin?}`, `kind` being `runbook`, `library`, `fakes`, `suite` or
-`run` (a run record, JSON). `values` fill in placeholders (`@NAME@`;
-`PROJECT_DIR` and `REPO_ROOT` default to the folder and its git root),
+`run` (a run record, JSON); a doc's `values` are its placeholders' values,
+worked out from where it is (`@FILE_DIR@`, `@REPO_ROOT@`, `@PROJECT_DIR@`,
+each with an optional `|-N`). The request's `values` give placeholders
+values (they win),
 `renames` are `{"kind:name": "new"}` (references to it follow), `include`
 adds files or folders from elsewhere, `skip` leaves files out (by path), and
 `replace` names files to save as the current version of the one with their

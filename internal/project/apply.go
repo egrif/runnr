@@ -8,9 +8,9 @@ import (
 	"github.com/egrif/runnr/internal/ver"
 )
 
-// Saver stores a file of a kind (overwrite: as the current version of the
-// one by its name), returning the version it's at.
-type Saver func(kind string, raw []byte, overwrite bool) (ver.ID, error)
+// Saver stores a file (overwrite: as the current version of the one by its
+// name), with where it came from, returning the version it's at.
+type Saver func(d Doc, overwrite bool) (ver.ID, error)
 
 // Result is what importing a file did.
 type Result struct {
@@ -83,12 +83,20 @@ func Apply(p *Plan, replace func(Doc) bool, save Saver) []Result {
 			r.Status = "skipped"
 		case len(why) > 0:
 			r.Status, r.Error = "failed", strings.Join(slices.Compact(why), "; ")
-		case d.Same:
+		case d.Same && d.Kind == Run:
 			r.Status, r.Version = "unchanged", d.Version
+		case d.Same:
+			// The same text: no new version, but where it came from (and so
+			// its placeholders' values) may be new.
+			if _, err := save(d, true); err != nil {
+				r.Status, r.Error = "failed", err.Error()
+			} else {
+				r.Status, r.Version = "unchanged", d.Version
+			}
 		case d.Exists && !replace(d):
 			r.Status, r.Version = "exists", d.Version
 		default:
-			v, err := save(d.Kind, d.Raw, d.Exists)
+			v, err := save(d, d.Exists)
 			switch {
 			case err != nil:
 				r.Status, r.Error = "failed", err.Error()

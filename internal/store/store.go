@@ -20,6 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/ver"
 )
@@ -184,7 +185,7 @@ func parseTS(s string) time.Time {
 
 // ---------- runbooks ----------
 
-var runbookKind = docKind{noun: "runbook", table: "runbooks", versions: "runbook_versions",
+var runbookKind = docKind{kind: KindRunbook, noun: "runbook", table: "runbooks", versions: "runbook_versions",
 	parse: func(raw []byte) (string, error) {
 		rb, err := runbook.Parse(raw)
 		if err != nil {
@@ -212,7 +213,7 @@ func (s *Store) List() ([]Entry, error) {
 	var out []Entry
 	for _, r := range rows {
 		e := Entry{Name: r.Name, Version: r.Version, UpdatedAt: r.UpdatedAt}
-		if rb, err := runbook.Parse(r.Raw); err != nil {
+		if rb, err := runbook.Parse(r.Filled); err != nil {
 			e.Err = err.Error()
 		} else {
 			e.Description, e.Tags, e.Steps = rb.Description, rb.Tags, len(rb.Steps)
@@ -222,7 +223,8 @@ func (s *Store) List() ([]Entry, error) {
 	return out, nil
 }
 
-// Doc is a stored runbook. Runbook is nil if Raw doesn't parse (ParseErr).
+// Doc is a stored runbook: Raw as written, Runbook parsed with its
+// placeholders filled in (nil, with ParseErr, if it can't be).
 type Doc struct {
 	Name      string
 	Raw       []byte
@@ -238,7 +240,9 @@ func (s *Store) Load(name string) (*Doc, error) {
 		return nil, err
 	}
 	d := &Doc{Name: name, Raw: r.Raw, Version: r.Version, UpdatedAt: r.UpdatedAt}
-	d.Runbook, d.ParseErr = runbook.Parse(d.Raw)
+	if d.ParseErr = r.FillErr; d.ParseErr == nil {
+		d.Runbook, d.ParseErr = runbook.Parse(r.Filled)
+	}
 	return d, nil
 }
 
@@ -259,16 +263,24 @@ func (s *Store) Get(name string) (*runbook.Runbook, ver.ID, error) {
 	return d.Runbook, d.Version, d.ParseErr
 }
 
-// Resolve loads a runbook by name, or from a file if ref looks like a path.
-// Either way the version is its text's (HasVersion says whether it's one
-// runnr has saved).
+// Resolve loads a runbook by name, or from a file if ref looks like a path
+// (its placeholders filled in from where it is). Either way the version is
+// its text's (HasVersion says whether it's one runnr has saved).
 func (s *Store) Resolve(ref string) (*runbook.Runbook, ver.ID, error) {
 	if strings.ContainsAny(ref, `/\`) || strings.HasSuffix(ref, ".yaml") || strings.HasSuffix(ref, ".yml") {
 		b, err := os.ReadFile(ref)
 		if err != nil {
 			return nil, "", err
 		}
-		rb, err := runbook.Parse(b)
+		vals, _, err := placeholder.Resolve(ref, nil, placeholder.Tokens(b))
+		if err != nil {
+			return nil, "", err
+		}
+		full, err := filled(runbookKind.noun, ref, b, vals)
+		if err != nil {
+			return nil, "", err
+		}
+		rb, err := runbook.Parse(full)
 		return rb, ver.Of(b), err
 	}
 	return s.Get(ref)
@@ -288,16 +300,19 @@ type SaveOpts struct {
 	Base ver.ID
 	// Overwrite allows creating over an existing runbook.
 	Overwrite bool
+	// Origin, when importing a file: where it came from and its
+	// placeholders' values (kept for the document).
+	Origin *Origin
 }
 
 // Save validates raw YAML and makes it the current version of its declared
 // name.
 func (s *Store) Save(raw []byte, o SaveOpts) (*runbook.Runbook, ver.ID, error) {
-	_, v, err := s.saveDoc(runbookKind, raw, o)
+	name, v, err := s.saveDoc(runbookKind, raw, o)
 	if err != nil {
 		return nil, "", err
 	}
-	rb, err := runbook.Parse(raw)
+	rb, _, err := s.Get(name)
 	return rb, v, err
 }
 
@@ -311,6 +326,21 @@ func (s *Store) Versions(name string) ([]Version, error) { return s.docVersions(
 // a prefix of it or its short form), and that version.
 func (s *Store) RawVersion(name, ref string) ([]byte, ver.ID, error) {
 	return s.rawDocVersion(runbookKind, name, ref)
+}
+
+// RunbookAt is the version of runbook name that ref names, parsed with its
+// placeholders filled in as they are here.
+func (s *Store) RunbookAt(name, ref string) (*runbook.Runbook, ver.ID, error) {
+	raw, v, err := s.RawVersion(name, ref)
+	if err != nil {
+		return nil, "", err
+	}
+	full, err := filled(runbookKind.noun, name, raw, s.values(KindRunbook, name, nil))
+	if err != nil {
+		return nil, v, err
+	}
+	rb, err := runbook.Parse(full)
+	return rb, v, err
 }
 
 // HasVersion says whether v is a saved version of runbook name.

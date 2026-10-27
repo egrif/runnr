@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/store"
@@ -153,7 +154,10 @@ func loadSuite(st *store.Store, arg string) (*runtest.Suite, error) {
 		}
 		return nil, err
 	}
-	return runtest.ParseSuite(d.Raw)
+	if d.FillErr != nil {
+		return nil, d.FillErr
+	}
+	return runtest.ParseSuite(d.Filled)
 }
 
 // printResults reports each scenario and returns how many failed.
@@ -215,8 +219,8 @@ func printResults(suite *runtest.Suite, results []runtest.Result, verbose, showL
 // testsCmd manages stored test suites; fakesCmd, fake libraries.
 func testsCmd(s func() *store.Store) *cobra.Command {
 	return docCmd("tests", "test suite", "Manage runbooks' test suites",
-		func(raw []byte, force bool) (string, ver.ID, error) {
-			return s().SaveSuite(raw, store.SaveOpts{Overwrite: force})
+		func(raw []byte, force bool, o *store.Origin) (string, ver.ID, error) {
+			return s().SaveSuite(raw, store.SaveOpts{Overwrite: force, Origin: o})
 		},
 		func() ([]store.TestDoc, error) { return s().ListSuites() },
 		func(n string) (*store.TestDoc, error) { return s().LoadSuite(n) },
@@ -235,8 +239,8 @@ func testsCmd(s func() *store.Store) *cobra.Command {
 
 func fakesCmd(s func() *store.Store) *cobra.Command {
 	cmd := docCmd("fakes", "fake library", "Manage fake libraries (canned command responses for tests)",
-		func(raw []byte, force bool) (string, ver.ID, error) {
-			return s().SaveFakes(raw, store.SaveOpts{Overwrite: force})
+		func(raw []byte, force bool, o *store.Origin) (string, ver.ID, error) {
+			return s().SaveFakes(raw, store.SaveOpts{Overwrite: force, Origin: o})
 		},
 		func() ([]store.TestDoc, error) { return s().ListFakes() },
 		func(n string) (*store.TestDoc, error) { return s().LoadFakes(n) },
@@ -292,9 +296,9 @@ func fakesOf(st *store.Store, arg string) ([]runtest.Fake, error) {
 	raw, err := os.ReadFile(arg)
 	if err != nil {
 		if d, e := st.LoadFakes(arg); e == nil {
-			raw = d.Raw
+			raw = d.Filled
 		} else if d, e := st.LoadSuite(arg); e == nil {
-			raw = d.Raw
+			raw = d.Filled
 		} else {
 			return nil, fmt.Errorf("%s: not a file, fake library or test suite", arg)
 		}
@@ -315,7 +319,7 @@ func fakesOf(st *store.Store, arg string) ([]runtest.Fake, error) {
 
 // docCmd is list / show / import / delete for a kind of stored document.
 func docCmd(use, noun, short string,
-	save func([]byte, bool) (string, ver.ID, error),
+	save func([]byte, bool, *store.Origin) (string, ver.ID, error),
 	list func() ([]store.TestDoc, error),
 	load func(string) (*store.TestDoc, error),
 	del func(string) error,
@@ -323,6 +327,7 @@ func docCmd(use, noun, short string,
 ) *cobra.Command {
 	cmd := &cobra.Command{Use: use, Short: short}
 	var force bool
+	var sets []string
 	importC := &cobra.Command{
 		Use: "import <file>...", Short: "Add " + noun + " files (- reads stdin)", Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -337,7 +342,22 @@ func docCmd(use, noun, short string,
 				if err != nil {
 					return err
 				}
-				name, rev, err := save(raw, force)
+				path := f
+				if f == "-" {
+					path = ""
+				}
+				set, err := setValues(sets)
+				if err != nil {
+					return err
+				}
+				origin, unset, err := project.OriginFor(path, raw, set)
+				if err != nil {
+					return fmt.Errorf("%s: %w", f, err)
+				}
+				if len(unset) > 0 {
+					return fmt.Errorf("%s: placeholders without a value: %s (--set NAME=VALUE)", f, strings.Join(unset, ", "))
+				}
+				name, rev, err := save(raw, force, origin)
 				if err != nil {
 					return fmt.Errorf("%s: %w", f, err)
 				}
@@ -347,6 +367,7 @@ func docCmd(use, noun, short string,
 		},
 	}
 	importC.Flags().BoolVarP(&force, "force", "f", false, "overwrite existing ones")
+	importC.Flags().StringArrayVar(&sets, "set", nil, "a placeholder's value (NAME=VALUE, for @NAME@)")
 	var asJSON bool
 	listC := &cobra.Command{
 		Use: "list", Aliases: []string{"ls"}, Short: "List " + plural(noun), Args: cobra.NoArgs,

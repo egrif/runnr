@@ -11,11 +11,13 @@ const expRemember = (path) => { try { localStorage.setItem(EXP_DIR, path.replace
 // exportRunbook asks where to write runbook name, and which of its
 // libraries to write beside it.
 function exportRunbook(name) {
-  const st = { path: `${expDir()}/${name}.yaml`, files: [], libs: new Set(), overwrite: false };
+  const st = { path: `${expDir()}/${name}.yaml`, origin: "", files: [], libs: new Set(), overwrite: false };
+  // Its own file, if it was imported from one: each file goes back where it came from.
+  const where = () => (st.origin && st.path === st.origin ? "" : st.path);
   const dlg = document.createElement("dialog");
   dlg.className = "edit-step import-dialog";
   dlg.innerHTML = `<h3>Export ${esc(name)}</h3>
-    <p class="muted small">The runbook as written (comments and all), with the libraries it uses beside it as <code>&lt;name&gt;.yaml</code>, so the folder imports again. On the machine runnr runs on.</p>
+    <p class="muted small">The runbook as written (comments and placeholders and all), with the libraries it uses beside it as <code>&lt;name&gt;.yaml</code>, so the folder imports again. On the machine runnr runs on. It starts at the file it was imported from, if it was: there, each library goes back to its own file too.</p>
     <div class="row path-field"><input class="exp-path" spellcheck="false" value="${esc(st.path)}"><button type="button" data-browse>📄 Browse…</button></div>
     <div class="exp-files"></div>
     <div class="error-text"></div>
@@ -27,7 +29,7 @@ function exportRunbook(name) {
   const plan = async () => {
     st.path = $e(".exp-path").value.trim();
     try {
-      const res = await api("POST", `/api/runbooks/${enc(name)}/files/plan`, { path: st.path });
+      const res = await api("POST", `/api/runbooks/${enc(name)}/files/plan`, { path: where() });
       const first = !st.files.length;
       st.files = res.files;
       if (first) st.libs = new Set(st.files.filter((f) => f.kind === "library" && !f.builtin && !f.missing).map((f) => f.name));
@@ -36,12 +38,12 @@ function exportRunbook(name) {
   };
   const draw = () => {
     const take = (f) => f.kind === "runbook" || st.libs.has(f.name);
-    const there = st.files.filter((f) => take(f) && f.exists);
+    const there = st.files.filter((f) => take(f) && f.exists && !f.same);
     $e(".exp-files").innerHTML = st.files.length ? `<table class="imp-docs">${st.files.map((f) => `<tr>
         <td>${f.kind === "runbook" ? `<input type="checkbox" checked disabled>` : `<input type="checkbox" data-lib="${esc(f.name)}" ${st.libs.has(f.name) ? "checked" : ""} ${f.missing ? "disabled" : ""}>`}</td>
         <td class="small">${f.kind}</td>
         <td><b>${esc(f.name)}</b>${f.version ? ` <span class="muted small">${shortVer(f.version)}</span>` : ""}${f.builtin ? ` <span class="badge-k">built into runnr</span>` : ""}<div class="muted small"><code>${esc(f.path)}</code></div></td>
-        <td class="small">${f.missing ? `<span class="error-text">not stored</span>` : f.exists && take(f) ? `<span class="warn-text">⚠ a file is there</span>` : ""}</td></tr>`).join("")}</table>
+        <td class="small">${f.missing ? `<span class="error-text">not stored</span>` : f.same && take(f) ? `<span class="muted">unchanged</span>` : f.exists && take(f) ? `<span class="warn-text">⚠ a file is there</span>` : ""}</td></tr>`).join("")}</table>
       ${there.length ? `<label class="check small"><input type="checkbox" data-overwrite ${st.overwrite ? "checked" : ""}> Write over the ${there.length} file${there.length === 1 ? "" : "s"} already there</label>` : ""}` : "";
     dlg.querySelectorAll("[data-lib]").forEach((c) => (c.onchange = () => { c.checked ? st.libs.add(c.dataset.lib) : st.libs.delete(c.dataset.lib); draw(); }));
     $e("[data-overwrite]") && ($e("[data-overwrite]").onchange = (e) => { st.overwrite = e.target.checked; draw(); });
@@ -58,14 +60,18 @@ function exportRunbook(name) {
   dlg.onclose = () => dlg.remove();
   $e("[data-ok]").onclick = async () => {
     try {
-      const res = await api("POST", `/api/runbooks/${enc(name)}/files`, { path: st.path, libraries: [...st.libs], overwrite: st.overwrite });
-      expRemember(res.written[0].path);
+      const res = await api("POST", `/api/runbooks/${enc(name)}/files`, { path: where(), libraries: [...st.libs], overwrite: st.overwrite });
       dlg.close();
+      if (!res.written?.length) return toast("Nothing to write: the files already say this");
+      if (!st.origin || st.path !== st.origin) expRemember(res.written[0].path);
       toast(`Exported ${res.written.map((f) => f.path.split("/").pop()).join(", ")} to ${res.written[0].path.replace(/\/[^/]*$/, "")}`);
     } catch (e) { err(e.message); }
   };
   dlg.showModal();
-  plan();
+  api("GET", `/api/runbooks/${enc(name)}`)
+    .then((d) => { if (d.origin?.path) { st.origin = d.origin.path; $e(".exp-path").value = d.origin.path; } })
+    .catch(() => {})
+    .finally(plan);
 }
 
 // exportLogs exports a run's logs, with the runs linked to it by resuming.

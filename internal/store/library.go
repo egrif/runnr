@@ -10,7 +10,7 @@ import (
 	"github.com/egrif/runnr/internal/ver"
 )
 
-var libraryKind = docKind{noun: "library", table: "libraries", versions: "library_versions",
+var libraryKind = docKind{kind: KindLibrary, noun: "library", table: "libraries", versions: "library_versions",
 	parse: func(raw []byte) (string, error) {
 		l, err := runbook.ParseLibrary(raw)
 		if err != nil {
@@ -40,7 +40,7 @@ func (s *Store) ListLibraries() ([]LibraryEntry, error) {
 	out := []LibraryEntry{}
 	for _, r := range rows {
 		e := LibraryEntry{Name: r.Name, Version: r.Version, UpdatedAt: r.UpdatedAt, Functions: []string{}}
-		if lib, err := runbook.ParseLibrary(r.Raw); err != nil {
+		if lib, err := runbook.ParseLibrary(r.Filled); err != nil {
 			e.Err = err.Error()
 		} else {
 			e.Description = lib.Description
@@ -90,7 +90,9 @@ func (s *Store) LoadLibrary(name string) (*LibraryDoc, error) {
 		return nil, err
 	}
 	d := &LibraryDoc{Name: name, Raw: r.Raw, Version: r.Version, UpdatedAt: r.UpdatedAt}
-	d.Library, d.ParseErr = runbook.ParseLibrary(d.Raw)
+	if d.ParseErr = r.FillErr; d.ParseErr == nil {
+		d.Library, d.ParseErr = runbook.ParseLibrary(r.Filled)
+	}
 	return d, nil
 }
 
@@ -113,12 +115,15 @@ func (s *Store) Libraries(names []string) ([]*runbook.Library, error) {
 
 // SaveLibrary validates raw YAML and stores it as a new version.
 func (s *Store) SaveLibrary(raw []byte, o SaveOpts) (*runbook.Library, ver.ID, error) {
-	if _, ver, err := s.saveDoc(libraryKind, raw, o); err != nil {
+	name, v, err := s.saveDoc(libraryKind, raw, o)
+	if err != nil {
 		return nil, "", err
-	} else {
-		lib, _ := runbook.ParseLibrary(raw)
-		return lib, ver, nil
 	}
+	d, err := s.LoadLibrary(name)
+	if err != nil {
+		return nil, v, err
+	}
+	return d.Library, v, d.ParseErr
 }
 
 func (s *Store) DeleteLibrary(name string) error { return s.deleteDoc(libraryKind, name) }

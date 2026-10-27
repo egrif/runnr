@@ -2,9 +2,10 @@
 // function libraries, fake libraries and test suites, the way a project
 // keeps them on disk.
 //
-// Files can hold placeholders, @NAME@, filled in on the way in:
-// @PROJECT_DIR@ is the folder imported, @REPO_ROOT@ its git root, and any
-// others take the values given. Each file's references are checked (a
+// Files can hold placeholders (@PROJECT_DIR@, @REPO_ROOT|-1@; see package
+// placeholder), worked out for each file from where it is, or given. A
+// file is stored as written, with where it came from and its
+// placeholders' values beside it. Each file's references are checked (a
 // runbook's libraries, a suite's runbook and fake libraries) against the
 // files being imported, what's stored and runnr's built-in libraries; a
 // missing library is looked for in the rest of the repository. Renaming a
@@ -19,7 +20,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -28,6 +28,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/runtest"
 	"github.com/egrif/runnr/internal/ver"
@@ -64,7 +65,8 @@ type Options struct {
 	// subfolders too); Paths, files to import instead (or as well).
 	Dir   string
 	Paths []string
-	// Values fill in placeholders (they win over the defaults).
+	// Values are placeholder values given (they win over those worked out
+	// from where each file is).
 	Values map[string]string
 	// Renames: "kind:name" → the name to import it as.
 	Renames map[string]string
@@ -85,11 +87,13 @@ type Doc struct {
 	// Name is what it's imported as; Original, its name in the file.
 	Name     string `json:"name"`
 	Original string `json:"original"`
-	Raw      []byte `json:"-"`
-	Error    string `json:"error,omitempty"`
-	// Placeholders it uses.
-	Placeholders []string `json:"placeholders,omitempty"`
-	Refs         []Ref    `json:"refs,omitempty"`
+	// Raw is the file as written (placeholders and all): what's stored.
+	Raw   []byte `json:"-"`
+	Error string `json:"error,omitempty"`
+	// Placeholders it uses, and their values for this file.
+	Placeholders []string          `json:"placeholders,omitempty"`
+	Values       map[string]string `json:"values,omitempty"`
+	Refs         []Ref             `json:"refs,omitempty"`
 	// Included: found outside the folder (Include).
 	Included bool `json:"included,omitempty"`
 	Skipped  bool `json:"skipped,omitempty"`
@@ -119,8 +123,9 @@ type Plan struct {
 	Dir      string `json:"dir"`
 	RepoRoot string `json:"repo_root,omitempty"`
 	Docs     []Doc  `json:"docs"`
-	// Values are the placeholder values used (defaults and given);
-	// Unset, placeholders in the files that have none.
+	// Values are the placeholder values given; each file's, worked out
+	// from where it is, are its Values. Unset are placeholders in the files
+	// that have none.
 	Values map[string]string `json:"values"`
 	Unset  []string          `json:"unset,omitempty"`
 	// Ignored counts YAML files that aren't runnr's.
@@ -150,8 +155,6 @@ func (p *Plan) OK() error {
 	return errors.Join(errs...)
 }
 
-var placeholderRe = regexp.MustCompile(`@([A-Z][A-Z0-9_]*)@`)
-
 // Scan reads the files and works out the plan; nothing is saved.
 func Scan(o Options) (*Plan, error) {
 	p := &Plan{Values: map[string]string{}}
@@ -167,11 +170,7 @@ func Scan(o Options) (*Plan, error) {
 	} else {
 		p.Dir, _ = os.Getwd()
 	}
-	p.RepoRoot = repoRoot(p.Dir)
-	p.Values["PROJECT_DIR"] = p.Dir
-	if p.RepoRoot != "" {
-		p.Values["REPO_ROOT"] = p.RepoRoot
-	}
+	p.RepoRoot = placeholder.FindRepoRoot(p.Dir)
 	for k, v := range o.Values {
 		p.Values[k] = v
 	}
@@ -246,8 +245,15 @@ func Scan(o Options) (*Plan, error) {
 			}
 			continue
 		}
-		raw, used, missing := fill(orig, p.Values)
-		d.Raw, d.Placeholders = raw, used
+		d.Raw, d.Placeholders = orig, placeholder.Tokens(orig)
+		vals, missing, err := placeholder.Resolve(path, p.Values, d.Placeholders)
+		if err != nil {
+			d.Error = err.Error()
+		}
+		if len(vals) > 0 {
+			d.Values = vals
+		}
+		raw, _, _ := placeholder.Fill(orig, vals)
 		if d.Kind = kindOf(raw); d.Kind == "" {
 			if _, ok := given[path]; ok {
 				d.Error = "this isn't a runbook (no steps:), a library (functions:), fakes (fakes:) or a test suite (scenarios:)"
@@ -262,8 +268,7 @@ func Scan(o Options) (*Plan, error) {
 				unset[m] = true
 			}
 		}
-		d.Original, d.Name, err = nameOf(d.Kind, raw)
-		if err != nil {
+		if d.Original, d.Name, err = nameOf(d.Kind, raw); err != nil && d.Error == "" {
 			d.Error = err.Error()
 		}
 		p.Docs = append(p.Docs, d)
@@ -406,7 +411,8 @@ func (p *Plan) libraryFiles() map[string][]string {
 		if err != nil || kindOf(raw) != Library {
 			continue
 		}
-		raw, _, _ = fill(raw, p.Values)
+		vals, _, _ := placeholder.Resolve(f, p.Values, placeholder.Tokens(raw))
+		raw, _, _ = placeholder.Fill(raw, vals)
 		if _, n, err := nameOf(Library, raw); err == nil {
 			out[n] = append(out[n], f)
 		}
@@ -438,48 +444,6 @@ func yamlFiles(dir string) ([]string, error) {
 		return nil
 	})
 	return out, err
-}
-
-func repoRoot(dir string) string {
-	for d := dir; ; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
-			return d
-		}
-		if filepath.Dir(d) == d {
-			return ""
-		}
-	}
-}
-
-// Fill replaces the placeholders (@NAME@) in raw that values has; it
-// returns the ones used and the ones without a value.
-func Fill(raw []byte, values map[string]string) ([]byte, []string, []string) {
-	return fill(raw, values)
-}
-
-// fill replaces the placeholders that have values; it returns the ones
-// used and the ones without a value.
-func fill(raw []byte, values map[string]string) ([]byte, []string, []string) {
-	used, missing := map[string]bool{}, map[string]bool{}
-	out := placeholderRe.ReplaceAllFunc(raw, func(m []byte) []byte {
-		k := string(m[1 : len(m)-1])
-		used[k] = true
-		if v, ok := values[k]; ok {
-			return []byte(v)
-		}
-		missing[k] = true
-		return m
-	})
-	return out, keys(used), keys(missing)
-}
-
-func keys(m map[string]bool) []string {
-	var out []string
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // kindOf says what a file is from its top-level keys ("" if none of ours).
