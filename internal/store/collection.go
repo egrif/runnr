@@ -63,7 +63,12 @@ func (s *Store) LoadCollection(name string) (*CollectionDoc, error) {
 }
 
 func (s *Store) SaveCollection(raw []byte, o SaveOpts) (string, ver.ID, error) {
-	return s.saveDoc(collectionKind, raw, o)
+	name, v, err := s.saveDoc(collectionKind, raw, o)
+	if err == nil && o.OldName != "" && o.OldName != name {
+		// Its folders on this machine go with it.
+		err = s.renamePlaceholderScope(o.OldName, name)
+	}
+	return name, v, err
 }
 
 func (s *Store) DeleteCollection(name string) error { return s.deleteDoc(collectionKind, name) }

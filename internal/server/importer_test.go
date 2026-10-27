@@ -56,7 +56,7 @@ func TestImport(t *testing.T) {
 	}
 }
 
-// A project folder: placeholders filled, a library from elsewhere in the
+// A project folder: placeholders kept, a library from elsewhere in the
 // repository, and a file whose name is taken left alone unless replaced.
 func TestImportProject(t *testing.T) {
 	root := t.TempDir()
@@ -84,15 +84,15 @@ func TestImportProject(t *testing.T) {
 	}
 	dir := filepath.Join(root, "proj")
 	plan := post("/api/import/scan", map[string]any{"dir": dir})
-	if fmt.Sprint(plan["unset"]) != "[TEAM]" {
-		t.Fatalf("unset %v", plan["unset"])
+	if docs := plan["docs"].([]any); len(docs) == 0 {
+		t.Fatalf("plan %v", plan)
 	}
-	req := map[string]any{"dir": dir, "values": map[string]string{"TEAM": "x"}, "include": []string{filepath.Join(root, "lib/shared.yaml")}}
+	req := map[string]any{"dir": dir, "include": []string{filepath.Join(root, "lib/shared.yaml")}}
 	out := post("/api/import/project", req)
 	if got := statusList(out); got != "imported,imported,imported" {
 		t.Fatalf("first %s", got)
 	}
-	if d, err := st.Load("rb"); err != nil || !strings.Contains(string(d.Raw), "echo "+dir+" x") {
+	if d, err := st.Load("rb"); err != nil || !strings.Contains(string(d.Raw), "echo @PROJECT_DIR@ @TEAM@") {
 		t.Fatalf("%v %s", err, d.Raw)
 	}
 	os.WriteFile(filepath.Join(root, "lib/shared.yaml"), []byte("name: shared\nfunctions:\n  hi: {body: 'echo HI'}\n"), 0o644)
@@ -113,7 +113,7 @@ func statusList(out map[string]any) string {
 	return strings.Join(s, ",")
 }
 
-// A file with a placeholder isn't imported without a value for it.
+// A file's placeholders are kept as written: the check names them.
 func TestImportPlaceholders(t *testing.T) {
 	st, _ := store.Open(t.TempDir(), "")
 	ts := httptest.NewServer(New(st, Config{}).Handler())
@@ -125,16 +125,13 @@ func TestImportPlaceholders(t *testing.T) {
 		json.NewDecoder(res.Body).Decode(&m)
 		return res.StatusCode, m
 	}
-	if _, m := post("/api/import/check"); fmt.Sprint(m["unset"]) != "[TEAM]" {
+	if _, m := post("/api/import/check"); fmt.Sprint(m["placeholders"]) != "[TEAM]" {
 		t.Fatalf("check %v", m)
 	}
-	if code, _ := post("/api/import"); code != http.StatusBadRequest {
-		t.Fatalf("unset: %d", code)
+	if code, m := post("/api/import"); code != http.StatusCreated {
+		t.Fatalf("import: %d %v", code, m)
 	}
-	if code, m := post("/api/import?set=TEAM=dbre"); code != http.StatusCreated {
-		t.Fatalf("set: %d %v", code, m)
-	}
-	if d, _ := st.Load("p"); !strings.Contains(string(d.Raw), "echo dbre") {
+	if d, _ := st.Load("p"); !strings.Contains(string(d.Raw), "echo @TEAM@") {
 		t.Fatalf("%s", d.Raw)
 	}
 }

@@ -66,11 +66,12 @@ func TestScan(t *testing.T) {
 		t.Fatalf("order %v", kinds)
 	}
 	rb := doc(p, Runbook, "rb")
-	if !strings.Contains(string(rb.Raw), proj+"/tools") || !strings.Contains(string(rb.Raw), root) || !strings.Contains(string(rb.Raw), "@TEAM@") {
-		t.Fatalf("filled %s", rb.Raw)
+	// Placeholders are kept as written (a run fills them in).
+	if !strings.Contains(string(rb.Raw), `"@PROJECT_DIR@/tools"`) || !strings.Contains(string(rb.Raw), `"@REPO_ROOT@"`) {
+		t.Fatalf("not as written: %s", rb.Raw)
 	}
-	if strings.Join(p.Unset, ",") != "TEAM" {
-		t.Fatalf("unset %v", p.Unset)
+	if strings.Join(rb.Placeholders, ",") != "PROJECT_DIR,REPO_ROOT,TEAM" {
+		t.Fatalf("placeholders %v", rb.Placeholders)
 	}
 	// shared isn't in the folder: found in the repository.
 	var shared Ref
@@ -83,10 +84,10 @@ func TestScan(t *testing.T) {
 		t.Fatalf("shared %+v", shared)
 	}
 	if p.OK() == nil {
-		t.Fatal("ok with a placeholder unset and a library missing")
+		t.Fatal("ok with a library missing")
 	}
 
-	p, _ = Scan(Options{Dir: proj, Values: map[string]string{"TEAM": "dbre"}, Include: shared.Candidates})
+	p, _ = Scan(Options{Dir: proj, Include: shared.Candidates})
 	if err := p.OK(); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +99,7 @@ func TestScan(t *testing.T) {
 // Renaming a file changes the references to it, leaving the rest as written.
 func TestScanRenames(t *testing.T) {
 	_, proj := repo(t)
-	p, _ := Scan(Options{Dir: proj, Values: map[string]string{"TEAM": "x"}, Renames: map[string]string{"runbook:rb": "rb2", "library:local": "local2", "fakes:fk": "fk2"}})
+	p, _ := Scan(Options{Dir: proj, Renames: map[string]string{"runbook:rb": "rb2", "library:local": "local2", "fakes:fk": "fk2"}})
 	rb, lib, suite := doc(p, Runbook, "rb2"), doc(p, Library, "local2"), doc(p, Suite, "rb2")
 	if rb == nil || lib == nil || suite == nil {
 		t.Fatalf("docs %+v", p.Docs)
@@ -123,7 +124,7 @@ func TestApply(t *testing.T) {
 		stored[kind+":"+n] = raw
 		return ver.Of(raw), nil
 	}
-	opts := Options{Dir: proj, Values: map[string]string{"TEAM": "x"}, Lookup: lookup}
+	opts := Options{Dir: proj, Lookup: lookup}
 	p, _ := Scan(opts)
 	// shared is missing: the runbook can't go in, nor its suite.
 	res := Apply(p, func(Doc) bool { return false }, save)

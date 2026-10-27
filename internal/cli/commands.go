@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"golang.org/x/term"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -101,7 +102,7 @@ func newRoot() *cobra.Command {
 
 	root.AddCommand(
 		listCmd(s), showCmd(s), newCmd(s), editCmd(s), importCmd(s), deleteCmd(s), restoreCmd(s),
-		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), suspendCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s), versionCmd(),
+		validateCmd(s), versionsCmd(s), libCmd(s), collectionCmd(s), inspectCmd(s), runCmd(s), rerunCmd(s), resumeCmd(s), abortCmd(s), suspendCmd(s), testCmd(s), testsCmd(s), fakesCmd(s), shellCmd(s), noteCmd(s), saveEditsCmd(s), scheduleCmd(s), exportCmd(s), explainCmd(s), historyCmd(s), serveCmd(s), dbCmd(s), foldersCmd(s), versionCmd(),
 		attachCmd(), watchCmd(s), waitRunCmd(s), doctorCmd(s),
 	)
 	return root
@@ -289,7 +290,7 @@ func editLoop(st *store.Store, name string) error {
 func importCmd(s func() *store.Store) *cobra.Command {
 	var force, dry, noFound, showDiff bool
 	var collection, as string
-	var sets, renames []string
+	var renames []string
 	cmd := &cobra.Command{
 		Use:   "import <file|folder>...",
 		Short: "Add runbooks, libraries, fakes and test suites: files, or a project folder (- reads stdin)",
@@ -297,8 +298,8 @@ func importCmd(s func() *store.Store) *cobra.Command {
 and test suites. Give files, or a folder (its .yaml files, in subfolders
 too; other YAML is left alone). - reads a runbook from stdin.
 
-Placeholders, @NAME@, are filled in: @PROJECT_DIR@ is the folder (else the
-current directory), @REPO_ROOT@ its git root, others --set NAME=VALUE.
+Placeholders, @NAME@ (@PROJECT_DIR@, @REPO_ROOT@ …), are kept as written;
+a run fills them in with this machine's folders (runnr folders).
 
 Each file's references are checked: a runbook's libraries, a suite's
 runbook and fake libraries must be in the import, stored, or built in. A
@@ -310,11 +311,11 @@ current version of that one; earlier versions are kept) or --rename
 NAME=NEW (imported as NEW; references to it in the other files follow).
 --as NEW renames a single file. --diff shows what saving over each taken
 name would change (and imports nothing). Files are saved libraries first, then
-fakes, runbooks and suites; one that can't go in (an error, a placeholder
-without a value, a missing reference) is reported and left out.`,
+fakes, runbooks and suites; one that can't go in (an error, a missing
+reference) is reported and left out.`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			o := project.Options{Values: map[string]string{}, Renames: map[string]string{}, Lookup: project.StoreLookup(s())}
+			o := project.Options{Renames: map[string]string{}, Lookup: project.StoreLookup(s())}
 			for _, a := range args {
 				if st, err := os.Stat(a); err == nil && st.IsDir() {
 					if o.Dir != "" {
@@ -325,18 +326,11 @@ without a value, a missing reference) is reported and left out.`,
 					o.Paths = append(o.Paths, a)
 				}
 			}
-			for _, kv := range sets {
-				k, v, ok := strings.Cut(kv, "=")
-				if !ok {
-					return fmt.Errorf("--set %s: want NAME=VALUE", kv)
-				}
-				o.Values[strings.Trim(k, "@")] = v
-			}
 			if len(args) == 1 && args[0] == "-" {
 				if showDiff {
 					return errors.New("--diff takes files or a folder, not stdin")
 				}
-				return importStdin(s(), force, collection, o.Values)
+				return importStdin(s(), force, collection)
 			}
 			rn := map[string]string{}
 			for _, kv := range renames {
@@ -397,9 +391,6 @@ without a value, a missing reference) is reported and left out.`,
 					imported = append(imported, r.Name)
 				}
 			}
-			if len(p.Unset) > 0 {
-				fmt.Fprintf(os.Stderr, "placeholders without a value (--set NAME=VALUE): %s\n", strings.Join(p.Unset, ", "))
-			}
 			if collection != "" && len(imported) > 0 {
 				_, created, err := s().AddToCollection(collection, true, imported...)
 				if err != nil {
@@ -416,7 +407,6 @@ without a value, a missing reference) is reported and left out.`,
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "save over files with the same name (as their current version)")
 	cmd.Flags().StringVar(&as, "as", "", "import a single file under this name (its name: is changed)")
 	cmd.Flags().StringArrayVar(&renames, "rename", nil, "import NAME as NEW (NAME=NEW; references to it follow)")
-	cmd.Flags().StringArrayVar(&sets, "set", nil, "a placeholder's value (NAME=VALUE, for @NAME@)")
 	cmd.Flags().BoolVar(&noFound, "no-found", false, "don't import missing libraries found elsewhere in the repository")
 	cmd.Flags().BoolVarP(&dry, "dry-run", "n", false, "say what would be imported, and change nothing")
 	cmd.Flags().BoolVar(&showDiff, "diff", false, "as --dry-run, with what saving over each taken name would change (a diff)")
@@ -456,9 +446,6 @@ func printPlan(p *project.Plan, diffs bool) error {
 			}
 		}
 	}
-	if len(p.Unset) > 0 {
-		fmt.Printf("placeholders without a value: %s\n", strings.Join(p.Unset, ", "))
-	}
 	return p.OK()
 }
 
@@ -485,14 +472,10 @@ func printDiff(d, indent string) {
 }
 
 // importStdin imports one runbook from standard input.
-func importStdin(st *store.Store, force bool, collection string, values map[string]string) error {
+func importStdin(st *store.Store, force bool, collection string) error {
 	raw, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
-	}
-	raw, _, unset := project.Fill(raw, values)
-	if len(unset) > 0 {
-		return fmt.Errorf("placeholders without a value (--set NAME=VALUE): %s", strings.Join(unset, ", "))
 	}
 	var prev ver.ID
 	if rb, err := runbook.Parse(raw); err == nil {
@@ -589,6 +572,8 @@ type runFlags struct {
 	stepMode, noReview                     bool
 	skip, before, after                    string
 	tmux                                   bool
+	collection                             string
+	folders                                []string // --set NAME=FOLDER
 	runID                                  string
 	newRun                                 bool // resume: a new run, not this one continued
 }
@@ -609,8 +594,38 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.StringVar(&f.before, "pause-before", "", "steps to stop before (run / skip / view / shell), e.g. 4,9")
 	fl.StringVar(&f.after, "pause-after", "", "steps to stop after, to check the result before going on")
 	fl.BoolVar(&f.tmux, "tmux", false, "run in a tmux session: it outlives this terminal (runnr attach), with the steps and a shell beside it, and background steps in windows of their own that outlive runnr")
+	f.registerFolders(cmd)
 	fl.StringVar(&f.runID, "run-id", "", "the new run's ID")
 	_ = fl.MarkHidden("run-id")
+}
+
+// registerFolders adds --collection and --set.
+func (f *runFlags) registerFolders(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&f.collection, "collection", "", "take the placeholders' folders (@PROJECT_DIR@ …) from this collection (default: the runbook's, if it's in one)")
+	cmd.Flags().StringArrayVar(&f.folders, "set", nil, "a placeholder's folder for this run (NAME=FOLDER, for @NAME@), repeatable")
+}
+
+// folderOpts are the run's --collection and --set; a resume keeps the
+// collection and the folders given for the run it carries on.
+func (f *runFlags) folderOpts(resumed *engine.Run) (project.FolderOpts, error) {
+	o := project.FolderOpts{Collection: f.collection, Set: map[string]string{}}
+	if resumed != nil {
+		if o.Collection == "" {
+			o.Collection = resumed.Collection
+		}
+		maps.Copy(o.Set, resumed.FolderSet)
+	}
+	for _, kv := range f.folders {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok {
+			return o, fmt.Errorf("--set %q must be NAME=FOLDER", kv)
+		}
+		o.Set[strings.Trim(k, "@")] = v
+	}
+	if len(o.Set) == 0 {
+		o.Set = nil
+	}
+	return o, nil
 }
 
 // offerSaveEdits reminds the operator that steps were changed during the
@@ -648,6 +663,26 @@ type launch struct {
 }
 
 func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l launch) error {
+	libs, err := st.Libraries(rb.Libraries)
+	if err != nil {
+		return err
+	}
+	// It doesn't start (in tmux or here) without its folders.
+	fo, err := f.folderOpts(l.resumed)
+	if err != nil {
+		return err
+	}
+	given := map[string]string{}
+	maps.Copy(given, l.base)
+	for _, kv := range f.vars {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			given[k] = v
+		}
+	}
+	folders, err := project.RunFolders(st, rb, libs, given, fo)
+	if err != nil {
+		return err
+	}
 	if f.tmux && os.Getenv(envTmuxSession) == "" {
 		if f.js || f.noHistory {
 			return errors.New("--tmux can't be used with --json or --no-history")
@@ -750,11 +785,8 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 			return err
 		}
 	}
-	libs, err := st.Libraries(rb.Libraries)
-	if err != nil {
-		return err
-	}
 	opts := engine.Options{
+		Folders: folders.Values, Collection: folders.Collection, FolderSet: fo.Set,
 		Owner: engine.ThisProcess("cli"), Vars: values, DryRun: f.dry, Interactive: interactive, StartAt: startAt,
 		Controls: ctl, Review: interactive && !f.noReview, Previous: l.previous,
 		State: state, Resumes: resumes, RunbookVersion: rev, LibraryVersions: st.LibrariesUsed(rb.Libraries), Libraries: libs,
@@ -1400,6 +1432,7 @@ func runStepIndex(r *engine.Run, ref string) (int, error) {
 
 func shellCmd(s func() *store.Store) *cobra.Command {
 	var vars []string
+	var sf runFlags
 	cmd := &cobra.Command{
 		Use:   "shell <runbook|file|run-id>",
 		Short: "Run a runbook's setup steps, then open a shell with that environment",
@@ -1418,10 +1451,11 @@ again; secret values can't be restored).`,
 			}
 			base := map[string]string{}
 			var state map[string]string
+			var prev *engine.Run
 			rb, _, err := s().Resolve(args[0])
 			if err != nil {
-				prev, rerr := s().LoadRun(args[0])
-				if rerr != nil {
+				var rerr error
+				if prev, rerr = s().LoadRun(args[0]); rerr != nil {
 					return err
 				}
 				if rb, _, err = s().Get(prev.Runbook); err != nil {
@@ -1446,7 +1480,15 @@ again; secret values can't be restored).`,
 			if err != nil {
 				return err
 			}
-			run := engine.Execute(ctx, rb, term, "", engine.Options{Vars: base, State: state, Interactive: true, ShellOnly: true, Libraries: libs})
+			fo, err := sf.folderOpts(prev)
+			if err != nil {
+				return err
+			}
+			folders, err := project.RunFolders(s(), rb, libs, base, fo)
+			if err != nil {
+				return err
+			}
+			run := engine.Execute(ctx, rb, term, "", engine.Options{Vars: base, State: state, Interactive: true, ShellOnly: true, Libraries: libs, Folders: folders.Values})
 			if run.Status != engine.StatusSucceeded {
 				return ExitError{1}
 			}
@@ -1454,6 +1496,7 @@ again; secret values can't be restored).`,
 		},
 	}
 	cmd.Flags().StringArrayVarP(&vars, "var", "v", nil, "set an input (key=value), repeatable")
+	sf.registerFolders(cmd)
 	return cmd
 }
 
@@ -1942,9 +1985,6 @@ shells opened from runnr. To use them in any other terminal:
 				}
 				if err != nil {
 					return err
-				}
-				if _, _, unset := project.Fill(raw, nil); len(unset) > 0 {
-					return fmt.Errorf("%s: placeholders without a value: %s (runnr import fills them in: --set NAME=VALUE)", f, strings.Join(unset, ", "))
 				}
 				if libAs != "" {
 					if raw, err = runbook.SetName(raw, libAs); err != nil {

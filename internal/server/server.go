@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	"github.com/egrif/runnr/internal/claude"
 	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/htmlview"
+	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/project"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/store"
@@ -169,6 +171,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/runs/{id}/access", s.driving(s.setAccess))
 	mux.HandleFunc("POST /api/preview", s.preview)
 	mux.HandleFunc("POST /api/parse", s.parse)
+	mux.HandleFunc("GET /api/folders", s.listFolders)
+	mux.HandleFunc("PUT /api/folders", s.setFolder)
+	mux.HandleFunc("GET /api/runbooks/{name}/folders", s.runbookFolders)
 	mux.HandleFunc("POST /api/parse-step", s.parseStep)
 	mux.HandleFunc("POST /api/format-step", s.formatStep)
 	mux.HandleFunc("POST /api/format", s.format)
@@ -419,6 +424,11 @@ type startReq struct {
 	// Previous is a run ID to compare against ("last time"); defaults to the
 	// resumed run, else the runbook's latest run.
 	Previous string `json:"previous"`
+	// Collection: take the placeholders' folders from this collection
+	// (default: the runbook's, if it's in one); Folders, those given for
+	// this run only (NAME → folder).
+	Collection string            `json:"collection"`
+	Folders    map[string]string `json:"folders"`
 }
 
 // stepList shows step indexes as 1-based numbers.
@@ -579,6 +589,31 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		writeErr(w, err)
 		return
 	}
+	// It doesn't start without its folders.
+	fo := project.FolderOpts{Collection: req.Collection, Set: map[string]string{}}
+	if resumed != nil {
+		if fo.Collection == "" {
+			fo.Collection = resumed.Collection
+		}
+		maps.Copy(fo.Set, resumed.FolderSet)
+	}
+	for k, v := range req.Folders {
+		if strings.TrimSpace(v) != "" {
+			fo.Set[k] = v
+		}
+	}
+	if len(fo.Set) == 0 {
+		fo.Set = nil
+	}
+	folders, err := project.RunFolders(s.st, rb, libs, req.Vars, fo)
+	if err != nil {
+		res := map[string]any{"error": err.Error()}
+		if folders != nil {
+			res["folders"] = folders
+		}
+		writeJSON(w, http.StatusBadRequest, res)
+		return
+	}
 	if req.Wait && !req.Unattended {
 		writeErr(w, errors.New("wait requires unattended (nobody could answer prompts)"))
 		return
@@ -633,6 +668,9 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		defer cancel(nil)
 		done <- engine.Execute(ctx, rb, ui, id, engine.Options{
 			Owner:           engine.ThisProcess("server"),
+			Folders:         folders.Values,
+			Collection:      folders.Collection,
+			FolderSet:       fo.Set,
 			Vars:            req.Vars,
 			DryRun:          req.DryRun,
 			Interactive:     !req.Unattended,
@@ -704,6 +742,9 @@ type previewReq struct {
 	Vars    map[string]string `json:"vars"`
 	// FromRun fills in values from that run's state (as a resume would).
 	FromRun string `json:"from_run"`
+	// Collection and Folders: the placeholders' folders, as for a run.
+	Collection string            `json:"collection"`
+	Folders    map[string]string `json:"folders"`
 }
 
 // preview shows what each step would do with the given inputs.
@@ -733,6 +774,12 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 		}
 		state = engine.ResumeState(prev)
 	}
+	// Shown with the folders a run would have (those it has, at least).
+	if used := placeholder.Used(rb); len(used) > 0 {
+		if f, err := project.ResolveFolders(s.st, rb.Name, used, project.FolderOpts{Collection: req.Collection, Set: req.Folders}); err == nil {
+			placeholder.Apply(f.Values, rb)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"steps": engine.Preview(rb, req.Vars, state)})
 }
 
@@ -749,6 +796,7 @@ func (s *Server) runPreview(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	placeholder.Apply(run.Folders, rb) // the folders it had
 	writeJSON(w, http.StatusOK, map[string]any{"steps": engine.Preview(rb, engine.ResumeInputs(run), engine.ResumeState(run))})
 }
 

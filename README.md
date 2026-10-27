@@ -15,7 +15,7 @@ unattended for cron/CI.
 - **Resume** long-running or multi-day procedures from where they stopped; go back to a step, jump ahead, or stop a running step without stopping the run.
 - **Shells and background commands** beside a run, with its variables (secrets too) kept up to date.
 - **Run history** for every run (filter by runbook; search by identifier, e.g. which silo), and **version history** for every runbook save; delete and restore from **Manage**.
-- **Import and export**: a project folder at once (placeholders filled in, references checked), a runbook with its libraries, a run's logs with the runs it resumed.
+- **Import and export**: a project folder at once (placeholders kept, references checked), a runbook with its libraries, a run's logs with the runs it resumed.
 - **Tests** that run a runbook with its commands faked and a simulated operator, without touching anything ([docs/TESTING.md](docs/TESTING.md)).
 - **SQLite or Postgres** storage: zero-setup locally, shared for a team.
 - **A run console** in the GUI: the run on one screen, in panes you arrange.
@@ -62,9 +62,10 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**); `-f yaml` (or `-o file.yaml`) writes the runbook as written with the libraries it uses beside it (`--lib`, `--no-libs`), so the folder imports again (**⇩ Export…** on the runbook's page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export db-helpers)"` |
-| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are filled in (`@PROJECT_DIR@`: the folder, `@REPO_ROOT@`: its git root, others `--set NAME=VALUE`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (made its current version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
+| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are kept as written (a run fills them in: `runnr folders`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (made its current version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
 | `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
 | `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
+| `runnr folders [runbook]` / `folders set [-c <col>] NAME=FOLDER...` / `unset` | The folders placeholders stand for on this machine: `@REPOS_ROOT@` for everything, a collection's `@REPO_ROOT@` and `@PROJECT_DIR@` (see [Placeholders](#placeholders)); given a runbook, what a run of it would have. A run takes `--collection` and `--set NAME=FOLDER` for itself |
 | `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
 | `runnr history <run-id> --export <folder>` | Export the run's logs with the runs linked to it by resuming (`--only` for just it): `--as raw` (logs to read), `json` (records to import: `runnr import` takes them, or **Also import** in the GUI's import) or `both`; `--one-file` puts them in one file. The GUI: **⇩ Export logs…** on a finished run (to a folder, or a download) |
 | `runnr test <suite\|runbook\|file>` | Test a runbook: run it with its commands faked and a simulated operator, against each scenario's expectations (`-s`, `-v`, `--log`); see [Testing runbooks](docs/TESTING.md) |
@@ -124,6 +125,38 @@ this runnr opens it (a SQLite file is copied aside first, as
 
 Older versions of runnr kept YAML and JSON files under `~/.runnr`; the default
 SQLite database imports them once, on first use, and leaves the files alone.
+
+### Placeholders
+
+Runbooks, libraries, fake libraries and test suites name folders by
+placeholder, so they're the same on every machine:
+
+```yaml
+inputs:
+  - {name: tools_dir, default: "@PROJECT_DIR@/tools"}
+```
+
+They're kept as written (imported, stored and exported with the `@…@` in),
+and each machine says what they stand for, with `runnr folders` or the
+GUI's **Collections** page: `@REPOS_ROOT@` (where your repositories are)
+for everything, and `@REPO_ROOT@` and `@PROJECT_DIR@` for a collection's
+runbooks. A value can name another, so only `@REPOS_ROOT@` need differ
+between machines:
+
+```sh
+runnr folders set REPOS_ROOT=~/dev
+runnr folders set -c payments REPO_ROOT=@REPOS_ROOT@/ops-runbooks \
+    PROJECT_DIR=@REPO_ROOT@/projects/db-upgrade
+```
+
+A run fills them in when it starts, from its runbook's collection (in
+several, where they agree), or `--collection`'s; `--set NAME=FOLDER` (or
+the Run page's **Folders**) gives one for that run only, and a resume
+keeps them. Any other `@NAME@` works the same way. A run doesn't start
+while a placeholder it names has no value, or its value isn't a folder
+here; tests, shells and the editor's **Run this** too. The values are this
+machine's own: collections and exports leave them out, and a run records
+the folders it had.
 
 ### Running
 
@@ -335,7 +368,7 @@ it aborted now**).
   within a card to reorder, or to "Not in a collection" to take it out.
 - **Collections** group runbooks in the sidebar, with what they're for.
 - **⇪ Import…** in the sidebar imports a project folder on the machine
-  runnr runs on (as `runnr import <folder>`: placeholders, references,
+  runnr runs on (as `runnr import <folder>`: references,
   libraries found elsewhere in the repository, a choice for each name
   that's taken), plus run records or other files added from elsewhere, or
   uploaded files. **⇩ Export…** on a runbook's page writes it with the

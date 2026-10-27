@@ -1,0 +1,96 @@
+package project
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/egrif/runnr/internal/engine"
+	"github.com/egrif/runnr/internal/runbook"
+	"github.com/egrif/runnr/internal/store"
+)
+
+// A run's folders: its collection's (or one chosen), those for everything,
+// and those given for the run; it doesn't start without them.
+func TestFolders(t *testing.T) {
+	st, err := store.Open(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	src := t.TempDir()
+	for _, d := range []string{"ra/projects/rds", "other/projects/rds"} {
+		os.MkdirAll(filepath.Join(src, d), 0o755)
+	}
+	raw := []byte("name: rb\ninputs:\n  - {name: tools, default: \"@PROJECT_DIR@/tools\"}\nsteps:\n  - {name: one, run: 'echo \"$tools @REPO_ROOT@\"'}\n")
+	rb, _, err := st.Save(raw, store.SaveOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	used := []string{"PROJECT_DIR", "REPO_ROOT"}
+	resolve := func(o FolderOpts) *Folders {
+		t.Helper()
+		f, err := ResolveFolders(st, "rb", used, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+
+	// None set: it can't start.
+	if f := resolve(FolderOpts{}); len(f.Problems) != 2 || f.Err() == nil {
+		t.Fatalf("none set: %+v", f)
+	}
+
+	// Its collection's, naming the one for everything.
+	st.AddToCollection("aurora", true, "rb")
+	st.SetPlaceholder("", "REPOS_ROOT", src)
+	st.SetPlaceholder("aurora", "REPO_ROOT", "@REPOS_ROOT@/ra")
+	st.SetPlaceholder("aurora", "PROJECT_DIR", "@REPO_ROOT@/projects/rds")
+	f := resolve(FolderOpts{})
+	if f.Err() != nil || f.Collection != "aurora" || f.Values["PROJECT_DIR"] != filepath.Join(src, "ra/projects/rds") || f.From["REPO_ROOT"] != "collection" {
+		t.Fatalf("from its collection: %+v", f)
+	}
+
+	// In two that disagree: choose one, or give it for the run.
+	st.AddToCollection("second", true, "rb")
+	st.SetPlaceholder("second", "REPO_ROOT", filepath.Join(src, "other"))
+	if f := resolve(FolderOpts{}); f.Err() == nil || !strings.Contains(f.Err().Error(), "differs between collections") {
+		t.Fatalf("disagreeing: %+v", f)
+	}
+	if f := resolve(FolderOpts{Collection: "second"}); len(f.Problems) != 1 || f.Problems[0].Name != "PROJECT_DIR" {
+		t.Fatalf("second has no PROJECT_DIR: %+v", f)
+	}
+	f = resolve(FolderOpts{Set: map[string]string{"REPO_ROOT": filepath.Join(src, "other")}})
+	if f.Err() != nil || f.From["REPO_ROOT"] != "run" || f.From["PROJECT_DIR"] != "collection" {
+		t.Fatalf("given for the run: %+v", f)
+	}
+
+	// A renamed collection keeps its folders.
+	if _, _, err := st.UpdateCollection("aurora", ptr("aurora2"), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if vals, _ := st.Placeholders("aurora2"); vals["REPO_ROOT"] != "@REPOS_ROOT@/ra" {
+		t.Fatalf("after rename: %v", vals)
+	}
+
+	// The run fills them in; without them, it doesn't start.
+	f = resolve(FolderOpts{Collection: "aurora2"})
+	run := engine.Execute(context.Background(), rb, engine.Unattended{}, "", engine.Options{Folders: f.Values, Collection: f.Collection})
+	if run.Status != engine.StatusSucceeded || run.Folders["PROJECT_DIR"] != f.Values["PROJECT_DIR"] || run.Collection != "aurora2" || run.Inputs["tools"] != f.Values["PROJECT_DIR"]+"/tools" {
+		t.Fatalf("run %s %s inputs %v folders %v", run.Status, run.Error, run.Inputs, run.Folders)
+	}
+	rb2, _ := runbook.Parse(raw)
+	run = engine.Execute(context.Background(), rb2, engine.Unattended{}, "", engine.Options{})
+	if run.Status != engine.StatusFailed || !strings.Contains(run.Error, "can't start") || !run.Begun.IsZero() {
+		t.Fatalf("without folders: %s %q", run.Status, run.Error)
+	}
+	if !errors.Is(engine.FoldersError(nil), engine.ErrFolders) {
+		t.Fatal("not ErrFolders")
+	}
+}
+
+func ptr(s string) *string { return &s }

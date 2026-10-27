@@ -868,3 +868,11 @@ dialog.run-inputs .ri-grid { display: grid; grid-template-columns: max-content 1
 dialog.run-inputs .ri-grid > label { font-family: ui-monospace, Menlo, monospace; text-align: right; }
 dialog.run-inputs .ri-grid input, dialog.run-inputs .ri-grid select, dialog.run-inputs .ri-grid .path-field { width: 100%; }
 dialog.run-inputs label.check { display: block; margin: 4px 0; }
+.folder-rows { width: 100%; }
+.folder-rows tr, .folder-rows td { display: block; padding: 0; }
+.folder-rows td:first-child { margin-top: 6px; }
+.folder-rows .hint { overflow-wrap: anywhere; }
+.folder-rows input { width: 100%; min-width: 0; }
+.folder-rows .path-field { display: flex; gap: 4px; }
+.col-folders summary { cursor: pointer; }
+.global-folders { margin-bottom: 12px; }

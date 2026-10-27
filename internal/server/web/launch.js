@@ -63,6 +63,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
           <label><input type="checkbox" name="dry"> Dry run</label>
         </div>
       </div>
+      <div class="card launch-folders" hidden></div>
       <div class="row" style="margin:20px 0 4px">
         <h2 style="margin:0">Steps</h2>
         <span class="muted" id="count"></span>
@@ -82,6 +83,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
     </form>`;
 
   const form = $("#run-form");
+  const folders = mountFolders($(".launch-folders"), name, mode === "run" ? null : prev);
   const vars = () => {
     const out = {};
     inputs.forEach((i) => {
@@ -103,7 +105,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
   let t;
   const refreshPreview = async () => {
     try {
-      st.preview = (await api("POST", "/api/preview", { runbook: rb.name, vars: vars(), from_run: mode === "resume" ? runId : "" })).steps;
+      st.preview = (await api("POST", "/api/preview", { runbook: rb.name, vars: vars(), from_run: mode === "resume" ? runId : "", ...folders.body() })).steps;
       draw();
     } catch (e) { toast(e.message); }
   };
@@ -134,6 +136,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
       step_mode: form.stepmode.checked, skip: nums((i) => !st.include[i]),
       pause_before: nums((i) => st.before.has(i)), pause_after: nums((i) => st.after.has(i)),
     };
+    Object.assign(body, folders.body());
     if (form.solo.checked) {
       if (!author()) return toast("Give your name to drive it alone");
       body.access = { mode: "only" };
@@ -316,4 +319,40 @@ function renderLaunchSteps(st) {
         </div>` : ""}
       </li>`;
   }).join("");
+}
+
+// mountFolders shows the placeholders (@PROJECT_DIR@ …) the runbook names
+// and the folders a run fills them with on this machine, from its
+// collection (or one chosen) and those set for everything; each can be
+// given for this run only. A run doesn't start while one has no folder.
+// prev is the run being resumed or run again (its collection and folders).
+function mountFolders(el, name, prev) {
+  const st = { collection: prev?.collection || "", set: { ...(prev?.folder_set || {}) }, f: null, all: [] };
+  const from = { run: "this run", collection: "the collection", global: "for everything" };
+  const load = async () => {
+    const q = new URLSearchParams();
+    if (st.collection) q.set("collection", st.collection);
+    for (const [k, v] of Object.entries(st.set)) if (v.trim()) q.append("set", `${k}=${v}`);
+    try { st.f = await api("GET", `/api/runbooks/${enc(name)}/folders?${q}`); } catch (e) { return toast(e.message); }
+    draw();
+  };
+  const draw = () => {
+    const f = st.f;
+    if (!f?.used?.length) { el.hidden = true; return; }
+    el.hidden = false;
+    const why = (n) => f.problems?.find((p) => p.name === n)?.why;
+    const own = f.collections || [];
+    const dflt = own.length === 1 ? `${own[0]} (its collection)` : own.length > 1 ? `where ${own.join(", ")} agree` : "none (only those for everything)";
+    const others = st.all.filter((c) => !own.includes(c) || own.length > 1);
+    el.innerHTML = `<div class="row"><h3 style="margin:0">Folders</h3><span class="spacer"></span><a class="small" href="#/collections" title="Set them for this machine, for everything or for a collection">Set them for this machine…</a></div>
+      <p class="muted small">The placeholders the runbook names, and the folders on this machine a run fills them in with. Give one here for this run only.${f.problems?.length ? ` <b class="error-text">It can't start until each is a folder here.</b>` : ""}</p>
+      <label class="row small">Folders from collection <select data-col><option value="">${esc(dflt)}</option>${others.map((c) => `<option ${c === st.collection ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+      <div class="form-grid">${f.used.map((n) => `<label>@${esc(n)}@</label>${withPathPick({ type: "dir" }, `<input data-set="${esc(n)}" value="${esc(st.set[n] || "")}" placeholder="${esc(f.values?.[n] || "no folder")}" spellcheck="false" autocomplete="off">`)}
+        <div class="hint ${why(n) ? "error-text" : ""}">${why(n) ? `✘ ${esc(f.values?.[n] && !st.set[n] ? f.values[n] + " " : "")}${esc(why(n))}` : `from ${esc(from[f.from?.[n]] || "")}`}</div>`).join("")}</div>`;
+    el.querySelector("[data-col]").onchange = (e) => { st.collection = e.target.value; load(); };
+    el.querySelectorAll("[data-set]").forEach((i) => (i.onchange = () => { st.set[i.dataset.set] = i.value.trim(); load(); }));
+  };
+  api("GET", "/api/collections").then((cs) => { st.all = (cs || []).map((c) => c.name).sort(); draw(); }).catch(() => {});
+  load();
+  return { body: () => ({ collection: st.collection, folders: Object.fromEntries(Object.entries(st.set).filter(([, v]) => v)) }) };
 }
