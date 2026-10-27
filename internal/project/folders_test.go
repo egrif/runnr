@@ -83,6 +83,19 @@ func TestFolders(t *testing.T) {
 	if run.Status != engine.StatusSucceeded || run.Folders["PROJECT_DIR"] != f.Values["PROJECT_DIR"] || run.Collection != "aurora2" || run.Inputs["tools"] != f.Values["PROJECT_DIR"]+"/tools" {
 		t.Fatalf("run %s %s inputs %v folders %v", run.Status, run.Error, run.Inputs, run.Folders)
 	}
+	// Exported, its folders are the placeholders again.
+	x := Masked(st, []*engine.Run{run})[0]
+	out := x.Inputs["tools"] + " " + x.Steps[0].Command + " " + x.Steps[0].Output
+	if strings.Contains(out, src) || x.Inputs["tools"] != "@PROJECT_DIR@/tools" || !strings.Contains(x.Steps[0].Output, "@REPO_ROOT@") || x.Folders != nil || x.Collection != "aurora2" {
+		t.Fatalf("exported: %q folders %v", out, x.Folders)
+	}
+	if run.Folders == nil || !strings.Contains(run.Inputs["tools"], src) {
+		t.Fatal("the run itself changed")
+	}
+	if got := replacePath("/a/repo /a/repo/x /a/repository", "/a/repo", "@R@"); got != "@R@ @R@/x /a/repository" {
+		t.Fatalf("replacePath: %q", got)
+	}
+
 	rb2, _ := runbook.Parse(raw)
 	run = engine.Execute(context.Background(), rb2, engine.Unattended{}, "", engine.Options{})
 	if run.Status != engine.StatusFailed || !strings.Contains(run.Error, "can't start") || !run.Begun.IsZero() {

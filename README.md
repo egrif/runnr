@@ -156,7 +156,8 @@ keeps them. Any other `@NAME@` works the same way. A run doesn't start
 while a placeholder it names has no value, or its value isn't a folder
 here; tests, shells and the editor's **Run this** too. The values are this
 machine's own: collections and exports leave them out, and a run records
-the folders it had.
+the folders it had. An exported run (logs, records, timeline) has those
+folders written as their placeholders again, so your paths stay here.
 
 ### Running
 

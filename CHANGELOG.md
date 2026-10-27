@@ -32,7 +32,9 @@ stand for.
   collection's card; the Run page has **Folders**, to see them, choose the
   collection and give one for the run; previews show the folders filled in.
 - A run's record keeps the folders it had (`folders`, `collection`,
-  `folder_set`). API: `GET`/`PUT /api/folders`, `GET
+  `folder_set`); exported, its logs and records have those folders written
+  as their placeholders again (`@REPO_ROOT@/tools`), so local paths aren't
+  passed on. API: `GET`/`PUT /api/folders`, `GET
   /api/runbooks/{name}/folders`, and `collection`/`folders` in start,
   resume, preview and test requests.
 
