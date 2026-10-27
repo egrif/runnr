@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.9.2 — 2026-10-26
+
+Terraform's imported passwords are masked.
+
+### Fixed
+
+- **Terraform password IDs are masked**: a built-in sensitive pattern hides
+  the ID in Terraform's status lines for `random_password` resources
+  (`…random_password.x: Importing... [id=****]`). Importing one uses the
+  password as its ID, so applies that import passwords printed them in
+  output, records and logs. Runs stored before this: `runnr history
+  --scrub` (exports and raw logs are masked again as they leave runnr).
+
 ## v0.9.1 — 2026-10-26
 
 `runnr version`, and every build knows its version.

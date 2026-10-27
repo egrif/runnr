@@ -82,12 +82,17 @@ func TestSensitive(t *testing.T) {
 	}
 	m := NewMasker(&Runbook{Sensitive: map[string]string{"api": "X-Api-Key: {{SENSITIVE}}", "pair": "user={{SENSITIVE}} pass={{SENSITIVE}};"}})
 	cases := map[string]string{
-		"postgres://app:pw-123@db.example.com:5432/app": "postgres://app:****@db.example.com:5432/app",
-		"curl -H 'Authorization: Bearer abc.def' x":     "curl -H 'Authorization: Bearer ****' x",
-		"aws_secret_access_key = wJalrXUtn":             "aws_secret_access_key = ****",
-		"X-Api-Key: k123 rest":                          "X-Api-Key: **** rest",
-		"user=bob pass=hunter2; ok":                     "user=**** pass=****; ok",
-		"nothing to see https://example.com/path":       "nothing to see https://example.com/path",
+		"postgres://app:pw-123@db.example.com:5432/app":                                              "postgres://app:****@db.example.com:5432/app",
+		"curl -H 'Authorization: Bearer abc.def' x":                                                  "curl -H 'Authorization: Bearer ****' x",
+		"aws_secret_access_key = wJalrXUtn":                                                          "aws_secret_access_key = ****",
+		"X-Api-Key: k123 rest":                                                                       "X-Api-Key: **** rest",
+		"user=bob pass=hunter2; ok":                                                                  "user=**** pass=****; ok",
+		"nothing to see https://example.com/path":                                                    "nothing to see https://example.com/path",
+		`module.db_users.random_password.password["api"]: Importing... [id=aB]c-9]`:                  `module.db_users.random_password.password["api"]: Importing... [id=****]`,
+		`module.db_users.random_password.password["api"]: Import complete [id=aB]c-9]`:               `module.db_users.random_password.password["api"]: Import complete [id=****]`,
+		"\x1b[0m\x1b[1mmodule.u.random_password.p: Preparing import... [id=x{y}]\x1b[0m\r":           "\x1b[0m\x1b[1mmodule.u.random_password.p: Preparing import... [id=****]\x1b[0m\r",
+		"a.random_password.p: Importing... [id=one]\nb.random_password.q: Importing... [id=two]\nok": "a.random_password.p: Importing... [id=****]\nb.random_password.q: Importing... [id=****]\nok",
+		"module.x.random_integer.n: Refreshing state... [id=42]":                                     "module.x.random_integer.n: Refreshing state... [id=42]",
 	}
 	for in, want := range cases {
 		if got := m.Mask(in); got != want {

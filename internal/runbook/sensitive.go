@@ -21,6 +21,11 @@ var BuiltinSensitive = map[string]string{
 	"credential setting": `(?i)[a-z0-9_.-]*(` + credentialWords + `)["']?\s*[=:]\s*["']?{{SENSITIVE}}`,
 	// --password …, --token …
 	"credential flag": `(?i)--[a-z0-9-]*(` + credentialWords + `)\s+["']?{{SENSITIVE}}`,
+	// Terraform prints a resource's ID in its status lines, and a
+	// random_password's ID is the password once it has been imported
+	// ("…random_password.x: Importing... [id=<password>]"). The ID runs to
+	// the last "]" on the line, since passwords can contain "]".
+	"terraform random_password id": `(?m)random_password\.\S+: [^\[\n]*\[id={{SENSITIVE}}\](?:\x1b\[[0-9;]*m|\r)*$`,
 }
 
 // credentialWords are the names credentials go by.
