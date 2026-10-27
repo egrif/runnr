@@ -602,7 +602,18 @@ func (f *runFlags) register(cmd *cobra.Command) {
 // registerFolders adds --collection and --set.
 func (f *runFlags) registerFolders(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.collection, "collection", "", "take the placeholders' folders (@PROJECT_DIR@ …) from this collection (default: the runbook's, if it's in one)")
-	cmd.Flags().StringArrayVar(&f.folders, "set", nil, "a placeholder's folder for this run (NAME=FOLDER, for @NAME@), repeatable")
+	cmd.Flags().StringArrayVar(&f.folders, "set", nil, "a placeholder's folder (NAME=FOLDER, for @NAME@), repeatable: a run keeps it as the runbook's")
+}
+
+// givenFolders are the run's --set (NAME → folder).
+func (f *runFlags) givenFolders() map[string]string {
+	out := map[string]string{}
+	for _, kv := range f.folders {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			out[strings.Trim(k, "@")] = v
+		}
+	}
+	return out
 }
 
 // folderOpts are the run's --collection and --set; a resume keeps the
@@ -681,6 +692,10 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 	}
 	folders, err := project.RunFolders(st, rb, libs, given, fo)
 	if err != nil {
+		return err
+	}
+	// Folders given for the run are the runbook's from now on.
+	if err := project.SaveRunFolders(st, rb.Name, f.givenFolders()); err != nil {
 		return err
 	}
 	if f.tmux && os.Getenv(envTmuxSession) == "" {

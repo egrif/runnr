@@ -32,8 +32,9 @@ others, e.g. for a collection:
   runnr folders set -c payments REPO_ROOT=@REPOS_ROOT@/ops-runbooks \
       PROJECT_DIR=@REPO_ROOT@/projects/db-upgrade
 
-A run takes its runbook's collection's (in several: what they agree on),
-or --collection's; --set NAME=FOLDER gives one for that run only.
+A run takes, in order: those given with --set NAME=FOLDER (kept as the
+runbook's own from then on), the runbook's own (-r), its collection's (in
+several: what they agree on; or --collection's), and those for everything.
 
 With no runbook, lists the values set here; given one, the folders a run
 of it would have (with --collection and --set as a run takes them).`,
@@ -53,15 +54,19 @@ of it would have (with --collection and --set as a run takes them).`,
 			scopes := slices.Sorted(maps.Keys(all))
 			for _, sc := range scopes {
 				vals := all[sc]
-				ctx := maps.Clone(all[""])
+				ctx := map[string]string{}
+				maps.Copy(ctx, all[""])
 				maps.Copy(ctx, vals)
 				full, err := placeholder.Expand(ctx)
 				if err != nil {
 					return err
 				}
-				if sc == "" {
+				switch rb, ok := strings.CutPrefix(sc, "runbook:"); {
+				case sc == "":
 					fmt.Println("for everything:")
-				} else {
+				case ok:
+					fmt.Printf("runbook %s:\n", rb)
+				default:
 					fmt.Printf("collection %s:\n", sc)
 				}
 				for _, n := range slices.Sorted(maps.Keys(vals)) {
@@ -73,44 +78,67 @@ of it would have (with --collection and --set as a run takes them).`,
 	}
 	f.registerFolders(cmd)
 
-	var col string
+	var col, rbName string
+	// scope is where set and unset work: everything, a collection or a runbook.
+	scope := func() (string, error) {
+		switch {
+		case col != "" && rbName != "":
+			return "", fmt.Errorf("give -c or -r, not both")
+		case col != "":
+			if _, err := s().LoadCollection(col); err != nil {
+				return "", fmt.Errorf("collection %q: %w", col, err)
+			}
+			return col, nil
+		case rbName != "":
+			if !s().Exists(rbName) {
+				return "", fmt.Errorf("runbook %q: %w", rbName, store.ErrNotFound)
+			}
+			return store.RunbookScope(rbName), nil
+		}
+		return "", nil
+	}
 	set := &cobra.Command{
 		Use:   "set NAME=FOLDER...",
-		Short: "Set placeholders' folders on this machine (for everything, or -c a collection)",
+		Short: "Set placeholders' folders on this machine (for everything, -c a collection or -r a runbook)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if col != "" {
-				if _, err := s().LoadCollection(col); err != nil {
-					return fmt.Errorf("collection %q: %w", col, err)
-				}
+			sc, err := scope()
+			if err != nil {
+				return err
 			}
 			for _, kv := range args {
 				k, v, ok := strings.Cut(kv, "=")
 				if !ok || strings.TrimSpace(v) == "" {
 					return fmt.Errorf("%q: want NAME=FOLDER (runnr folders unset NAME to remove one)", kv)
 				}
-				if err := s().SetPlaceholder(col, k, v); err != nil {
+				if err := s().SetPlaceholder(sc, k, v); err != nil {
 					return err
 				}
 			}
 			return nil
 		},
 	}
-	set.Flags().StringVarP(&col, "collection", "c", "", "for this collection's runbooks (default: for everything)")
 	unset := &cobra.Command{
 		Use:   "unset NAME...",
-		Short: "Remove placeholders' folders (for everything, or -c a collection)",
+		Short: "Remove placeholders' folders (for everything, -c a collection or -r a runbook)",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			sc, err := scope()
+			if err != nil {
+				return err
+			}
 			for _, n := range args {
-				if err := s().SetPlaceholder(col, n, ""); err != nil {
+				if err := s().SetPlaceholder(sc, n, ""); err != nil {
 					return err
 				}
 			}
 			return nil
 		},
 	}
-	unset.Flags().StringVarP(&col, "collection", "c", "", "for this collection's runbooks (default: for everything)")
+	for _, c := range []*cobra.Command{set, unset} {
+		c.Flags().StringVarP(&col, "collection", "c", "", "for this collection's runbooks (default: for everything)")
+		c.Flags().StringVarP(&rbName, "runbook", "r", "", "for this runbook only (as a run's --set keeps them)")
+	}
 	cmd.AddCommand(set, unset)
 	return cmd
 }

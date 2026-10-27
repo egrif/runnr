@@ -201,7 +201,7 @@ Start request:
   "step_mode": false,     // interactive: pause before every step
   "previous": "<run id>", // compare against this run (default: the resumed run, else the latest)
   "collection": "payments", // take the placeholders' folders from this collection (default: the runbook's)
-  "folders": {"REPO_ROOT": "/src/ra"}, // folders for this run only (a resume keeps them)
+  "folders": {"REPO_ROOT": "/src/ra"}, // folders for this run, kept as the runbook's (a resume keeps them)
   "wait": true            // block until done and return the run (requires unattended)
 }
 ```
@@ -215,8 +215,8 @@ for the run).
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/api/folders` | | `{scopes: {"" \| collection: {NAME: {raw, value, why?}}}}`: the folders set on this machine, for everything (`""`) and each collection; `raw` as set (it can name others), `value` filled in, `why` it isn't a folder here |
-| PUT | `/api/folders` | `{collection?, name, value}` (`""` removes it) | as `GET` |
-| GET | `/api/runbooks/{name}/folders?collection=&set=NAME=FOLDER` | | `{used, collection?, collections?, values, from, problems?}`: what a run would fill its placeholders with (`from`: `run`, `collection` or `global`), and `problems: [{name, value?, why}]` that keep it from starting |
+| PUT | `/api/folders` | `{collection? \| runbook?, name, value}` (`""` removes it) | as `GET` (a runbook's are under `runbook:<name>`) |
+| GET | `/api/runbooks/{name}/folders?collection=&set=NAME=FOLDER` | | `{used, collection?, collections?, values, from, problems?}`: what a run would fill its placeholders with (`from`: `run`, `runbook`, `collection` or `global`), and `problems: [{name, value?, why}]` that keep it from starting |
 
 A run record has `status` (`running`, `succeeded`, `failed`, `aborted`), `notes`,
 and a `steps` array with each step's `status` (also `pending`, `skipped`, or

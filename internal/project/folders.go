@@ -13,7 +13,8 @@ import (
 
 // A run's folders: the values of the placeholders (@PROJECT_DIR@ …) it
 // names, on this machine. They come from, in order: those given for the
-// run, the collection it takes them from (one it's given, or the
+// run, the runbook's own (the last given for a run of it: SaveRunFolders),
+// the collection it takes them from (one it's given, or the
 // runbook's own if it's in one; in several, they must agree), and those
 // set for everything (@REPOS_ROOT@). A value can name others
 // (@REPOS_ROOT@/ops-runbooks).
@@ -34,7 +35,7 @@ type Folders struct {
 	Collection  string   `json:"collection,omitempty"`
 	Collections []string `json:"collections,omitempty"`
 	// Values are each used one's folder (filled in), and From where it
-	// came from: "run", "collection" or "global".
+	// came from: "run", "runbook", "collection" or "global".
 	Values map[string]string `json:"values"`
 	From   map[string]string `json:"from"`
 	// Problems are why the run can't start as it is.
@@ -128,6 +129,15 @@ func ResolveFolders(st *store.Store, runbookName string, used []string, o Folder
 			}
 		}
 	}
+	own, err := st.Placeholders(store.RunbookScope(runbookName))
+	if err != nil {
+		return nil, err
+	}
+	layer(own, "runbook")
+	for k := range own {
+		// The runbook's own settles where its collections disagree.
+		f.Problems = slices.DeleteFunc(f.Problems, func(p placeholder.Problem) bool { return p.Name == k })
+	}
 	layer(o.Set, "run")
 
 	full, err := placeholder.Expand(all)
@@ -167,4 +177,18 @@ func SuiteFolders(st *store.Store, o FolderOpts) func(rb *runbook.Runbook, used 
 		}
 		return f.Values, f.Err()
 	}
+}
+
+// SaveRunFolders keeps the folders given for a run of runbookName (set) as
+// the runbook's own, so its next run has them too.
+func SaveRunFolders(st *store.Store, runbookName string, set map[string]string) error {
+	for k, v := range set {
+		if strings.TrimSpace(v) == "" {
+			continue
+		}
+		if err := st.SetPlaceholder(store.RunbookScope(runbookName), k, v); err != nil {
+			return err
+		}
+	}
+	return nil
 }

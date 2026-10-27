@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.12.0 — 2026-10-27
+
+Folders given for a run are kept for the runbook.
+
+### Changed
+
+- **A run's folders stay with its runbook.** `--set NAME=FOLDER` (or the
+  Run page's Folders) now also sets that folder for the runbook, so its
+  next runs have it too, ahead of its collection's; where its collections
+  disagree, it settles which. `runnr folders set|unset -r <runbook>`, and
+  **✕ forget** on the Run page, change them; a renamed runbook keeps them.
+  Tests, shells and the editor's Run this don't keep theirs.
+
+### Fixed
+
+- `runnr folders` crashed when nothing was set for everything.
+
 ## v0.11.0 — 2026-10-27
 
 Placeholders are kept as written, and each machine says what folders they

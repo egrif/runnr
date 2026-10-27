@@ -329,7 +329,7 @@ function renderLaunchSteps(st) {
 // keep, the st of an earlier mount (to draw it again where it was).
 function mountFolders(el, name, prev, keep) {
   const st = keep || { collection: prev?.collection || "", set: { ...(prev?.folder_set || {}) }, f: null, all: [] };
-  const from = { run: "this run", collection: "the collection", global: "for everything" };
+  const from = { run: "this run", runbook: "this runbook (given for an earlier run)", collection: "the collection", global: "for everything" };
   const load = async () => {
     const q = new URLSearchParams();
     if (st.collection) q.set("collection", st.collection);
@@ -346,12 +346,14 @@ function mountFolders(el, name, prev, keep) {
     const dflt = own.length === 1 ? `${own[0]} (its collection)` : own.length > 1 ? `where ${own.join(", ")} agree` : "none (only those for everything)";
     const others = st.all.filter((c) => !own.includes(c) || own.length > 1);
     el.innerHTML = `<div class="row"><h3 style="margin:0">Folders</h3><span class="spacer"></span><a class="small" href="#/collections" title="Set them for this machine, for everything or for a collection">Set them for this machine…</a></div>
-      <p class="muted small">The placeholders the runbook names, and the folders on this machine a run fills them in with. Give one here for this run only.${f.problems?.length ? ` <b class="error-text">It can't start until each is a folder here.</b>` : ""}</p>
+      <p class="muted small">The placeholders the runbook names, and the folders on this machine a run fills them in with. Give one here and the runbook keeps it for its next runs.${f.problems?.length ? ` <b class="error-text">It can't start until each is a folder here.</b>` : ""}</p>
       <label class="row small">Folders from collection <select data-col><option value="">${esc(dflt)}</option>${others.map((c) => `<option ${c === st.collection ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
       <div class="form-grid">${f.used.map((n) => `<label>@${esc(n)}@</label>${withPathPick({ type: "dir" }, `<input data-set="${esc(n)}" value="${esc(st.set[n] || "")}" placeholder="${esc(f.values?.[n] || "no folder")}" spellcheck="false" autocomplete="off">`)}
-        <div class="hint ${why(n) ? "error-text" : ""}">${why(n) ? `✘ ${esc(f.values?.[n] && !st.set[n] ? f.values[n] + " " : "")}${esc(why(n))}` : `from ${esc(from[f.from?.[n]] || "")}`}</div>`).join("")}</div>`;
+        <div class="hint ${why(n) ? "error-text" : ""}">${why(n) ? `✘ ${esc(f.values?.[n] && !st.set[n] ? f.values[n] + " " : "")}${esc(why(n))}` : `from ${esc(from[f.from?.[n]] || "")}`}${f.from?.[n] === "runbook" && !st.set[n] ? ` <button type="button" class="link" data-forget="${esc(n)}" title="The runbook forgets it: its runs take the collection's again">✕ forget</button>` : ""}</div>`).join("")}</div>`;
     el.querySelector("[data-col]").onchange = (e) => { st.collection = e.target.value; load(); };
     el.querySelectorAll("[data-set]").forEach((i) => (i.onchange = () => { st.set[i.dataset.set] = i.value.trim(); load(); }));
+    el.querySelectorAll("[data-forget]").forEach((b) => (b.onclick = () =>
+      api("PUT", "/api/folders", { runbook: name, name: b.dataset.forget, value: "" }).then(load).catch((e) => toast(e.message))));
   };
   if (keep) draw();
   else api("GET", "/api/collections").then((cs) => { st.all = (cs || []).map((c) => c.name).sort(); draw(); }).catch(() => {});

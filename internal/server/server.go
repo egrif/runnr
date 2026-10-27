@@ -614,6 +614,13 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		writeJSON(w, http.StatusBadRequest, res)
 		return
 	}
+	if !req.test {
+		// Folders given for the run are the runbook's from now on.
+		if err := project.SaveRunFolders(s.st, rb.Name, req.Folders); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
 	if req.Wait && !req.Unattended {
 		writeErr(w, errors.New("wait requires unattended (nobody could answer prompts)"))
 		return

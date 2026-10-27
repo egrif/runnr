@@ -8,7 +8,8 @@ import (
 )
 
 // Placeholder values: the folders @NAME@ stands for on this machine, for
-// everything (scope "") or for a collection's runbooks (scope: its name).
+// everything (scope ""), a collection's runbooks (scope: its name) or one
+// runbook (RunbookScope: the values last given for a run of it).
 // They're this runnr's own: collections, runbooks and their exports leave
 // them out.
 
@@ -75,6 +76,10 @@ func (s *Store) SetPlaceholder(scope, name, value string) error {
 		ON CONFLICT (scope, name) DO UPDATE SET value = excluded.value`), scope, name, value)
 	return err
 }
+
+// RunbookScope is the scope of a runbook's own values (collection names
+// can't have a colon, so it's never one's).
+func RunbookScope(name string) string { return "runbook:" + name }
 
 // renamePlaceholderScope moves a collection's values to its new name.
 func (s *Store) renamePlaceholderScope(from, to string) error {
