@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -74,6 +75,29 @@ func (s *Store) values(kind, name string, given *Origin) map[string]string {
 		return o.Values
 	}
 	return nil
+}
+
+// ReadFilled reads the file at path with its placeholders filled in from
+// where it is (a runbook, library, fake library or suite used from a file
+// without importing it).
+func ReadFilled(path string) ([]byte, error) {
+	_, full, err := readFilled("file", path)
+	return full, err
+}
+
+// readFilled is the file at path as written (raw) and with its
+// placeholders filled in from where it is (full).
+func readFilled(noun, path string) (raw, full []byte, err error) {
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	vals, _, err := placeholder.Resolve(path, nil, placeholder.Tokens(raw))
+	if err != nil {
+		return raw, nil, err
+	}
+	full, err = filled(noun, path, raw, vals)
+	return raw, full, err
 }
 
 // filled is raw with its placeholders filled in from values; one without

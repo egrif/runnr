@@ -330,3 +330,24 @@ func TestFindRuns(t *testing.T) {
 		})
 	}
 }
+
+// A file used without importing it (runnr test --runbook, --lib, --fakes)
+// has its placeholders filled in from where it is.
+func TestReadFilled(t *testing.T) {
+	repo := t.TempDir()
+	os.Mkdir(filepath.Join(repo, ".git"), 0o755)
+	file := filepath.Join(repo, "projects", "rds", "runbook", "rb.yaml")
+	os.MkdirAll(filepath.Dir(file), 0o755)
+	os.WriteFile(file, []byte(`dir: "@PROJECT_DIR@/tools"`), 0o644)
+	got, err := ReadFilled(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `dir: "` + filepath.Join(repo, "projects", "rds") + `/tools"`; string(got) != want {
+		t.Fatalf("got %s, want %s", got, want)
+	}
+	os.WriteFile(file, []byte(`team: "@TEAM@"`), 0o644)
+	if _, err := ReadFilled(file); err == nil || !strings.Contains(err.Error(), "@TEAM@") {
+		t.Fatalf("a placeholder without a value: %v", err)
+	}
+}

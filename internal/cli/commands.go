@@ -298,8 +298,10 @@ func importCmd(s func() *store.Store) *cobra.Command {
 and test suites. Give files, or a folder (its .yaml files, in subfolders
 too; other YAML is left alone). - reads a runbook from stdin.
 
-Placeholders, @NAME@, are filled in: @PROJECT_DIR@ is the folder (else the
-current directory), @REPO_ROOT@ its git root, others --set NAME=VALUE.
+Placeholders, @NAME@, are kept, and filled in from where each file is when
+it runs: @FILE_DIR@ its folder, @REPO_ROOT@ its git root, @PROJECT_DIR@ the
+folder directly under the nearest projects folder above it; others (or to
+override these) --set NAME=VALUE.
 
 Each file's references are checked: a runbook's libraries, a suite's
 runbook and fake libraries must be in the import, stored, or built in. A

@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.11.0 — 2026-10-26
+## v0.11.0 — 2026-10-27
 
 Placeholders are worked out from where each file is, and kept.
 
@@ -23,8 +23,9 @@ Placeholders are worked out from where each file is, and kept.
   where it was imported from**, each library to its own file; files that
   already say the same are left alone, others need `-f` (`-o -` prints
   it). The GUI's export starts at those files.
-- Running or validating a file (`runnr run path/rb.yaml`) fills in its
-  placeholders from where it is.
+- Running, validating or testing a file (`runnr run path/rb.yaml`,
+  `runnr test suite.yaml --runbook rb.yaml --lib … --fakes …`) fills in
+  its placeholders from where it is.
 
 ## v0.10.0 — 2026-10-26
 

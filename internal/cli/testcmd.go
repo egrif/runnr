@@ -46,7 +46,7 @@ the same name), so a runbook in a repo can be tested without importing it.`,
 			}
 			files := map[string]*runtest.Library{}
 			for _, f := range fakeFiles {
-				raw, err := os.ReadFile(f)
+				raw, err := store.ReadFilled(f)
 				if err != nil {
 					return err
 				}
@@ -58,7 +58,7 @@ the same name), so a runbook in a repo can be tested without importing it.`,
 			}
 			libs := map[string]*runbook.Library{}
 			for _, f := range libFiles {
-				raw, err := os.ReadFile(f)
+				raw, err := store.ReadFilled(f)
 				if err != nil {
 					return err
 				}
@@ -74,7 +74,7 @@ the same name), so a runbook in a repo can be tested without importing it.`,
 			}
 			var draft *runbook.Runbook
 			if rbFile != "" {
-				raw, err := os.ReadFile(rbFile)
+				raw, err := store.ReadFilled(rbFile)
 				if err != nil {
 					return err
 				}
@@ -140,7 +140,11 @@ the same name), so a runbook in a repo can be tested without importing it.`,
 
 // loadSuite finds a suite: a file, or a stored suite by name.
 func loadSuite(st *store.Store, arg string) (*runtest.Suite, error) {
-	if raw, err := os.ReadFile(arg); err == nil {
+	if _, err := os.Stat(arg); err == nil {
+		raw, err := store.ReadFilled(arg)
+		if err != nil {
+			return nil, err
+		}
 		s, err := runtest.ParseSuite(raw)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", arg, err)

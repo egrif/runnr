@@ -20,7 +20,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/egrif/runnr/internal/engine"
-	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/runbook"
 	"github.com/egrif/runnr/internal/ver"
 )
@@ -268,15 +267,7 @@ func (s *Store) Get(name string) (*runbook.Runbook, ver.ID, error) {
 // its text's (HasVersion says whether it's one runnr has saved).
 func (s *Store) Resolve(ref string) (*runbook.Runbook, ver.ID, error) {
 	if strings.ContainsAny(ref, `/\`) || strings.HasSuffix(ref, ".yaml") || strings.HasSuffix(ref, ".yml") {
-		b, err := os.ReadFile(ref)
-		if err != nil {
-			return nil, "", err
-		}
-		vals, _, err := placeholder.Resolve(ref, nil, placeholder.Tokens(b))
-		if err != nil {
-			return nil, "", err
-		}
-		full, err := filled(runbookKind.noun, ref, b, vals)
+		b, full, err := readFilled(runbookKind.noun, ref)
 		if err != nil {
 			return nil, "", err
 		}
