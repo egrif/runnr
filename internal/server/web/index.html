@@ -12,24 +12,37 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <aside id="sidebar">
-    <a href="#/" class="brand"><img src="brand/mark-wide.png" alt="" height="40"><span>runnr</span></a>
-    <div class="side-actions">
-      <div class="side-new"><button id="new-btn" class="primary">+ New runbook</button><button id="import-btn" title="Import a project folder: runbooks, libraries, fakes and test suites">⇪ Import…</button></div>
-      <a href="#/history" class="nav-link" id="history-link">Run history</a>
+  <header id="topbar">
+    <a href="#/" class="brand"><img src="brand/mark-wide.png" alt="" height="24"><span>runnr</span></a>
+    <nav class="top-nav">
+      <a href="#/" class="nav-link" id="runbooks-link">Runbooks</a>
+      <a href="#/history" class="nav-link" id="history-link">History</a>
       <a href="#/schedule" class="nav-link" id="sched-link">Schedule</a>
       <a href="#/collections" class="nav-link" id="cols-link">Collections</a>
       <a href="#/libraries" class="nav-link" id="libs-link">Libraries</a>
-      <a href="#/manage" class="nav-link" id="manage-link">Manage</a>
-      <a href="#/help" class="nav-link" id="help-link">Runbook format help</a>
-    </div>
+    </nav>
+    <span class="spacer"></span>
+    <button id="new-btn">+ New runbook</button>
+    <button id="import-btn" title="Import a project folder: runbooks, libraries, fakes and test suites">⇪ Import…</button>
+    <details class="menu" id="settings-menu">
+      <summary class="icon-only" title="Settings and help">⚙</summary>
+      <div class="menu-list">
+        <a href="#/manage" class="nav-link" id="manage-link">Manage runnr</a>
+        <a href="#/help" class="nav-link" id="help-link">Runbook format help</a>
+        <label class="check" title="Selecting text (in terminals, code and output) copies it to the clipboard"><input type="checkbox" id="copy-on-select"> Copy on select</label>
+      </div>
+    </details>
+  </header>
+  <div id="frame">
+  <aside id="sidebar">
     <input id="filter" type="search" placeholder="Filter runbooks…">
     <ul id="runbook-list"></ul>
-    <label class="side-copysel small muted" title="Selecting text (in terminals, code and output) copies it to the clipboard"><input type="checkbox" id="copy-on-select"> Copy on select</label>
   </aside>
   <main id="main"></main>
+  </div>
   <script src="vendor/xterm.js"></script>
   <script src="vendor/xterm-addon-fit.js"></script>
+  <script src="menu.js"></script>
   <script src="copysel.js"></script>
   <script src="pathpick.js"></script>
   <script src="term.js"></script>

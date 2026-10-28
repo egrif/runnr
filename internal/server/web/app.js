@@ -193,7 +193,10 @@ function toast(msg) {
 function duration(a, b) {
   if (!a || !b || b.startsWith("0001")) return "";
   const ms = new Date(b) - new Date(a);
-  return ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s`;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const sec = Math.round(ms / 1000), m = Math.floor(sec / 60) % 60, h = Math.floor(sec / 3600) % 24, d = Math.floor(sec / 86400);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${sec % 60}s`;
 }
 
 // ---------- sidebar ----------
@@ -223,7 +226,9 @@ function renderSidebar() {
   const rest = runbooks.filter((r) => !grouped.has(r.name) && matches(r));
   if (rest.length) html += (collections.length ? `<li class="col-head muted">Other runbooks</li>` : "") + rest.map(item).join("");
   $("#runbook-list").innerHTML = html || `<li class="muted">No runbooks</li>`;
-  $("#history-link").classList.toggle("active", location.hash.startsWith("#/history"));
+  const h = location.hash || "#/";
+  $("#runbooks-link").classList.toggle("active", h === "#/" || /^#\/(runbooks|runs)\/|^#\/new$/.test(h));
+  $("#history-link").classList.toggle("active", h.startsWith("#/history"));
   $("#help-link").classList.toggle("active", location.hash === "#/help");
   $("#libs-link").classList.toggle("active", location.hash.startsWith("#/libraries"));
   $("#cols-link").classList.toggle("active", location.hash.startsWith("#/collections"));
@@ -286,15 +291,13 @@ async function viewRunbook(name, tab, query) {
   const rb = data.runbook;
   const href = `#/runbooks/${encodeURIComponent(name)}`;
   main.innerHTML = `
-    <div class="row"><div>
-      <h1>${esc(name)}</h1>
-      ${rb?.description ? `<div class="rb-desc">${esc(rb.description)}</div>` : ""}
-      ${rb?.expect ? `<div class="rb-desc muted"><b>By the end:</b> ${esc(rb.expect)}</div>` : ""}
-      ${rb?.overview ? `<details class="rb-overview"><summary>Overview: the process from a high level</summary><div class="md">${md(rb.overview)}</div></details>` : ""}
-      ${rb ? membership(name) : ""}
-      ${rb ? `<div class="claude-only">${explainBtn(0, "✨ Review this runbook with Claude")}</div>` : ""}
-      <div>${(rb?.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>
-    </div><span class="spacer"></span>${rb ? `<button id="export-rb" title="Write the runbook, and the libraries it uses, to files">⇩ Export…</button>` : ""}</div>
+    <div class="row page-head"><h1>${esc(name)}</h1><span class="spacer"></span>
+      ${rb ? moreMenu([`<button id="export-rb" title="Write the runbook, and the libraries it uses, to files">⇩ Export to files…</button>`]) : ""}</div>
+    ${rb?.description ? `<div class="rb-desc">${esc(rb.description)}</div>` : ""}
+    ${rb?.expect ? `<div class="rb-desc muted"><b>By the end:</b> ${esc(rb.expect)}</div>` : ""}
+    ${rb?.overview ? `<details class="rb-overview"><summary>Overview: the process from a high level</summary><div class="md">${md(rb.overview)}</div></details>` : ""}
+    <div class="row rb-meta">${rb ? membership(name) : ""}${(rb?.tags || []).map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div>
+    ${rb ? `<div class="claude-only">${explainBtn(0, "✨ Review this runbook with Claude")}</div>` : ""}
     <nav class="tabs">
       <a href="${href}" class="${tab === "run" ? "active" : ""}">Run</a>
       <a href="${href}/edit" class="${tab === "edit" ? "active" : ""}">Edit</a>
@@ -477,20 +480,25 @@ function renderRun(state) {
   const has = (list, i) => (list || []).includes(i + 1);
   const inputs = Object.entries(run.inputs || {});
   main.innerHTML = `
-    <div class="row">
-      <div>
-        <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a> ${identChips(run, "big")}</h1>
-        <div class="muted">${esc(run.id)}${run.runbook_version ? ` · ${shortVer(run.runbook_version)}` : ""} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
-          ${duration(run.started, run.ended) ? ` · took ${duration(run.started, run.ended)}` : ""}${run.imported ? ` · <span title="${esc(new Date(run.imported).toLocaleString())}${run.from_log ? ": rebuilt from its text, so times are to the second, and sections and state aren't there" : ""}">⇪ imported${run.from_log ? " from a raw log" : ""}</span>` : ""}</div>
-      </div>
-      <span class="spacer"></span>
+    <div class="row page-head">
+      <h1><a href="#/runbooks/${encodeURIComponent(run.runbook)}">${esc(run.runbook)}</a> ${identChips(run, "big")}</h1>
       <span class="badge s-${esc(run.status)}">${ICONS[run.status] || ""} ${esc(run.status)}</span>
+      <span class="spacer"></span>
+      ${active ? `<button id="suspend" title="Stop the run to resume it later: once the step running now finishes, or at once if it's waiting for you">‖ Suspend…</button><button class="danger" id="cancel">Abort run</button>`
+        : state.resumable ? `<button class="primary" id="resume">Resume…</button>` : `<button id="rerun">Run again…</button>`}
       <a class="button" href="#/runs/${enc(run.id)}/console" title="One screen: the steps, the selected step's definition, what it's doing, and the background steps">▣ Console</a>
-      <button id="timeline" title="The run laid out in time: its steps, tries, shells, resumes and notes">◷ Timeline</button>
-      ${active ? `<button id="suspend" title="Stop the run to resume it later: once the step running now finishes, or at once if it's waiting for you">‖ Suspend…</button><button class="danger" id="cancel">Abort run</button>` : `<button id="delete-run" class="danger" title="Delete this run's record">Delete run</button><button id="export-logs" title="Its logs, with the runs linked to it by resuming: to files, or a download">⇩ Export logs…</button><button id="raw-log" class="${state.raw ? "on" : ""}" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "Steps" : "Raw log"}</button>${state.resumable ? `<button class="primary" id="resume">Resume…</button>` : ""}<button id="rerun">Run again…</button>`}
+      ${moreMenu([
+        !active && state.resumable && `<button id="rerun">↻ Run again…</button>`,
+        `<button id="timeline" title="The run laid out in time: its steps, tries, shells, resumes and notes">◷ Timeline</button>`,
+        !active && `<button id="raw-log" title="The whole run as a plain log: each step's command, output and result, in order">${state.raw ? "☰ Show the steps" : "☰ Raw log"}</button>`,
+        !active && `<button id="export-logs" title="Its logs, with the runs linked to it by resuming: to files, or a download">⇩ Export logs…</button>`,
+        !active && `<hr><button id="delete-run" class="danger" title="Delete this run's record">Delete run…</button>`,
+      ])}
     </div>
+    <div class="muted small run-meta">${esc(run.id)}${run.runbook_version ? ` · ${shortVer(run.runbook_version)}` : ""} · ${esc(run.mode)}${run.dry_run ? " · dry run" : ""} · started ${new Date(run.started).toLocaleString()}
+      ${duration(run.started, run.ended) ? ` · took ${duration(run.started, run.ended)}` : ""}${run.imported ? ` · <span title="${esc(new Date(run.imported).toLocaleString())}${run.from_log ? ": rebuilt from its text, so times are to the second, and sections and state aren't there" : ""}">⇪ imported${run.from_log ? " from a raw log" : ""}</span>` : ""}</div>
     ${active ? presenceHTML(state) : ""}
-    ${run.error ? `<p class="${run.status === "suspended" ? "suspended-text" : "error-text"}">${esc(run.error)}${run.status === "suspended" && state.resumable ? ` — <b>Resume…</b> carries it on from step ${state.resumable}.` : ""}</p>` : ""}
+    ${run.error ? `<p class="run-reason ${run.status === "suspended" ? "suspended-text" : ""}">${esc(run.error.replace(new RegExp(`^${run.status}: `), ""))}${run.status === "suspended" && state.resumable ? ` — <b>Resume…</b> carries it on from step ${state.resumable}.` : ""}</p>` : ""}
     ${active ? suspendingBanner(state.controls) : ""}
     ${editsBanner(run, state)}
     ${windowBanner(run)}
@@ -629,7 +637,7 @@ function windowBanner(run) {
     const active = !["succeeded", "failed", "aborted", "suspended"].includes(run.status);
     return `<div class="mw-banner open"><b>🔴 Maintenance window open: production is down</b>
       <span class="mw-clock" data-since="${esc(w.opened)}" data-target="${target ?? ""}"></span><span class="muted">${tgt}</span>
-      ${active ? "" : `<b>The run has stopped with the window still open.</b>`}</div>`;
+      ${active ? "" : `<span class="muted">· the run has stopped with it open</span>`}</div>`;
   }
   if (w.opened && w.closed) {
     const len = (new Date(w.closed) - new Date(w.opened)) / 1000;
@@ -1118,7 +1126,7 @@ async function viewHistory() {
   const names = (runbooks || []).map((r) => r.name).sort();
   const anyIdents = runs.some((r) => (r.identifiers || []).length);
   main.innerHTML = `
-    <div class="row"><h1>Run history${filter ? ` · ${esc(filter)}` : ""}</h1><span class="spacer"></span><button data-scrub title="Mask passwords, tokens and keys in the stored runs">Scrub credentials…</button><button data-import-runs title="Bring in runs another runnr exported (records or raw logs)">⇪ Import runs…</button></div>
+    <div class="row page-head"><h1>Run history${filter ? ` · ${esc(filter)}` : ""}</h1><span class="spacer"></span><button data-scrub title="Mask passwords, tokens and keys in the stored runs">Scrub credentials…</button><button data-import-runs title="Bring in runs another runnr exported (records or raw logs)">⇪ Import runs…</button></div>
     <div class="row history-filters">
       <label>Runbook <select data-hist-rb><option value="">all</option>${names.map((n) => `<option ${n === filter ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
       <input type="search" data-hist-q value="${esc(q)}" placeholder="Search targets (identifier inputs) or run ID…" title="Runs whose identifiers (inputs the runbook marks identifier: true, like a target) or ID contain this">

@@ -73,8 +73,8 @@ async function viewSchedule() {
 
 function drawSchedule() {
   main.innerHTML = `
-    <div class="row"><h1>Schedule</h1><span class="spacer"></span><button class="primary" id="new-sched">+ Schedule a run</button></div>
-    <p class="muted">Runs planned ahead of time. For a runbook with a maintenance window, the time is when the window opens (T+0); its sections and steps with planned times are laid out around it. Nothing starts on its own.</p>
+    <div class="row page-head"><h1>Schedule${helpIcon("Runs planned ahead of time. For a runbook with a maintenance window, the time is when the window opens (T+0); its sections and steps with planned times are laid out around it.")}</h1><span class="spacer"></span><button id="new-sched">+ Schedule a run</button></div>
+    <p class="muted small page-sub">Runs planned ahead of time. Nothing starts on its own.</p>
     <div class="row sched-bar">
       <div class="seg"><button data-view="calendar" class="${sched.view === "calendar" ? "on" : ""}">Calendar</button><button data-view="agenda" class="${sched.view === "agenda" ? "on" : ""}">Agenda</button></div>
       <label>Show <select id="sched-detail">${DETAIL.map(([l, v]) => `<option value="${v}" ${v === sched.detail ? "selected" : ""}>${l}</option>`).join("")}</select></label>

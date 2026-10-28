@@ -129,26 +129,25 @@ function cxRenderTop(state) {
     const first = state.steps.find((s) => s.section === section && s.started && !s.started.startsWith("0001"));
     if (first) inSection = `<span class="cx-clock" data-since="${esc(first.started)}" ${!live ? `data-until="${esc(r.ended || "")}"` : ""}></span>`;
   }
+  const [main1, more] = live ? ["", []] : cxEndedActions(state);
   el.innerHTML = `
     <div class="cx-title">
       <a href="#/runs/${enc(r.id)}" class="cx-back" data-classic title="The classic run page (with the runbooks list)">☰</a>
-      <h1><a href="#/runbooks/${enc(r.runbook)}">${esc(r.runbook)}</a></h1>
+      <h1 title="${esc(`${r.runbook_version ? `version ${shortVer(r.runbook_version)} · ` : ""}run ${r.id} · ${r.mode}${r.dry_run ? " · dry run" : ""}`)}"><a href="#/runbooks/${enc(r.runbook)}">${esc(r.runbook)}</a></h1>
       ${identChips(r)}
-      <span class="muted">${r.runbook_version ? `${shortVer(r.runbook_version)} · ` : ""}${esc(r.id)} · ${esc(r.mode)}${r.dry_run ? " · dry run" : ""}</span>
-      <span class="spacer"></span>
-      <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>
-      <span class="badge ${esc(ph.cls)}">${ICONS[r.status] || ""} ${esc(ph.label)}</span>
-      <span class="muted" title="Since the run started"><span class="cx-clock" data-since="${esc(r.started)}" ${!live ? `data-until="${esc(r.ended || "")}"` : ""}></span></span>
-    </div>
-    <div class="cx-status">
       ${cur >= 0 ? `<span class="cx-at"><b>Step ${cur + 1}</b> of ${state.steps.length}: ${esc(st.name)}</span>` : `<span class="cx-at muted">${cxWhere(state)}</span>`}
       ${section ? `<span class="cx-chip" title="The section the run is in, and how long since its first step started">§ ${esc(section)} ${inSection}</span>` : ""}
       ${cxWindowChip(r)}
       ${cxResumedChips(r)}
       ${(state.messages || []).slice(-1).map((m) => `<span class="muted small">ℹ ${esc(m)}</span>`).join("")}
+      <span class="spacer"></span>
+      ${main1}
+      <span class="badge ${esc(ph.cls)}">${ICONS[r.status] || ""} ${esc(ph.label)}</span>
+      <span class="muted" title="Since the run started"><span class="cx-clock" data-since="${esc(r.started)}" ${!live ? `data-until="${esc(r.ended || "")}"` : ""}></span></span>
+      ${moreMenu([...more, `<button data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>`])}
     </div>
     ${live ? presenceHTML(state) : ""}
-    <div class="cx-toolbar">${cxToolbar(state, live)}</div>
+    ${live ? `<div class="cx-toolbar">${cxToolbar(state, live)}</div>` : ""}
     ${cxBanners(state, live)}`;
   cxBindTop(state, el, live);
   bindPresence(state, el, () => cxRenderTop(state));
@@ -184,17 +183,6 @@ function cxWindowChip(r) {
 function cxToolbar(state, live) {
   const r = state.run, q = state.question, ctl = state.controls || {};
   const btn = (act, label, cls = "", title = "", on = false) => `<button data-act="${esc(act)}" class="${cls} ${on ? "on" : ""}" title="${esc(title)}">${label}</button>`;
-  if (!live) {
-    // Optional steps don't decide where a resume starts (engine.ResumePoint).
-    const stop = state.steps.findIndex((s) => !s.optional && !CX_DONE.includes(s.status));
-    return [
-      ["failed", "aborted", "suspended"].includes(r.status) && stop >= 0 ? btn("resume", "▶ Resume…", "primary", `Continue from step ${stop + 1}`) : "",
-      btn("rerun", "↻ Run again…"),
-      btn("raw", "Raw log", "", "The whole run as a plain log"),
-      btn("timeline", "◷ Timeline", "", "The run laid out in time: its steps, tries, shells, resumes and notes"),
-      btn("export-logs", "⇩ Export logs…", "", "Its logs, with the runs linked to it by resuming: to files, or a download"),
-    ].join("");
-  }
   const QA = {
     before: [["run", "▶ Run step", "primary"], ["skip", "⏭ Skip"], ["continue", "⏩ Run the rest", "", "Run this and the remaining steps without pausing"]],
     after: [["continue", "▶ Continue", "primary"], ["retry", "↻ Run again"], ["fail", "✘ Mark failed…"]],
@@ -222,6 +210,26 @@ function cxToolbar(state, live) {
     ${running >= 0 ? btn("stop-step", `■ Stop step ${running + 1}`, "danger", "Interrupt its command: the step fails and you choose what's next (the run goes on)") : ""}
     ${btn("suspend", "‖ Suspend…", "", "Stop the run to resume it later: once the step running now finishes, or at once if it's waiting for you")}
     ${btn("abort", "■ Abort run", "danger")}`;
+}
+
+// cxEndedActions: a finished run's main action (Resume, or Run again),
+// and the rest for its ⋯ menu.
+function cxEndedActions(state) {
+  const r = state.run;
+  const btn = (act, label, cls = "", title = "") => `<button data-act="${esc(act)}" class="${cls}" title="${esc(title)}">${label}</button>`;
+  // Optional steps don't decide where a resume starts (engine.ResumePoint).
+  const stop = state.steps.findIndex((s) => !s.optional && !CX_DONE.includes(s.status));
+  const resume = ["failed", "aborted", "suspended"].includes(r.status) && stop >= 0;
+  return [
+    resume ? btn("resume", "▶ Resume…", "primary", `Continue from step ${stop + 1}`) : btn("rerun", "↻ Run again…"),
+    [
+      resume && btn("rerun", "↻ Run again…"),
+      btn("raw", "☰ Raw log", "", "The whole run as a plain log"),
+      btn("timeline", "◷ Timeline", "", "The run laid out in time: its steps, tries, shells, resumes and notes"),
+      btn("export-logs", "⇩ Export logs…", "", "Its logs, with the runs linked to it by resuming: to files, or a download"),
+      "<hr>",
+    ],
+  ];
 }
 
 function cxBanners(state, live) {
@@ -986,6 +994,9 @@ function cxRemoveBg(state, s) {
 // ---------- layout: resizable panes ----------
 
 function cxLayout(state) {
+  // A runbook without background steps doesn't need their pane.
+  const bg = state.launch ? state.rb.steps.some((s) => s.background) : state.steps.some((s) => s.kind === "background" || s.background);
+  main.querySelectorAll(".cx-body .cx-frame-background").forEach((f) => f.classList.toggle("cx-unused", !bg));
   cxApplySizes(state);
   cxRenderBg(state);
   cxRenderShells(state);
@@ -1074,17 +1085,14 @@ function cxLaunchRenderTop(state) {
   el.innerHTML = `
     <div class="cx-title">
       <a href="#/runbooks/${enc(rb.name)}" class="cx-back" title="The runbook's page">☰</a>
-      <h1><a href="#/runbooks/${enc(rb.name)}">${esc(rb.name)}</a></h1>
-      <span class="muted">${shortVer(state.version)} · ${esc((rb.description || "").split("\n")[0])}</span>
-      <span class="spacer"></span>
-      <button class="link small" data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>
-      <span class="badge">○ not started</span>
-    </div>
-    <div class="cx-status">
+      <h1 title="${esc(`version ${shortVer(state.version)} · ${(rb.description || "").split("\n")[0]}`)}"><a href="#/runbooks/${enc(rb.name)}">${esc(rb.name)}</a></h1>
       <span class="cx-at">${mode === "run" ? "A new run" : `${mode === "resume" ? "Resuming" : "Running again"} <a href="#/runs/${enc(prev.id)}/console">${esc(prev.id)}</a> (${esc(prev.status)})${mode === "resume" ? ": steps that finished are left out" : ""}`}</span>
       ${mode === "resume" && prev?.changed ? `<span class="cx-chip" title="${esc(changedNote(prev, state.version).trim())}">⚠ runbook changed: ${shortVer(prev.runbook_version)} → ${shortVer(state.version)}</span>` : ""}
       <span class="cx-chip">${n} of ${state.steps.length} steps</span>
       ${rb.maintenance_window ? `<span class="cx-chip cx-window muted">Maintenance window${rb.maintenance_window.target ? `, target ${esc(rb.maintenance_window.target)}` : ""}</span>` : ""}
+      <span class="spacer"></span>
+      <span class="badge">○ not started</span>
+      ${moreMenu([`<button data-reset-layout title="Put the panes back where they started">⊞ Reset layout</button>`])}
     </div>
     <div class="cx-toolbar">
       <button class="primary" data-start>▶ ${what}</button>

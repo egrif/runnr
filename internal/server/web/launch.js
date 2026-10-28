@@ -57,29 +57,34 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
         <div class="options">
           <label><input type="radio" name="mode" value="interactive" checked> Interactive</label>
           <label><input type="radio" name="mode" value="unattended"> Unattended</label>
-          <label title="Stop before every step to choose: run, skip, open a shell, or carry on"><input type="checkbox" name="stepmode"> Step through every step</label>
-          <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
-          <label title="Others who open the run can watch it; if they try to change it, they're asked first (they can override)"><input type="checkbox" name="solo"> Only I drive it</label>
-          <label><input type="checkbox" name="dry"> Dry run</label>
+          <details class="run-opts"><summary>More options<span class="opt-count"></span></summary><div class="options">
+            <label title="Stop before every step to choose: run, skip, open a shell, or carry on"><input type="checkbox" name="stepmode"> Step through every step</label>
+            <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
+            <label title="Others who open the run can watch it; if they try to change it, they're asked first (they can override)"><input type="checkbox" name="solo"> Only I drive it</label>
+            <label title="Show what each step would run, without running it"><input type="checkbox" name="dry"> Dry run</label>
+          </div></details>
         </div>
       </div>
       <div class="card launch-folders" hidden></div>
-      <div class="row" style="margin:20px 0 4px">
-        <h2 style="margin:0">Steps</h2>
-        <span class="muted" id="count"></span>
+      <div class="row steps-head">
+        <h2>Steps${helpIcon("Click a step to see what it will do, what it did in earlier runs (History) and how it's set up (Details). Untick to skip it; ⏸ before / after (on hover) stops there so you can check.")}</h2>
+        <span class="muted small" id="count"></span>
         <span class="spacer"></span>
-        <button type="button" data-bulk="all">All</button>
-        <button type="button" data-bulk="none">None</button>
-        ${prev ? `<button type="button" data-bulk="unfinished" title="Steps that didn't finish last time, plus always steps">Not done last time</button>` : ""}
-        <button type="button" data-bulk="nopause">Clear pauses</button>
+        <span class="muted small">Select</span>
+        <button type="button" class="link" data-bulk="all">all</button>
+        <button type="button" class="link" data-bulk="none">none</button>
+        ${prev ? `<button type="button" class="link" data-bulk="unfinished" title="Steps that didn't finish last time, plus always steps">not done last time</button>` : ""}
+        <span class="muted small">·</span>
+        <button type="button" class="link" data-bulk="nopause">clear pauses</button>
       </div>
-      <p class="muted small">Click a step to see what it will do, what it did in earlier runs (History) and how it's set up (Details). Untick to skip it; ⏸ before / after stops there so you can check.</p>
       <ol class="steps" id="launch-steps"></ol>
       <div class="row start-bar"><button class="primary" type="submit" id="start"></button>
         <a class="button" href="#/runbooks/${enc(name)}/console${mode !== "run" ? `?${mode}=${enc(runId)}` : ""}" title="Set it up and run it in the console: the steps, each step's definition, what it's doing, and background steps, on one screen">▣ Open in console</a>
-        ${mode === "run" ? `<button type="button" id="schedule-btn" title="Plan this run for later, with these inputs">Schedule…</button>` : ""}
-        <button type="button" id="view-html-btn" title="Open it as a page to read or share: sections and steps that expand, ways as tabs, and each step's code as written or exactly as runnr runs it, with these inputs filled in">View as HTML</button>
-        <button type="button" id="export-btn" title="Download it as Markdown to follow by hand: code blocks to paste, with these inputs filled in">Export as Markdown</button></div>
+        ${moreMenu([
+          mode === "run" && `<button type="button" id="schedule-btn" title="Plan this run for later, with these inputs">◷ Schedule…</button>`,
+          `<button type="button" id="view-html-btn" title="Open it as a page to read or share: sections and steps that expand, ways as tabs, and each step's code as written or exactly as runnr runs it, with these inputs filled in">View as HTML</button>`,
+          `<button type="button" id="export-btn" title="Download it as Markdown to follow by hand: code blocks to paste, with these inputs filled in">⇩ Export as Markdown</button>`,
+        ], "Schedule or export, with these inputs")}</div>
     </form>`;
 
   const form = $("#run-form");
@@ -99,6 +104,8 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
     const n = st.include.filter(Boolean).length;
     $("#count").textContent = `${n} of ${rb.steps.length} selected`;
     $("#start").textContent = `▶ ${what} (${n} step${n === 1 ? "" : "s"})`;
+    const on = ["stepmode", "yes", "solo", "dry"].filter((k) => form[k].checked && !form[k].disabled).length;
+    form.querySelector(".opt-count").textContent = on ? ` (${on} on)` : "";
   };
   const draw = () => { renderLaunchSteps(st); sync(); };
 

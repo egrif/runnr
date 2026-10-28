@@ -113,8 +113,8 @@ async function viewCollections() {
   };
   const loose = runbooks.filter((r) => !inAny.has(r.name));
   main.innerHTML = `
-    <div class="row"><h1>Collections</h1><span class="spacer"></span><button class="primary" id="new-col">+ New collection</button></div>
-    <p class="muted">Groups of runbooks that belong together (say, the prep, cutover and fallback runbooks of one migration). Drag a runbook to another collection to <b>move</b> it, hold <kbd>Alt</kbd>/<kbd>⌥</kbd> as you drop to <b>add</b> it there too, or drag within a collection to reorder. Names and descriptions save as you edit them.</p>
+    <div class="row page-head"><h1>Collections${helpIcon("Groups of runbooks that belong together (say, the prep, cutover and fallback runbooks of one migration). Drag a runbook to another collection to move it, hold Alt/⌥ as you drop to add it there too, or drag within a collection to reorder. Names and descriptions save as you edit them.")}</h1><span class="spacer"></span><button id="new-col">+ New collection</button></div>
+    <p class="muted small page-sub">Drag runbooks between collections to move them (<kbd>Alt</kbd>/<kbd>⌥</kbd> to add); edits save as you type.</p>
     <details class="card col-folders global-folders" ${Object.keys(scopes[""] || {}).length ? "" : "open"}><summary><b>Folders on this machine, for everything</b></summary>
       <p class="muted small">Runbooks name folders by placeholder (<code>@REPO_ROOT@/tools</code>), kept as written; a run fills them in with these and its collection's, and doesn't start while one it names isn't a folder here. A value can name another: a collection's <code>@REPO_ROOT@</code> can be <code>@REPOS_ROOT@/ops-runbooks</code>.</p>
       ${folderRows("", scopes[""], ["REPOS_ROOT"])}</details>
