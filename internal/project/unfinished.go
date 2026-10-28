@@ -43,11 +43,12 @@ func Unfinished(st *store.Store, rb *runbook.Runbook, ids []string, except strin
 }
 
 // IdentifiersOf is what engine.RunIdentifiers would give for a run of rb
-// with these inputs (an input not given takes its default).
+// with these inputs (an input not given, or given empty, takes its
+// default, as the run would).
 func IdentifiersOf(rb *runbook.Runbook, vars map[string]string) []string {
 	r := &engine.Run{Identifiers: rb.IdentifierInputs(), Inputs: map[string]string{}}
 	for _, in := range rb.Inputs {
-		if v, ok := vars[in.Name]; ok {
+		if v := vars[in.Name]; v != "" {
 			r.Inputs[in.Name] = v
 		} else if in.Default != "" {
 			r.Inputs[in.Name] = in.Default

@@ -30,6 +30,7 @@ function renderEditor(el, raw, name, initialError, version, updatedAt) {
   setFnContext(() => (ed.mode === "struct" ? ed.doc : ta.value));
   const show = (res) => {
     const v = $("#validation");
+    if (!v) return; // a check that came back after the page was left
     v.className = "validation " + (res.ok ? "ok" : "bad");
     v.textContent = res.ok ? "✔ valid" : res.error;
   };

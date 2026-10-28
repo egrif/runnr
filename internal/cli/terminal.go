@@ -822,13 +822,19 @@ func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, c *engine
 			fmt.Fprintf(t.out, "  %s %s %3d  %s %s %s\n", mark, last, v.Index+1, name, t.c("2", flags), strings.Join(tags, " "))
 		}
 		if help {
+			// What a step did last time is there only when comparing.
+			compared := t.session.Previous() != nil
+			last, note := "", ""
+			if compared {
+				last = "      l <n>      what step n did last time"
+				note = "\n  The column after ✓ shows each step's result in the run compared."
+			}
 			fmt.Fprintln(t.out, t.c("2", "  Commands (step lists like 3,5-7):\n"+
 				"    <steps>    skip / include             v <n>      view what step n will do\n"+
-				"    b <steps>  pause before (toggle)      l <n>      what step n did last time\n"+
+				"    b <steps>  pause before (toggle)"+last+"\n"+
 				"    a <steps>  pause after (toggle)       step       step through every step (toggle)\n"+
 				"    danger     pause before dangerous steps (toggle)\n"+
-				"    enter      start                      q          quit without running\n"+
-				"  The column after ✓ shows each step's result in the run compared (rerun, resume, --compare)."))
+				"    enter      start                      q          quit without running"+note))
 			help = false
 		}
 		fmt.Fprint(t.out, t.c("33;1", "  ? ")+"review (enter to start, ? for help): ")

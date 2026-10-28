@@ -188,6 +188,9 @@ type RunImport struct {
 	From    string        `json:"from"`
 	// Exists: a run with its id is here already (left as it is).
 	Exists bool `json:"exists,omitempty"`
+	// Replaces: the run here was rebuilt from a raw log, and this is its
+	// record: it takes that one's place (notes added here are kept).
+	Replaces bool `json:"replaces,omitempty"`
 	// Unfinished: it was still going when exported; it's imported aborted.
 	Unfinished bool `json:"unfinished,omitempty"`
 	// FromLog: rebuilt from a raw log (close, not exact).
@@ -201,7 +204,8 @@ func unfinished(s engine.Status) bool {
 }
 
 // ImportRuns saves runs that aren't here yet (only those in ids, if
-// given); with dry, it only says what it would do. A run imported while
+// given), and records of runs here only as rebuilt from a raw log; with
+// dry, it only says what it would do. A run imported while
 // it was still going is saved aborted (nothing here is running it), and
 // every imported run says when it was imported.
 func ImportRuns(st *store.Store, files []RunFile, ids []string, dry bool) ([]RunImport, error) {
@@ -218,8 +222,11 @@ func ImportRuns(st *store.Store, files []RunFile, ids []string, dry bool) ([]Run
 		}
 		seen[r.ID] = true
 		ri := RunImport{ID: r.ID, Runbook: r.Runbook, Status: r.Status, Started: r.Started, Steps: len(r.Steps), From: f.From, Unfinished: unfinished(r.Status), FromLog: r.FromLog}
-		if _, err := st.LoadRun(r.ID); err == nil {
+		if have, err := st.LoadRun(r.ID); err == nil {
 			ri.Exists = true
+			if have.FromLog && !r.FromLog {
+				ri.Exists, ri.Replaces = false, true
+			}
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return out, err
 		}

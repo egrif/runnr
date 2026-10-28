@@ -1,5 +1,66 @@
 # Changelog
 
+## v0.14.1 — 2026-10-28
+
+Fixes found by new tests of the CLI (in a terminal) and the web interface
+(in a browser), and importing a run's record over its raw log.
+
+### Fixed
+
+- **Importing a run's record after its raw log.** A run imported from its
+  raw log (rebuilt, close but not exact) kept its place when its record
+  was imported later: the record was skipped as "already here". The record
+  now takes the rebuilt copy's place (notes added here are kept); a raw log
+  still never replaces a record.
+- **Asking about an unfinished run when an input is left at its default.**
+  The launch screen sends an untouched input empty, and the run takes its
+  default; the check took it as empty, so it didn't ask.
+- **A run's page right after starting it** could say "not found" when the
+  server hadn't recorded it yet; it now waits for the record.
+- The review's help no longer mentions "last time" when nothing's being
+  compared, and quitting at the review no longer says how to resume a run
+  that never started.
+- A data race reading the keyboard (seen by `make test`'s race detector).
+- **Export to files, and the folder picker**, could show an earlier path's
+  answer when it came back after a later one's (the dialog opening on ~,
+  then the path typed): what they showed and what Export wrote could
+  differ. A slower, earlier answer is now dropped.
+- The editor (and a library's page) no longer throws when a check of what
+  was typed comes back after the page was left (after a save or delete).
+- **A blank page now and then on opening runnr**: the first page could be
+  drawn before the scripts that load after the router had, and a page
+  that needed the console's code then failed. It now starts once every
+  script has loaded.
+
+### Tests
+
+- **The CLI in a terminal**: runnr built and driven through a pty, its
+  prompts answered as an operator would: the review, failures (skip,
+  force), an unfinished run (quit, resume), pausing before dangerous steps,
+  `--compare`, and export then import.
+- **The web interface in a browser** (headless Chrome, via chromedp):
+  every page loads without an error, the unfinished-run dialog, no earlier
+  runs shown for a new run, and pausing before dangerous steps from the
+  launch screen and the console. They skip where there's no Chrome; CI
+  requires them.
+- **The editor and the import and export dialogs in a browser**: a new
+  runbook written as YAML (validated as you type, saved as written), the
+  structured view (add and name a step; comments kept; a newer version
+  saved meanwhile isn't written over; delete asks first), importing files
+  (new, as the current version, under another name) and a project folder,
+  exporting a runbook with its library (asking before writing over), and a
+  run's records exported from its page and imported from the history.
+  The browser tests' server has a home folder of its own.
+- **Runbook tests, Explain, libraries and the schedule in a browser**: the
+  Tests tab (run all, one, a scenario's definition) and the editor's
+  tests against a draft; Explain with a fake Claude (streamed Markdown, a
+  follow-up with what came before, an answer from runnr's store and asked
+  again, a runbook review; no buttons with Claude off); a library written,
+  edited, listed and deleted; a run scheduled with an input, shown in the
+  agenda and the calendar, changed, started with its input filled in, and
+  deleted. The browser tests never ask the real Claude.
+- CI runs the tests with the race detector, as `make test` does.
+
 ## v0.14.0 — 2026-10-28
 
 Runs for the same thing: starting one asks about an unfinished one, and a

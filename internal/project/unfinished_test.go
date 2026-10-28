@@ -37,6 +37,9 @@ func TestUnfinished(t *testing.T) {
 	}
 	ok, failed, pending := engine.StatusSucceeded, engine.StatusFailed, engine.StatusPending
 	a, b := IdentifiersOf(rb, map[string]string{}), IdentifiersOf(rb, map[string]string{"target": "b"})
+	if e := IdentifiersOf(rb, map[string]string{"target": ""}); len(e) != 1 || e[0] != "target=a" {
+		t.Fatalf("empty takes the default: %v", e)
+	}
 	if len(a) != 1 || a[0] != "target=a" {
 		t.Fatalf("default identifier: %v", a)
 	}

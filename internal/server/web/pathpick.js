@@ -29,9 +29,12 @@ function pickPath({ kind = "dir", start = "", title = "", name = "", multi = fal
     let sort = { by: "name", desc: false };
     try { sort = { ...sort, ...JSON.parse(localStorage.getItem("runnr.pickSort") || "{}") }; } catch {}
     const done = (v) => { resolve(v); dlg.close(); };
+    let seq = 0;
     const load = async (p) => {
+      const mine = ++seq; // a slower listing of a folder left since is dropped
       try {
         const r = await api("GET", `/api/fs?path=${enc(p)}`);
+        if (mine !== seq) return;
         cur = r.path;
         $p(".pp-path").value = cur;
         // Starting from a file: it's the one picked (or the name to save as).
@@ -41,7 +44,7 @@ function pickPath({ kind = "dir", start = "", title = "", name = "", multi = fal
         }
         entries = r.entries;
         list();
-      } catch (e) { toast(e.message); }
+      } catch (e) { if (mine === seq) toast(e.message); }
     };
     // list draws the folder's entries, sorted: folders first, then by name
     // or by date (newest first unless reversed).

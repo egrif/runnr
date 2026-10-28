@@ -885,7 +885,7 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 	}
 	if f.js {
 		_ = printJSON(run)
-	} else if run.Status != engine.StatusSucceeded && !f.noHistory && engine.ResumePoint(run) >= 0 {
+	} else if run.Status != engine.StatusSucceeded && !f.noHistory && !run.Begun.IsZero() && engine.ResumePoint(run) >= 0 {
 		fmt.Fprintf(os.Stderr, "resume with: runnr resume %s\n", run.ID)
 	}
 	switch run.Status {
@@ -1637,6 +1637,9 @@ func importRuns(st *store.Store, paths, ids []string, check bool) error {
 		}
 		if r.FromLog && !r.Exists {
 			what += " (from a raw log)"
+		}
+		if r.Replaces {
+			what += " (its record, in place of the copy rebuilt from its raw log)"
 		}
 		if r.Imported || check && !r.Exists {
 			n++

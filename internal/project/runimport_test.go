@@ -57,6 +57,17 @@ func TestImportRuns(t *testing.T) {
 		}
 		if r, _ := st2.LoadRun(done.ID); r == nil || !r.FromLog || len(r.Notes) != 1 {
 			t.Fatalf("raw run: %+v", r)
+		} // Its record, imported later, takes the rebuilt copy's place; a
+		// record doesn't give way to a raw log.
+		got, err = ImportRuns(st2, files, []string{done.ID}, false)
+		if err != nil || len(got) != 1 || !got[0].Replaces || got[0].Exists || !got[0].Imported {
+			t.Fatalf("record after raw: %v %+v", err, got)
+		}
+		if r, _ := st2.LoadRun(done.ID); r == nil || r.FromLog || len(r.Notes) != 1 {
+			t.Fatalf("replaced: %+v", r)
+		}
+		if got, _ := ImportRuns(st2, fromLog, []string{done.ID}, false); len(got) != 1 || !got[0].Exists || got[0].Replaces {
+			t.Fatalf("raw after record: %+v", got)
 		}
 	}
 

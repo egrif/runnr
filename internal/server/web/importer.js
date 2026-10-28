@@ -321,7 +321,7 @@ function importRunsDialog(onDone) {
       ${found.length ? `<table class="history ri-table"><thead><tr><th><input type="checkbox" data-all ${sel.size && sel.size === found.filter((r) => !r.exists).length ? "checked" : ""}></th><th>Status</th><th>Runbook</th><th>Started</th><th>Run ID</th><th></th></tr></thead><tbody>
         ${found.map((r) => `<tr class="${r.exists ? "muted" : ""}"><td><input type="checkbox" data-id="${esc(r.id)}" ${sel.has(r.id) ? "checked" : ""} ${r.exists ? "disabled" : ""}></td>
           <td><span class="s-${esc(r.status)}">${ICONS[r.status] || ""} ${esc(r.status)}</span></td><td>${esc(r.runbook)}</td><td>${new Date(r.started).toLocaleString()}</td>
-          <td><code>${esc(r.id)}</code></td><td class="small">${r.exists ? "already here" : [r.unfinished && "was still going: comes in aborted", r.from_log && "from a raw log"].filter(Boolean).join("; ")}</td></tr>`).join("")}</tbody></table>` : where.length ? `<p class="muted">No runs to import.</p>` : ""}
+          <td><code>${esc(r.id)}</code></td><td class="small">${r.exists ? "already here" : [r.unfinished && "was still going: comes in aborted", r.from_log && "from a raw log", r.replaces && "its record: replaces the copy rebuilt from its raw log"].filter(Boolean).join("; ")}</td></tr>`).join("")}</tbody></table>` : where.length ? `<p class="muted">No runs to import.</p>` : ""}
       ${errors.length ? `<ul class="error-text small">${errors.map((e) => `<li><code>${esc(e.from)}</code>: ${esc(e.error)}</li>`).join("")}</ul>` : ""}`;
     $d("[data-ok]").disabled = !sel.size;
     $d("[data-ok]").textContent = sel.size ? `Import ${sel.size} run${sel.size === 1 ? "" : "s"}` : "Import";

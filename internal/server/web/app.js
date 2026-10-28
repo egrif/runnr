@@ -1205,7 +1205,10 @@ steps:
 
 Template helpers: default, upper, lower, trim, contains, quote`;
 
-loadRunbooks().then(route);
+// Start once every script has loaded (those after this one too: the
+// first page may need the console's).
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => loadRunbooks().then(route));
+else loadRunbooks().then(route);
 
 // Secret fields (wherever they're drawn: run forms, the console, the
 // editor's test values, questions, changing inputs) get an eye to show
