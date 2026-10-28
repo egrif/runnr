@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.13.0 — 2026-10-28
+
+A calmer web interface: the navigation is across the top, each page
+shows its main action with the rest in a menu, and a Settings page sets
+placeholders' folders for everything, a collection or a runbook.
+
+### Changed
+
+- **Navigation across the top.** Runbooks, History, Schedule, Collections
+  and Libraries are in a top bar, with **+ New runbook** and **⇪ Import…**;
+  **Settings**, **Manage runnr** and **Runbook format help** are under
+  **⚙**. The left column is just the runbooks.
+- **One main action per page; the rest under ⋯.** The run page shows
+  **Resume…** (or **Run again…**) and **▣ Console**; Run again, Timeline,
+  Raw log, Export logs and Delete are under ⋯. On the runbook page,
+  Schedule, View as HTML and Export as Markdown are under ⋯ beside **Run**,
+  and Export to files under ⋯ by the title. The console's header is one
+  row, with Reset layout under ⋯.
+- **Green means the main action or where you are.** Links are the text's
+  colour, and selected tabs and toggles are grey, not green.
+- **Status once.** A run's status is its badge; the reason it stopped is a
+  line under the title.
+- **Less on screen until it's wanted.** Step through, Auto-approve, Only I
+  drive it and Dry run are under **More options**; a step's ⏸ before /
+  after show on hover (or when set); page explanations are in an ⓘ; the
+  console's pane controls show on hover, and its Background pane is hidden
+  for a runbook without background steps; collection descriptions read as
+  text until clicked.
+- Long durations read as days and hours (`2d 6h`, not `3268m53s`).
+
+### Added
+
+- **Settings page** (under ⚙). Sets the folders placeholders stand for on
+  this machine: `@REPOS_ROOT@` and others for everything, and any
+  placeholder for a collection or a single runbook. Pick a collection to
+  edit it and its runbooks' own folders; each runbook shows where its values
+  come from and whether it can start.
+  It also holds this browser's choices: your name, whether runs open in the
+  run page or the console, and Copy on select. The Collections page no
+  longer sets folders. `GET /api/folders` also gives each runbook's
+  resolved folders (`runbooks`).
+- **About runnr** (under ⚙): the version, commit and Go it was built with,
+  where the data lives, how long the server has been up and whether Claude
+  is on, with links to the repository and this version's release notes, and
+  **Copy details** for a bug report. `GET /api/about` gives the same.
+
 ## v0.12.0 — 2026-10-27
 
 Folders given for a run are kept for the runbook.

@@ -22,7 +22,7 @@ async function viewManage() {
     const show = (it) => !q || it.name.toLowerCase().includes(q);
     const ago = (t) => (t && !t.startsWith("0001") ? new Date(t).toLocaleString() : "");
     main.innerHTML = `
-      <div class="row"><h1>Manage</h1><span class="spacer"></span><input type="search" class="manage-filter" placeholder="Filter by name…" value="${esc(st.q)}"></div>
+      <div class="row page-head"><h1>Manage</h1><span class="spacer"></span><input type="search" class="manage-filter" placeholder="Filter by name…" value="${esc(st.q)}"></div>
       <p class="muted">Everything stored. Deleting keeps the versions, so it can be restored below. Runs are deleted from their page (or <code>runnr prune</code>).</p>
       <div class="manage-bar row"><button class="danger" data-del ${st.sel.size ? "" : "disabled"}>Delete selected${st.sel.size ? ` (${st.sel.size})` : ""}…</button><span class="muted small">${st.sel.size ? [...st.sel].join(", ").replace(/(^|, )\w+:/g, "$1") : "Select items to delete them"}</span></div>
       ${MANAGE_KINDS.map(([kind, title, link]) => {

@@ -50,7 +50,7 @@ while the run goes on; terminal steps run in the browser too.
 A finished run can ⇩ Export logs (with the runs linked to it by resuming:
 raw logs to read, records to import elsewhere, one file or one per run) or
 be deleted. Selecting text anywhere (a terminal, code, output) copies it;
-Copy on select at the bottom of the sidebar turns that off.
+Copy on select, in Settings (under ⚙), turns that off.
 
 ## The run console
 
@@ -80,7 +80,7 @@ short, and the window gets a closer look of its own.
 
 ## HTML view
 
-**View as HTML** on the run page (or `runnr export <runbook> -o page.html`)
+**View as HTML** (under ⋯ on the run page, or `runnr export <runbook> -o page.html`)
 makes one self-contained page to read or share: the overview and the
 sections at a glance, then sections and steps that expand and collapse,
 with ways as tabs. Each step's code is in one box with a Copy button, as
@@ -100,10 +100,10 @@ values; 💬 marks YAML comments on fields; ⓘ explains every field.
 
 ## Import and export
 
-⇪ Import… in the sidebar imports a project folder from the machine runnr
+⇪ Import… in the top bar imports a project folder from the machine runnr
 runs on: its runbooks, libraries, fake libraries, test suites and run
 records. Placeholders such as `@PROJECT_DIR@` are kept as written (a run
-fills them in with this machine's folders, set on the Collections page),
+fills them in with this machine's folders, set in Settings),
 references are checked, and a
 library missing from the folder is found elsewhere in the repository. A
 name that's taken is never saved over without a choice; renaming a file
@@ -144,6 +144,23 @@ Group runbooks that belong together. Drag a runbook between collections to move
 it (Alt/⌥ to add it to another as well); names and descriptions edit in place.
 
 ![Collections](screenshots/collections.png)
+
+## Settings
+
+Under ⚙. The folders placeholders stand for on this machine: `@REPOS_ROOT@`
+for everything, and any placeholder for a collection or a single runbook.
+Pick a collection to edit its folders and its runbooks' own; each runbook
+shows where its value comes from (the runbook, its collection, or
+everything) and whether a run can start. A value can
+name another (`@REPOS_ROOT@/ops-runbooks`). Also this browser's own choices:
+your name, whether runs open in the run page or the console, and Copy on
+select.
+
+**About runnr**, also under ⚙, shows the version, the commit and Go it was
+built with, where the data lives and how long the server has been up, with
+**Copy details** for a bug report.
+
+![Settings: folders for everything, by collection and by runbook](screenshots/settings.png)
 
 ## Manage
 

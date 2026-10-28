@@ -42,6 +42,8 @@ type Server struct {
 	wg     sync.WaitGroup
 	// tests holds each runbook's latest test results (since the server started).
 	tests map[string]*testRun
+	// started is when the server started (for About).
+	started time.Time
 }
 
 type Config struct {
@@ -54,6 +56,8 @@ type Config struct {
 	NoClaude bool
 	// NoUI serves only the API.
 	NoUI bool
+	// Build is runnr's version and build, for About.
+	Build Build
 }
 
 func New(st *store.Store, cfg Config) *Server {
@@ -62,7 +66,7 @@ func New(st *store.Store, cfg Config) *Server {
 			cfg.Claude = p
 		}
 	}
-	return &Server{st: st, cfg: cfg, live: map[string]*liveRun{}, tests: map[string]*testRun{}}
+	return &Server{st: st, cfg: cfg, live: map[string]*liveRun{}, tests: map[string]*testRun{}, started: time.Now()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -103,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/runbooks/{name}/move", s.moveRunbook)
 	mux.HandleFunc("GET /api/runbooks/{name}/export", s.exportRunbook)
 	mux.HandleFunc("GET /api/claude", s.claudeStatus)
+	mux.HandleFunc("GET /api/about", s.about)
 	mux.HandleFunc("POST /api/explain", s.explain)
 	mux.HandleFunc("GET /api/schedules", s.listSchedules)
 	mux.HandleFunc("POST /api/schedules", s.saveSchedule)

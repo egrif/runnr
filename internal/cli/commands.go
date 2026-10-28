@@ -1894,7 +1894,7 @@ interfaces, set --token (or RUNNR_TOKEN); API clients then send
 			}
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-			srv := server.New(s(), server.Config{Token: token, NoUI: noUI})
+			srv := server.New(s(), server.Config{Token: token, NoUI: noUI, Build: serverBuild()})
 			url := "http://" + addr
 			what := "GUI and API"
 			if noUI {

@@ -14,7 +14,7 @@ unattended for cron/CI.
 - **Terminal steps** hand the terminal to tools like `terraform apply` or `argocd login --sso`.
 - **Resume** long-running or multi-day procedures from where they stopped; go back to a step, jump ahead, or stop a running step without stopping the run.
 - **Shells and background commands** beside a run, with its variables (secrets too) kept up to date.
-- **Run history** for every run (filter by runbook; search by identifier, e.g. which silo), and **version history** for every runbook save; delete and restore from **Manage**.
+- **History** of every run (filter by runbook; search by identifier, e.g. which silo), and **version history** for every runbook save; delete and restore from **Manage**.
 - **Import and export**: a project folder at once (placeholders kept, references checked), a runbook with its libraries, a run's logs with the runs it resumed.
 - **Tests** that run a runbook with its commands faked and a simulated operator, without touching anything ([docs/TESTING.md](docs/TESTING.md)).
 - **SQLite or Postgres** storage: zero-setup locally, shared for a team.
@@ -32,7 +32,7 @@ make install        # or: go install github.com/egrif/runnr/cmd/runnr@latest
 Requires Go 1.24+. Produces a single binary with the GUI embedded. Or
 download a built binary (macOS and Linux, arm64 and amd64) from the
 [releases](https://github.com/egrif/runnr/releases); every merge to main is
-one. `runnr version` says which you have (and the commit it was built from).
+one. `runnr version` (or **About runnr** under ⚙ in the GUI) says which you have, and the commit it was built from.
 
 ## Quick start
 
@@ -59,12 +59,12 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr collection add <col> <runbook>...` / `remove <col> <runbook>...` | Put runbooks in a collection (`--create` to make it) or take them out (they stay in runnr) |
 | `runnr schedule add/list/rm` | Plan runs ahead; `list` prints the agenda |
 | `runnr explain <runbook> [step] [-q question] [--fresh]` | Ask a model about a step, or review the whole runbook (see "Ask Claude" for setup) |
-| `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown** on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**); `-f yaml` (or `-o file.yaml`) writes the runbook as written with the libraries it uses beside it (`--lib`, `--no-libs`), so the folder imports again (**⇩ Export…** on the runbook's page) |
+| `runnr export <runbook> [-v k=v] [-o file] [-f html]` | Write it as Markdown to follow by hand: a collapsed overview, a setup block, then each section and step with its code (also **Export as Markdown**, under ⋯ on the run page); `-f html` (or `-o file.html`) writes a page to read instead (**View as HTML**); `-f yaml` (or `-o file.yaml`) writes the runbook as written with the libraries it uses beside it (`--lib`, `--no-libs`), so the folder imports again (**⇩ Export to files…**, under ⋯ on the runbook's page) |
 | `runnr collection move <runbook>... --to <col>` | Move runbooks to another collection (created if needed); `--from` when one is in several |
 | `runnr lib export <name>...` | Print a library as shell code: `eval "$(runnr lib export db-helpers)"` |
-| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are kept as written (a run fills them in: `runnr folders`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (made its current version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
+| `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are kept as written (a run fills them in: `runnr folders`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (made its current version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the top bar does the same for a folder, with **Show what it changes** for a taken name |
 | `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
-| `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
+| `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage runnr** (under ⚙ in the top bar) lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
 | `runnr folders [runbook]` / `folders set [-c <col> \| -r <runbook>] NAME=FOLDER...` / `unset` | The folders placeholders stand for on this machine: `@REPOS_ROOT@` for everything, a collection's `@REPO_ROOT@` and `@PROJECT_DIR@`, a runbook's own (see [Placeholders](#placeholders)); given a runbook, what a run of it would have. A run takes `--collection`, and `--set NAME=FOLDER`, which the runbook keeps |
 | `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
 | `runnr history <run-id> --export <folder>` | Export the run's logs with the runs linked to it by resuming (`--only` for just it): `--as raw` (logs to read), `json` (records to import: `runnr import` takes them, or **Also import** in the GUI's import) or `both`; `--one-file` puts them in one file. The GUI: **⇩ Export logs…** on a finished run (to a folder, or a download) |
@@ -138,10 +138,12 @@ inputs:
 
 They're kept as written (imported, stored and exported with the `@…@` in),
 and each machine says what they stand for, with `runnr folders` or the
-GUI's **Collections** page: `@REPOS_ROOT@` (where your repositories are)
-for everything, and `@REPO_ROOT@` and `@PROJECT_DIR@` for a collection's
-runbooks. A value can name another, so only `@REPOS_ROOT@` need differ
-between machines:
+GUI's **Settings** page (under ⚙): `@REPOS_ROOT@` (where your repositories
+are) for everything, and `@REPO_ROOT@`, `@PROJECT_DIR@` or any other for a
+collection's runbooks or for one runbook. Settings edits one collection at a time,
+with its runbooks: where each value comes from and whether it can start.
+A value can name another, so only `@REPOS_ROOT@` need differ between
+machines:
 
 ```sh
 runnr folders set REPOS_ROOT=~/dev
@@ -370,7 +372,7 @@ it aborted now**).
   Drag a runbook to another card to move it (Alt/⌥ to add it there too),
   within a card to reorder, or to "Not in a collection" to take it out.
 - **Collections** group runbooks in the sidebar, with what they're for.
-- **⇪ Import…** in the sidebar imports a project folder on the machine
+- **⇪ Import…** in the top bar imports a project folder on the machine
   runnr runs on (as `runnr import <folder>`: references,
   libraries found elsewhere in the repository, a choice for each name
   that's taken), plus run records or other files added from elsewhere, or
@@ -555,8 +557,8 @@ status, ■ stopped) until you close it, or closes at once with
 output is recorded with the step. They can't publish outputs.
 
 **Copy on select.** In the GUI, selecting text copies it: in the browser
-terminals, code fields and inputs, and run output. **Copy on select** at
-the bottom of the sidebar turns it off (selecting text to paste over it
+terminals, code fields and inputs, and run output. **Copy on select** in
+Settings (under ⚙) turns it off (selecting text to paste over it
 copies it first).
 
 **The run console** (▣ Console on a run, or a runbook's Console tab) puts the
@@ -714,14 +716,14 @@ page keeps this only while it's open.
 
 **Schedule.** Plan runs ahead: `runnr schedule add <runbook> --at "2026-11-01
 22:00" -v env=prod` (for a runbook with a window, the time is when it
-opens), or **Schedule…** on the launch page. The GUI's **Schedule** page shows
+opens), or **Schedule…** (under ⋯) on the launch page. The GUI's **Schedule** page shows
 a calendar and an agenda of planned runs with their windows and, as you
 choose, the planned starts of sections and steps, or just the next action of each run;
 `runnr schedule list [--detail windows|sections|steps] [--next]` (next actions) prints the
 agenda. Nothing starts on its own yet: **Start this run…** opens the launch
 page with the schedule's inputs.
 
-The GUI's **Runbook format help** page describes every field, and the
+The GUI's **Runbook format help** page (under ⚙) describes every field, and the
 structured editor shows the same text on each field's ⓘ.
 
 **Functions and libraries.** Shell functions used across steps or

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"maps"
 	"net/http"
 	"strings"
@@ -13,7 +14,8 @@ import (
 // The folders placeholders (@REPOS_ROOT@, @REPO_ROOT@, @PROJECT_DIR@ …)
 // stand for on this machine, for everything and for each collection:
 //
-//	GET /api/folders                    → {scopes: {"" | collection: {NAME: folderValue}}}
+//	GET /api/folders                    → {scopes: {"" | collection | runbook:<name>: {NAME: folderValue}},
+//	                                       runbooks: {name: project.Folders}}
 //	PUT /api/folders {collection | runbook, name, value}  (value "" removes it) → the same
 //	GET /api/runbooks/{name}/folders?collection=&set=NAME=FOLDER → project.Folders
 
@@ -29,8 +31,44 @@ func (s *Server) listFolders(w http.ResponseWriter, _ *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// What a run of each runbook would fill its placeholders with.
+	rbs := map[string]*project.Folders{}
+	entries, err := s.st.List()
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	for _, e := range entries {
+		rb, _, err := s.st.Get(e.Name)
+		if err != nil {
+			continue // invalid: nothing to say
+		}
+		libs, _ := s.st.Libraries(rb.Libraries)
+		if f, err := project.ResolveFolders(s.st, rb.Name, placeholder.Used(rb, libs), project.FolderOpts{}); err == nil {
+			rbs[rb.Name] = f
+		}
+	}
 	out := map[string]map[string]folderValue{"": {}}
 	for scope, vals := range all {
+		if name, ok := strings.CutPrefix(scope, store.RunbookScope("")); ok {
+			// A runbook's own: filled in as its runs would have them.
+			out[scope] = map[string]folderValue{}
+			for n, raw := range vals {
+				fv := folderValue{Raw: raw, Value: raw}
+				if f := rbs[name]; f != nil {
+					if v, ok := f.Values[n]; ok {
+						fv.Value = v
+					}
+					for _, p := range f.Problems {
+						if p.Name == n {
+							fv.Why = p.Why
+						}
+					}
+				}
+				out[scope][n] = fv
+			}
+			continue
+		}
 		ctx := maps.Clone(all[""])
 		if ctx == nil {
 			ctx = map[string]string{}
@@ -50,7 +88,7 @@ func (s *Server) listFolders(w http.ResponseWriter, _ *http.Request) {
 			out[scope][n] = fv
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"scopes": out})
+	writeJSON(w, http.StatusOK, map[string]any{"scopes": out, "runbooks": rbs})
 }
 
 func (s *Server) setFolder(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +110,10 @@ func (s *Server) setFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	scope := req.Collection
 	if req.Runbook != "" {
+		if !s.st.Exists(req.Runbook) {
+			writeErr(w, fmt.Errorf("runbook %q: %w", req.Runbook, store.ErrNotFound))
+			return
+		}
 		scope = store.RunbookScope(req.Runbook)
 	}
 	if err := s.st.SetPlaceholder(scope, req.Name, req.Value); err != nil {
