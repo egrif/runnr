@@ -138,10 +138,12 @@ inputs:
 
 They're kept as written (imported, stored and exported with the `@…@` in),
 and each machine says what they stand for, with `runnr folders` or the
-GUI's **Collections** page: `@REPOS_ROOT@` (where your repositories are)
-for everything, and `@REPO_ROOT@` and `@PROJECT_DIR@` for a collection's
-runbooks. A value can name another, so only `@REPOS_ROOT@` need differ
-between machines:
+GUI's **Settings** page (under ⚙): `@REPOS_ROOT@` (where your repositories
+are) for everything, and `@REPO_ROOT@`, `@PROJECT_DIR@` or any other for a
+collection's runbooks or for one runbook. Settings lists every runbook that
+names a placeholder, where each value comes from and whether it can start.
+A value can name another, so only `@REPOS_ROOT@` need differ between
+machines:
 
 ```sh
 runnr folders set REPOS_ROOT=~/dev
@@ -555,8 +557,8 @@ status, ■ stopped) until you close it, or closes at once with
 output is recorded with the step. They can't publish outputs.
 
 **Copy on select.** In the GUI, selecting text copies it: in the browser
-terminals, code fields and inputs, and run output. **Copy on select** under
-⚙ in the top bar turns it off (selecting text to paste over it
+terminals, code fields and inputs, and run output. **Copy on select** in
+Settings (under ⚙) turns it off (selecting text to paste over it
 copies it first).
 
 **The run console** (▣ Console on a run, or a runbook's Console tab) puts the

@@ -234,13 +234,12 @@ function renderSidebar() {
   $("#cols-link").classList.toggle("active", location.hash.startsWith("#/collections"));
   $("#sched-link").classList.toggle("active", location.hash.startsWith("#/schedule"));
   $("#manage-link").classList.toggle("active", location.hash === "#/manage");
+  $("#settings-link").classList.toggle("active", location.hash === "#/settings");
 }
 
 $("#filter").addEventListener("input", renderSidebar);
 $("#new-btn").addEventListener("click", () => (location.hash = "#/new"));
 $("#import-btn").addEventListener("click", () => openFolderImport());
-$("#copy-on-select").checked = copySel.on;
-$("#copy-on-select").addEventListener("change", (e) => setCopyOnSelect(e.target.checked));
 
 // ---------- router ----------
 
@@ -266,6 +265,7 @@ async function route() {
     if (h === "#/help") return viewHelp();
     if (h === "#/libraries") return await viewLibraries();
     if (h === "#/manage") return await viewManage();
+    if (h === "#/settings") return await viewSettings();
     if (h === "#/collections") return await viewCollections();
     if (h === "#/schedule") return await viewSchedule();
     if ((m = h.match(/^#\/collections\/([^/]+)$/))) return await viewCollection(decodeURIComponent(m[1]));

@@ -63,22 +63,8 @@ function bindMembership(el, name, after) {
 // viewCollections is a board: a card per collection with its runbooks,
 // plus the runbooks in none. Drag a runbook to another card to move it
 // (hold Alt/Option to add it there as well), or within a card to reorder.
-// folderRows are a scope's folders on this machine ("": for everything,
-// else a collection's): the values placeholders stand for, as set (one can
-// name others: @REPOS_ROOT@/x) and what that comes to here. names are
-// always shown.
-function folderRows(scope, vals, names) {
-  const all = [...new Set([...names, ...Object.keys(vals || {}).sort()])];
-  return `<table class="kv folder-rows">${all.map((n) => {
-    const v = vals?.[n];
-    const note = !v ? "" : v.why ? `✘ ${v.value} ${v.why}` : v.value !== v.raw ? `→ ${v.value}` : "";
-    return `<tr><td><code>@${esc(n)}@</code></td><td>${withPathPick({ type: "dir" }, `<input data-folder="${esc(n)}" data-scope="${esc(scope)}" value="${esc(v?.raw || "")}" placeholder="not set" spellcheck="false" autocomplete="off">`)}${note ? `<div class="hint ${v.why ? "error-text" : "muted"}">${esc(note)}</div>` : ""}</td></tr>`;
-  }).join("")}<tr><td colspan="2"><input class="folder-new" data-scope="${esc(scope)}" placeholder="+ another: NAME=FOLDER" spellcheck="false" autocomplete="off"></td></tr></table>`;
-}
-
 async function viewCollections() {
   await loadCollections();
-  const scopes = (await api("GET", "/api/folders").catch(() => ({}))).scopes || {};
   const inAny = new Set(collections.flatMap((c) => c.collection?.runbooks || []));
   const byName = new Map(runbooks.map((r) => [r.name, r]));
   const item = (r, col) => {
@@ -104,20 +90,14 @@ async function viewCollections() {
         <textarea class="col-field" rows="1" data-col-field="expect" data-col="${esc(c.name)}" placeholder="By the end: how things stand once they've all run">${esc(col.expect || "")}</textarea>
         <ol class="col-list" data-list="${esc(c.name)}">${col.runbooks.map((r) => item(r, c.name)).join("")}</ol>
         <div class="col-drop" data-list-end="${esc(c.name)}">Drop a runbook here</div>
-        ${others.length ? `<select data-add-to="${esc(c.name)}"><option value="">+ Add a runbook…</option>${others.map((r) => `<option>${esc(r.name)}</option>`).join("")}</select>` : ""}
-        <details class="col-folders" ${Object.keys(scopes[c.name] || {}).length ? "open" : ""}><summary class="small">Folders on this machine</summary>
-          <p class="muted small">What @REPO_ROOT@, @PROJECT_DIR@ and others stand for in these runbooks, here: kept on this machine, not in the collection.</p>
-          ${folderRows(c.name, scopes[c.name], ["REPO_ROOT", "PROJECT_DIR"])}</details>`
+        ${others.length ? `<select data-add-to="${esc(c.name)}"><option value="">+ Add a runbook…</option>${others.map((r) => `<option>${esc(r.name)}</option>`).join("")}</select>` : ""}`
         : `<p class="error-text">${esc(c.error)}</p>`}
     </div>`;
   };
   const loose = runbooks.filter((r) => !inAny.has(r.name));
   main.innerHTML = `
     <div class="row page-head"><h1>Collections${helpIcon("Groups of runbooks that belong together (say, the prep, cutover and fallback runbooks of one migration). Drag a runbook to another collection to move it, hold Alt/⌥ as you drop to add it there too, or drag within a collection to reorder. Names and descriptions save as you edit them.")}</h1><span class="spacer"></span><button id="new-col">+ New collection</button></div>
-    <p class="muted small page-sub">Drag runbooks between collections to move them (<kbd>Alt</kbd>/<kbd>⌥</kbd> to add); edits save as you type.</p>
-    <details class="card col-folders global-folders" ${Object.keys(scopes[""] || {}).length ? "" : "open"}><summary><b>Folders on this machine, for everything</b></summary>
-      <p class="muted small">Runbooks name folders by placeholder (<code>@REPO_ROOT@/tools</code>), kept as written; a run fills them in with these and its collection's, and doesn't start while one it names isn't a folder here. A value can name another: a collection's <code>@REPO_ROOT@</code> can be <code>@REPOS_ROOT@/ops-runbooks</code>.</p>
-      ${folderRows("", scopes[""], ["REPOS_ROOT"])}</details>
+    <p class="muted small page-sub">Drag runbooks between collections to move them (<kbd>Alt</kbd>/<kbd>⌥</kbd> to add); edits save as you type. The folders their placeholders stand for are in <a href="#/settings">Settings</a>.</p>
     <div class="col-board">
       ${collections.map(card).join("")}
       <div class="card col-card loose" data-card="">
@@ -129,15 +109,6 @@ async function viewCollections() {
     </div>`;
   const reload = async (msg) => { if (msg) toast(msg); await loadRunbooks(); viewCollections(); };
   const fail = (e) => { toast(e.message); reload(); };
-  const setFolder = (scope, name, value) =>
-    api("PUT", "/api/folders", { collection: scope, name, value }).then(() => reload(value ? `@${name}@ set${scope ? ` for ${scope}` : ""}` : `@${name}@ removed`)).catch(fail);
-  main.querySelectorAll("[data-folder]").forEach((el) => (el.onchange = () => setFolder(el.dataset.scope, el.dataset.folder, el.value.trim())));
-  main.querySelectorAll(".folder-new").forEach((el) => (el.onchange = () => {
-    const [n, ...v] = el.value.split("=");
-    if (!n.trim() || !v.join("=").trim()) return toast("Give it as NAME=FOLDER");
-    setFolder(el.dataset.scope, n.trim().replace(/^@|@$/g, ""), v.join("=").trim());
-  }));
-
   $("#new-col").onclick = async () => {
     const n = (prompt("Name for the new collection (lowercase letters, digits, '.', '_' or '-'):") || "").trim();
     if (!n) return;

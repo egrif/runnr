@@ -59,7 +59,7 @@ func foldersErr(f *Folders) error {
 	if f.Collection != "" {
 		where = fmt.Sprintf("runnr folders set -c %s NAME=FOLDER", f.Collection)
 	}
-	return fmt.Errorf("can't start: %s. Give each a folder on this machine (%s, or Collections in the GUI), or for this run only (--set NAME=FOLDER)", strings.Join(lines, "; "), where)
+	return fmt.Errorf("can't start: %s. Give each a folder on this machine (%s, or Settings in the GUI), or for this run only (--set NAME=FOLDER)", strings.Join(lines, "; "), where)
 }
 
 // ResolveFolders works out the folders for a run of runbookName that

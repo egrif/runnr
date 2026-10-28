@@ -2,15 +2,16 @@
 
 ## v0.13.0 — 2026-10-28
 
-A calmer web interface: the navigation is across the top, and each page
-shows its main action, with the rest in a menu.
+A calmer web interface: the navigation is across the top, each page
+shows its main action with the rest in a menu, and a Settings page sets
+placeholders' folders for everything, a collection or a runbook.
 
 ### Changed
 
 - **Navigation across the top.** Runbooks, History, Schedule, Collections
   and Libraries are in a top bar, with **+ New runbook** and **⇪ Import…**;
-  **Manage runnr**, **Runbook format help** and **Copy on select** are
-  under **⚙**. The left column is just the runbooks.
+  **Settings**, **Manage runnr** and **Runbook format help** are under
+  **⚙**. The left column is just the runbooks.
 - **One main action per page; the rest under ⋯.** The run page shows
   **Resume…** (or **Run again…**) and **▣ Console**; Run again, Timeline,
   Raw log, Export logs and Delete are under ⋯. On the runbook page,
@@ -28,6 +29,17 @@ shows its main action, with the rest in a menu.
   for a runbook without background steps; collection descriptions read as
   text until clicked.
 - Long durations read as days and hours (`2d 6h`, not `3268m53s`).
+
+### Added
+
+- **Settings page** (under ⚙). Sets the folders placeholders stand for on
+  this machine: `@REPOS_ROOT@` and others for everything, and any
+  placeholder for a collection or a single runbook. It lists each runbook
+  that names one, where each value comes from, and whether it can start.
+  It also holds this browser's choices: your name, whether runs open in the
+  run page or the console, and Copy on select. The Collections page no
+  longer sets folders. `GET /api/folders` also gives each runbook's
+  resolved folders (`runbooks`).
 
 ## v0.12.0 — 2026-10-27
 

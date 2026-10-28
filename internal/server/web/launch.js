@@ -352,7 +352,7 @@ function mountFolders(el, name, prev, keep) {
     const own = f.collections || [];
     const dflt = own.length === 1 ? `${own[0]} (its collection)` : own.length > 1 ? `where ${own.join(", ")} agree` : "none (only those for everything)";
     const others = st.all.filter((c) => !own.includes(c) || own.length > 1);
-    el.innerHTML = `<div class="row"><h3 style="margin:0">Folders</h3><span class="spacer"></span><a class="small" href="#/collections" title="Set them for this machine, for everything or for a collection">Set them for this machine…</a></div>
+    el.innerHTML = `<div class="row"><h3 style="margin:0">Folders</h3><span class="spacer"></span><a class="small" href="#/settings" title="Set them for this machine: for everything, a collection or this runbook">Settings…</a></div>
       <p class="muted small">The placeholders the runbook names, and the folders on this machine a run fills them in with. Give one here and the runbook keeps it for its next runs.${f.problems?.length ? ` <b class="error-text">It can't start until each is a folder here.</b>` : ""}</p>
       <label class="row small">Folders from collection <select data-col><option value="">${esc(dflt)}</option>${others.map((c) => `<option ${c === st.collection ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
       <div class="form-grid">${f.used.map((n) => `<label>@${esc(n)}@</label>${withPathPick({ type: "dir" }, `<input data-set="${esc(n)}" value="${esc(st.set[n] || "")}" placeholder="${esc(f.values?.[n] || "no folder")}" spellcheck="false" autocomplete="off">`)}
