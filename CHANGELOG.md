@@ -21,6 +21,10 @@ Fixes found by new tests of the CLI (in a terminal) and the web interface
   compared, and quitting at the review no longer says how to resume a run
   that never started.
 - A data race reading the keyboard (seen by `make test`'s race detector).
+- **Export to files, and the folder picker**, could show an earlier path's
+  answer when it came back after a later one's (the dialog opening on ~,
+  then the path typed): what they showed and what Export wrote could
+  differ. A slower, earlier answer is now dropped.
 
 ### Tests
 
@@ -33,6 +37,14 @@ Fixes found by new tests of the CLI (in a terminal) and the web interface
   runs shown for a new run, and pausing before dangerous steps from the
   launch screen and the console. They skip where there's no Chrome; CI
   requires them.
+- **The editor and the import and export dialogs in a browser**: a new
+  runbook written as YAML (validated as you type, saved as written), the
+  structured view (add and name a step; comments kept; a newer version
+  saved meanwhile isn't written over; delete asks first), importing files
+  (new, as the current version, under another name) and a project folder,
+  exporting a runbook with its library (asking before writing over), and a
+  run's records exported from its page and imported from the history.
+  The browser tests' server has a home folder of its own.
 - CI runs the tests with the race detector, as `make test` does.
 
 ## v0.14.0 — 2026-10-28

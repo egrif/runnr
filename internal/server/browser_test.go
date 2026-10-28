@@ -51,6 +51,9 @@ func newBrowser(t *testing.T) *browser {
 		}
 		t.Skip("no Chrome: browser tests skipped")
 	}
+	// The server's ~ (where dialogs start, and exports go by default) is
+	// a folder of the test's own, never the real one.
+	t.Setenv("HOME", t.TempDir())
 	st, err := store.Open(t.TempDir(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +117,10 @@ func (b *browser) until(js, what string) {
 			return
 		}
 		if time.Now().After(deadline) {
-			b.t.Fatalf("no %s after 15s; the page:\n%s", what, b.text())
+			b.mu.Lock()
+			errs := strings.Join(b.errs, "\n")
+			b.mu.Unlock()
+			b.t.Fatalf("no %s after 15s; errors: %s\nthe page:\n%s", what, errs, b.text())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

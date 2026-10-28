@@ -23,16 +23,18 @@ function exportRunbook(name) {
   document.body.append(dlg);
   const $e = (s) => dlg.querySelector(s);
   const err = (m) => ($e(".error-text").textContent = m || "");
-  let t;
+  let t, seq = 0;
   const plan = async () => {
     st.path = $e(".exp-path").value.trim();
+    const mine = ++seq; // a slower answer for an earlier path is dropped
     try {
       const res = await api("POST", `/api/runbooks/${enc(name)}/files/plan`, { path: st.path });
+      if (mine !== seq) return;
       const first = !st.files.length;
       st.files = res.files;
       if (first) st.libs = new Set(st.files.filter((f) => f.kind === "library" && !f.builtin && !f.missing).map((f) => f.name));
       draw(); err("");
-    } catch (e) { st.files = []; draw(); err(e.message); }
+    } catch (e) { if (mine === seq) { st.files = []; draw(); err(e.message); } }
   };
   const draw = () => {
     const take = (f) => f.kind === "runbook" || st.libs.has(f.name);
