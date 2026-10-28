@@ -38,7 +38,10 @@ show every step.
 ## Running
 
 `runnr run` asks for any inputs you didn't pass with `-v`, then shows the
-plan. Each step's result from last time is beside it. Before you start, you
+plan (rerunning or resuming, each step's result in that run is beside it;
+`--compare <run-id|last>` shows another run's). If the latest run for the
+same identifier inputs is unfinished, it asks first: resume it, start a new
+run, or quit. Before you start, you
 can skip steps, set pauses before or after a step, view a step's code, or
 step through every step.
 
@@ -55,7 +58,7 @@ alongside the others: press `w` at any prompt to watch it. The step that
 opens the maintenance window says so and asks first (`confirm`). Planned
 times show against the window (T+10m, and how far ahead or behind you are).
 A step with ways runs its preferred way. At any prompt you can view the
-step (`v`), see what it did last time (`l`), look at the environment (`e`),
+step (`v`), see what it did in the run being compared (`l`), look at the environment (`e`),
 add a note (`n`), open a shell (`!`), watch a background step (`w`), run a
 command of your own in the background (`b`), go to another step (`g`),
 change the run's inputs (`i`), or modify the step for this run (`m`).

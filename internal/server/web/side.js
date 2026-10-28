@@ -14,7 +14,9 @@ function resetSide() { side.pick.clear(); }
 function sidePanel(key, i, cfg, history, defaultRun, current) {
   const names = [["history", "History"], ["details", "Details"]];
   if (current) names.unshift(["run", current.label]);
-  const tab = side.tab.get(key) || names[0][0];
+  // Earlier runs show when asked for (the History tab), unless this is
+  // one being resumed or run again.
+  const tab = side.tab.get(key) || (current ? "run" : defaultRun ? "history" : "details");
   const tabs = `<div class="side-tabs">${names.map(([t, l]) =>
     `<button type="button" class="${tab === t ? "on" : ""}" data-side-tab="${t}" data-key="${esc(key)}">${l}</button>`).join("")}</div>`;
   if (tab === "run" && current) return `<div class="side">${tabs}${current.html}</div>`;

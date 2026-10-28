@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/egrif/runnr/internal/engine"
 	"github.com/egrif/runnr/internal/store"
 )
 
@@ -78,5 +80,41 @@ func TestAbout(t *testing.T) {
 	res.Body.Close()
 	if a.Build.Version != "v9.9.9" || a.Build.Commit != "abc1234def" || a.Database["kind"] != "SQLite" || a.Database["location"] != st.Location || a.Started == "" {
 		t.Fatalf("%+v", a)
+	}
+}
+
+// Before starting a run, the GUI asks about an unfinished one for the
+// same thing; a new run isn't compared with an earlier one unless asked.
+func TestUnfinishedAPI(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{}).Handler())
+	defer ts.Close()
+	st.Save([]byte("name: rb\ninputs:\n  - {name: target, identifier: true}\nsteps:\n  - {name: one, run: 'true'}\n  - {name: two, run: 'false'}\n"), store.SaveOpts{})
+	rb, _, _ := st.Get("rb")
+	failed := engine.Execute(context.Background(), rb, engine.Unattended{}, "", engine.Options{Vars: map[string]string{"target": "a"}})
+	if err := st.SaveRun(failed); err != nil {
+		t.Fatal(err)
+	}
+	ask := func(target string) (got struct {
+		Run *struct {
+			ID       string `json:"id"`
+			Step     int    `json:"step"`
+			StepName string `json:"step_name"`
+		} `json:"run"`
+	}) {
+		t.Helper()
+		res := do(t, "POST", ts.URL+"/api/runbooks/rb/unfinished", `{"vars": {"target": "`+target+`"}}`, nil)
+		json.NewDecoder(res.Body).Decode(&got)
+		res.Body.Close()
+		return got
+	}
+	if u := ask("a").Run; u == nil || u.ID != failed.ID || u.Step != 1 || u.StepName != "two" {
+		t.Fatalf("target a: %+v", u)
+	}
+	if u := ask("b").Run; u != nil {
+		t.Fatalf("target b: %+v", u)
+	}
+	if p, _ := (&Server{st: st}).previousRun(""); p != nil {
+		t.Fatalf("compared with %s without asking", p.ID)
 	}
 }

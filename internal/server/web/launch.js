@@ -2,7 +2,8 @@
 
 // Launch screen, shared by "Run", "Run again" and "Resume": inputs, how to
 // run, and for every step: include it or not, pause before/after it, what
-// it will do (rendered with these inputs) and what it did last time.
+// it will do (rendered with these inputs) and, resuming or running again,
+// what it did then.
 
 const DONE = ["succeeded", "skipped", "forced"];
 const enc = encodeURIComponent;
@@ -11,13 +12,9 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
   const data = await api("GET", `/api/runbooks/${enc(name)}`);
   const rb = data.runbook;
   const plan = scheduleId ? await api("GET", `/api/schedules/${enc(scheduleId)}`).catch(() => null) : null;
-  let prev = null;
-  if (runId) {
-    prev = alignedRun((await api("GET", `/api/runs/${enc(runId)}`)).run, rb);
-  } else {
-    const latest = await api("GET", `/api/runs?runbook=${enc(name)}&limit=1`);
-    if (latest.length) prev = (await api("GET", `/api/runs/${enc(latest[0].id)}`)).run;
-  }
+  // What a step did before shows only for the run being resumed or run
+  // again; other runs are in each step's History tab.
+  const prev = runId ? alignedRun((await api("GET", `/api/runs/${enc(runId)}`)).run, rb) : null;
   const history = await api("GET", `/api/runs?runbook=${enc(name)}&limit=30`).catch(() => []);
   const st = {
     rb, prev, history, mode, runId, preview: null, open: new Set(),
@@ -155,6 +152,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
         body.use_preferred = true;
       }
     }
+    if (mode !== "resume" && !body.dry_run && !(await askUnfinished(rb.name, body.vars))) return;
     try {
       const { id } = mode === "resume"
         ? await api("POST", `/api/runs/${enc(runId)}/resume`, body)
@@ -303,6 +301,41 @@ function lastTime(r, run) {
     ${renderChecks(r.checks)}${renderSub(r)}
     ${(r.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
     ${renderNotes(r.notes)}`;
+}
+
+// askUnfinished asks before starting a run when the latest for the same
+// thing (the same identifier inputs) is still running or stopped partway:
+// true to start anyway; resuming or opening that run goes there instead.
+async function askUnfinished(runbook, vars) {
+  let u;
+  try { u = (await api("POST", `/api/runbooks/${enc(runbook)}/unfinished`, { vars })).run; } catch { return true; }
+  if (!u) return true;
+  const running = u.status === "running";
+  const forWhat = u.identifiers?.length ? ` for <b>${esc(u.identifiers.join(", "))}</b>` : "";
+  const ago = duration(u.started, new Date().toISOString());
+  const what = running
+    ? `is still running${u.owner ? ` (${esc(u.owner.via)} on ${esc(u.owner.host)})` : ""}, started ${esc(ago)} ago.`
+    : `stopped${u.step >= 0 ? ` at step ${u.step + 1} (${esc(u.step_name)})` : ""}: ${esc(u.status)}, ${esc(ago)} ago.`;
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step abort-dialog";
+  dlg.innerHTML = `<h3>Another run isn't finished</h3>
+    <p>Run <a href="#/runs/${enc(u.id)}" data-v="open">${esc(u.id)}</a>${forWhat} ${what}</p>
+    <div class="row"><span class="spacer"></span><button data-v="">Cancel</button><button data-v="new">Start a new run</button>
+      <button class="primary" data-v="${running ? "open" : "resume"}">${running ? "Open it" : "Resume it…"}</button></div>`;
+  document.body.append(dlg);
+  const v = await new Promise((done) => {
+    dlg.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-v]");
+      if (b) { e.preventDefault(); done(b.dataset.v); } else if (e.target === dlg) done("");
+    });
+    dlg.addEventListener("cancel", () => done(""));
+    dlg.showModal();
+  });
+  dlg.close();
+  dlg.remove();
+  if (v === "open") location.hash = `#/runs/${enc(u.id)}`;
+  if (v === "resume") location.hash = `#/runbooks/${enc(runbook)}?resume=${enc(u.id)}`;
+  return v === "new";
 }
 
 function renderLaunchSteps(st) {

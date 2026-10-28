@@ -20,7 +20,7 @@ Screenshots of the web GUI (`runnr serve`), using a demo runbook that moves an
 Pick inputs, choose how to run (interactive, step-through or unattended), and
 see every step before it runs: grouped by section, with each section's purpose
 and end state, planned times relative to the maintenance window (T-2d, T+0…),
-and what each step did last time. Untick steps to skip them, or set ⏸ pauses.
+and, in each step's History tab, what it did in earlier runs. Untick steps to skip them, or set ⏸ pauses.
 
 ![The run page for a runbook](screenshots/runbook.png)
 

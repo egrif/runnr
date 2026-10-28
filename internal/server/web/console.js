@@ -1193,6 +1193,7 @@ async function cxLaunchStart(state) {
       body.use_preferred = true;
     }
   }
+  if (mode !== "resume" && !opts.dry && !(await askUnfinished(rb.name, body.vars))) return;
   try {
     const { id } = mode === "resume"
       ? await api("POST", `/api/runs/${enc(prev.id)}/resume`, body)

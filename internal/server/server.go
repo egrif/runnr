@@ -106,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/collections/{name}/runbooks/{runbook}", s.removeFromCollection)
 	mux.HandleFunc("POST /api/runbooks/{name}/move", s.moveRunbook)
 	mux.HandleFunc("GET /api/runbooks/{name}/export", s.exportRunbook)
+	mux.HandleFunc("POST /api/runbooks/{name}/unfinished", s.unfinishedRun)
 	mux.HandleFunc("GET /api/claude", s.claudeStatus)
 	mux.HandleFunc("GET /api/about", s.about)
 	mux.HandleFunc("POST /api/explain", s.explain)
@@ -427,7 +428,7 @@ type startReq struct {
 	// StepMode pauses before every step (interactive runs).
 	StepMode bool `json:"step_mode"`
 	// Previous is a run ID to compare against ("last time"); defaults to the
-	// resumed run, else the runbook's latest run.
+	// resumed run, else none.
 	Previous string `json:"previous"`
 	// Collection: take the placeholders' folders from this collection
 	// (default: the runbook's, if it's in one); Folders, those given for
@@ -584,7 +585,7 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 		writeErr(w, err)
 		return
 	}
-	previous, err := s.previousRun(rb.Name, req.Previous)
+	previous, err := s.previousRun(req.Previous)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -732,20 +733,52 @@ func (s *Server) launch(w http.ResponseWriter, r *http.Request, rb *runbook.Runb
 	}
 }
 
-// previousRun loads the run to compare against: id if given, else the
-// runbook's latest run (nil if none).
-func (s *Server) previousRun(runbookName, id string) (*engine.Run, error) {
-	if id == "-" {
+// previousRun loads the run to compare against, if one was asked for
+// (nil for "" or "-").
+func (s *Server) previousRun(id string) (*engine.Run, error) {
+	if id == "" || id == "-" {
 		return nil, nil
 	}
-	if id == "" {
-		runs, err := s.st.ListRuns(runbookName, 1)
-		if err != nil || len(runs) == 0 {
-			return nil, err
-		}
-		id = runs[0].ID
-	}
 	return s.st.LoadRun(id)
+}
+
+// unfinishedRun is the latest run for the same thing (the same identifier
+// inputs) as a run of this runbook with these inputs would be, if it's
+// still running or stopped partway: the GUI asks before starting another.
+func (s *Server) unfinishedRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Vars map[string]string `json:"vars"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	rb, _, err := s.st.Get(r.PathValue("name"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	type found struct {
+		ID          string        `json:"id"`
+		Status      engine.Status `json:"status"`
+		Started     time.Time     `json:"started"`
+		Identifiers []string      `json:"identifiers"`
+		Step        int           `json:"step"` // where it would resume (-1: still running)
+		StepName    string        `json:"step_name,omitempty"`
+		Owner       *engine.Owner `json:"owner,omitempty"`
+	}
+	u := project.Unfinished(s.st, rb, project.IdentifiersOf(rb, req.Vars), "")
+	if u == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"run": nil})
+		return
+	}
+	f := found{ID: u.ID, Status: u.Status, Started: u.Started, Identifiers: engine.RunIdentifiers(u, rb), Step: -1, Owner: u.Owner}
+	if u.Status != engine.StatusRunning {
+		if f.Step = engine.ResumePoint(u); f.Step >= 0 && f.Step < len(u.Steps) {
+			f.StepName = u.Steps[f.Step].Name
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run": f})
 }
 
 type previewReq struct {

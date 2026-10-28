@@ -179,11 +179,17 @@ runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--pause-before 
 `--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted, `75` suspended (to resume later).
 
 **Review.** Before an interactive run, rerun or resume starts, you get the
-plan: every step with its kind, whether it confirms on its own, and how it
-went last time (the run being rerun/resumed, otherwise this runbook's latest
-run). From there: type step numbers to skip/include them, `b 4` / `a 4` to
-pause before/after a step, `v 4` to see what it will do, `l 4` to see what it
-did last time, `step` to step through everything, Enter to start.
+plan: every step with its kind and whether it confirms on its own; for a
+rerun or resume, also how each went in that run (`--compare <run-id|last>`
+shows another run's). From there: type step numbers to skip/include them,
+`b 4` / `a 4` to pause before/after a step, `v 4` to see what it will do,
+`l 4` to see what it did in that run, `step` to step through everything,
+Enter to start.
+
+**Another run for the same thing.** If the latest run for the same
+identifier inputs (the same target, say) from the past week is still running
+or stopped partway, starting another asks first: resume it, start a new
+run anyway, or quit (the GUI asks the same). Unattended, it's a note.
 
 **Pausing.** *Before* a step: run / skip / continue without
 pausing / abort. *After* a step: look at the result (and its `expect`), then
@@ -217,7 +223,8 @@ At any step prompt you can also:
 - **`v`**: view the step as it will run: commands with current values filled
   in, expected outcome, directory, what it publishes.
 - **`w`**: watch a background step (its terminal; Ctrl-] to come back).
-- **`l`**: what this step did last time (status, command, output, notes).
+- **`l`**: what this step did in the run being compared (rerun, resume or
+  `--compare`): status, command, output, notes.
 - **`e`**: show the run's state: every variable so far, credentials masked.
 - **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
 - **`!`**: open a shell (the runbook's `shell`, so pasted commands behave as
@@ -325,9 +332,12 @@ it aborted now**).
 - **Run, Run again, Resume** all open the same launch screen: inputs (carried
   over for rerun/resume), interactive / unattended / step through everything,
   and per step: include or skip, ⏸ pause before, ⏸ pause after, a badge if it
-  confirms on its own, and last time's result. Click a step to see **what it
-  will do** (rendered with your inputs, and the earlier run's state on
-  resume) next to **what it did last time**.
+  confirms on its own, and (rerun or resume) that run's result. Click a step
+  to see **what it will do** (rendered with your inputs, and the earlier
+  run's state on resume) next to its **Details**, or **History**: what it
+  did in any earlier run. A new run isn't compared with earlier ones unless
+  you ask (the History tab). Starting a run while the latest for the same
+  identifier inputs is unfinished asks first: resume it, or start a new one.
 - **While a run is live**, upcoming steps can still be skipped or paused, and
   step-through switched on or off. Open any step: what it does is on the
   left, and on the right **This run** (its output as it arrives, checks,

@@ -111,6 +111,7 @@ Runs planned ahead of time. Nothing starts them yet.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
+| POST | `/api/runbooks/{name}/unfinished` | `{vars}` | `{run}`: the latest run for the same identifier inputs (as these `vars` give them), if it's still running or stopped partway and from the past week, else `null`: `{id, status, started, identifiers, step, step_name, owner}` (`step` is where it would resume; -1 while running). The GUI asks before starting another |
 | GET | `/api/runbooks/{name}/export?v=name=value&download=1&format=html` | | the runbook as Markdown to follow by hand, or with `format=html` as a page to read (`v` fills in inputs; `download` saves it as a file) |
 | GET | `/api/schedules?from=RFC3339&tz=Area/City` | | planned runs, soonest first, each `{id, runbook, at, title, notes, inputs, description, window, entries, error}`; `from` leaves out runs entirely before it |
 | POST | `/api/schedules` | `{runbook, at, title?, notes?, inputs?, created_by?}` | `201` the schedule |
@@ -199,7 +200,7 @@ Start request:
   "pause_before": [4],    // interactive: stop before these steps
   "pause_after": [4, 9],  // interactive: stop after these to check the result
   "step_mode": false,     // interactive: pause before every step
-  "previous": "<run id>", // compare against this run (default: the resumed run, else the latest)
+  "previous": "<run id>", // compare against this run (default: the resumed or rerun run, else none)
   "collection": "payments", // take the placeholders' folders from this collection (default: the runbook's)
   "folders": {"REPO_ROOT": "/src/ra"}, // folders for this run, kept as the runbook's (a resume keeps them)
   "wait": true            // block until done and return the run (requires unattended)

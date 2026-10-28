@@ -281,8 +281,12 @@ type Options struct {
 	Controls *Controls
 	// Review shows the plan before running (if the Interactor is a Reviewer).
 	Review bool
-	// Previous is an earlier run to compare against ("last time").
+	// Previous is an earlier run to compare against ("last time"): only
+	// one asked for (the run being rerun or resumed, or one chosen).
 	Previous *Run
+	// BeforeStart, if set, is called once the inputs are known, before the
+	// review and the first step; an error stops the run there.
+	BeforeStart func(*Run) error
 	// Libraries are the function libraries the runbook uses, resolved.
 	Libraries []*runbook.Library
 	// Folders are the values of the placeholders (@PROJECT_DIR@ …) the
@@ -617,6 +621,9 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		if x.run.Window != nil {
 			x.run.Window.Target = rb.WindowTarget(x.vars)
 		}
+	}
+	if err == nil && opts.BeforeStart != nil {
+		err = opts.BeforeStart(x.snapshot())
 	}
 	if err == nil {
 		x.restoreState()
