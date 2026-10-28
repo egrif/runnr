@@ -960,7 +960,11 @@ summary.icon-only[title="Settings and help"] { font-size: 16px; padding: 3px 9px
 /* Settings */
 .set-title { gap: 12px; }
 .set-title h2 { margin: 0; }
-#set-filter { width: 22em; max-width: 100%; }
+.set-col-head { gap: 12px; align-items: baseline; margin-top: 18px; }
+.set-col-head h3 { margin: 0 !important; }
+.set-pick { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; }
+.set-pick select { min-width: 16em; font-weight: 600; }
+.set-sub { font-size: 12px; color: var(--muted); margin: 14px 0 4px; font-weight: 600; }
 section.card > h2 { margin-top: 0; }
 section.card h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 18px 0 6px; }
 .set-block { padding: 8px 0 10px; border-top: 1px solid var(--border); }
@@ -980,3 +984,5 @@ section.card h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .0
   .set-rows tr, .set-rows td { display: block; width: auto !important; }
   .set-rows td:first-child { margin-top: 6px; }
 }
+.form-grid label.check { display: flex; gap: 6px; align-items: center; font-weight: 400; color: var(--muted); }
+.form-grid label.check input { width: auto; }

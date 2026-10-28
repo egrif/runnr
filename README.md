@@ -140,8 +140,8 @@ They're kept as written (imported, stored and exported with the `@…@` in),
 and each machine says what they stand for, with `runnr folders` or the
 GUI's **Settings** page (under ⚙): `@REPOS_ROOT@` (where your repositories
 are) for everything, and `@REPO_ROOT@`, `@PROJECT_DIR@` or any other for a
-collection's runbooks or for one runbook. Settings lists every runbook that
-names a placeholder, where each value comes from and whether it can start.
+collection's runbooks or for one runbook. Settings edits one collection at a time,
+with its runbooks: where each value comes from and whether it can start.
 A value can name another, so only `@REPOS_ROOT@` need differ between
 machines:
 

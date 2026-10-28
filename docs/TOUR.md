@@ -149,8 +149,9 @@ it (Alt/⌥ to add it to another as well); names and descriptions edit in place.
 
 Under ⚙. The folders placeholders stand for on this machine: `@REPOS_ROOT@`
 for everything, and any placeholder for a collection or a single runbook.
-Each runbook that names one shows where its value comes from (the runbook,
-its collection, or everything) and whether a run can start. A value can
+Pick a collection to edit its folders and its runbooks' own; each runbook
+shows where its value comes from (the runbook, its collection, or
+everything) and whether a run can start. A value can
 name another (`@REPOS_ROOT@/ops-runbooks`). Also this browser's own choices:
 your name, whether runs open in the run page or the console, and Copy on
 select.

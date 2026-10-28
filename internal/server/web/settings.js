@@ -4,7 +4,13 @@
 // everything, each collection and each runbook), and this browser's own
 // choices.
 
-const settingsUI = { q: "" };
+// The collection being edited ("" for runbooks in none), kept in this browser.
+function settingsCollection(set) {
+  try {
+    if (set !== undefined) localStorage.setItem("runnr.settingsCollection", set);
+    return localStorage.getItem("runnr.settingsCollection");
+  } catch { return set ?? null; }
+}
 
 async function viewSettings() {
   await loadCollections();
@@ -26,9 +32,6 @@ async function viewSettings() {
   const rbNames = [...new Set([...Object.keys(rbs).filter((r) => rbs[r].used?.length),
     ...Object.keys(scopes).filter((s) => s.startsWith("runbook:")).map((s) => s.slice(8))])].sort();
 
-  const q = settingsUI.q.toLowerCase();
-  const shows = (label, names) => !q || label.toLowerCase().includes(q) || names.some((n) => n.toLowerCase().includes(q.replace(/@/g, "")));
-
   // rows: a scope's placeholders: those it should have (names) and those set.
   const rows = (scope, names, inherit) => {
     const own = scopes[scope] || {};
@@ -47,11 +50,19 @@ async function viewSettings() {
     <tr><td colspan="3"><button class="link small" data-add-row title="Give another placeholder a folder${scope ? " here" : " for everything"}">+ add a placeholder</button><input class="set-new" data-scope="${esc(scope)}" placeholder="NAME=FOLDER" spellcheck="false" autocomplete="off" hidden></td></tr></table>`;
   };
 
-  const colBlocks = collections.filter((c) => shows(c.name, usedByCol(c).concat(Object.keys(scopes[c.name] || {})))).map((c) =>
-    `<div class="set-block"><div class="set-head"><b>${esc(c.name)}</b><span class="muted small">${(c.collection?.runbooks || []).length} runbook${(c.collection?.runbooks || []).length === 1 ? "" : "s"}</span></div>
-      ${rows(c.name, usedByCol(c), globalOf)}</div>`).join("");
+  // One collection at a time: its folders, and its runbooks'.
+  const loose = rbNames.filter((r) => !(rbs[r]?.collections || []).length);
+  const choices = [...collections.map((c) => c.name), ...(loose.length ? [""] : [])];
+  let col = settingsCollection();
+  if (col == null || !choices.includes(col)) col = choices[0] ?? null;
+  const c = collections.find((x) => x.name === col);
+  const members = c ? rbNames.filter((r) => (c.collection?.runbooks || []).includes(r)) : loose;
+  const n = (c?.collection?.runbooks || []).length;
+  const colBlock = c ? `<div class="set-block"><div class="set-head"><b>Collection ${esc(c.name)}</b><span class="muted small">${n} runbook${n === 1 ? "" : "s"}</span>
+      <span class="muted small">· its runbooks take these unless they have their own</span></div>
+      ${rows(c.name, usedByCol(c), globalOf)}</div>` : "";
 
-  const rbBlocks = rbNames.filter((r) => shows(r, (rbs[r]?.used || []).concat(Object.keys(scopes[`runbook:${r}`] || {})))).map((r) => {
+  const rbBlocks = members.map((r) => {
     const f = rbs[r];
     const cols = f?.collections || [];
     const inherit = (n) => colOf(cols, n) || globalOf(n);
@@ -59,9 +70,11 @@ async function viewSettings() {
       : f.problems?.length ? `<span class="badge-k fail" title="${esc(f.problems.map((p) => `@${p.name}@ ${p.why}`).join("\n"))}">✘ ${f.problems.length} not ready</span>`
       : `<span class="badge-k ok" title="Every placeholder it names is a folder here">✔ ready</span>`;
     return `<div class="set-block"><div class="set-head"><a href="#/runbooks/${enc(r)}"><b>${esc(r)}</b></a>${state}
-      <span class="muted small">${cols.length ? `in ${cols.map(esc).join(", ")}` : "in no collection"}</span></div>
+      ${cols.length > 1 ? `<span class="muted small">also in ${cols.filter((x) => x !== col).map(esc).join(", ")}</span>` : ""}</div>
       ${rows(`runbook:${r}`, f?.used || [], inherit)}</div>`;
   }).join("");
+  const picker = choices.length ? `<label class="set-pick" title="Edit one collection at a time: its folders and its runbooks'"><select id="set-col">${choices.map((x) =>
+    `<option value="${esc(x)}" ${x === col ? "selected" : ""}>${x ? esc(x) : "Runbooks in no collection"}</option>`).join("")}</select></label>` : "";
 
   let name = "";
   try { name = localStorage.getItem("runnr.author") || ""; } catch {}
@@ -69,12 +82,13 @@ async function viewSettings() {
     <div class="row page-head"><h1>Settings</h1></div>
     <p class="muted small page-sub">Folders are kept on this machine, in runnr; the rest is this browser's.</p>
     <section class="card">
-      <div class="row set-title"><h2>Folders${helpIcon("Runbooks name folders by placeholder (@REPO_ROOT@/tools) and are kept as written, so they're the same on every machine. A run fills each in from, first to last: what's given for the run, its runbook's, its collection's, and those for everything. A value can name another (@REPOS_ROOT@/ops-runbooks) or start with ~. A run doesn't start while one it names isn't a folder here.")}</h2>
-        <span class="spacer"></span><input type="search" id="set-filter" placeholder="Filter by name or @PLACEHOLDER@…" value="${esc(settingsUI.q)}"></div>
+      <div class="row set-title"><h2>Folders${helpIcon("Runbooks name folders by placeholder (@REPO_ROOT@/tools) and are kept as written, so they're the same on every machine. A run fills each in from, first to last: what's given for the run, its runbook's, its collection's, and those for everything. A value can name another (@REPOS_ROOT@/ops-runbooks) or start with ~. A run doesn't start while one it names isn't a folder here.")}</h2></div>
       <p class="muted small">A run takes each from: the run → its runbook → its collection → everything.</p>
-      ${!q || shows("everything", ["REPOS_ROOT", ...Object.keys(scopes[""] || {})]) ? `<h3>For everything</h3><div class="set-block">${rows("", ["REPOS_ROOT"], inherited[""])}</div>` : ""}
-      ${colBlocks ? `<h3>By collection</h3>${colBlocks}` : ""}
-      ${rbBlocks ? `<h3>By runbook</h3>${rbBlocks}` : q ? "" : `<h3>By runbook</h3><p class="muted small">No runbook names a placeholder.</p>`}
+      <h3>For everything</h3><div class="set-block">${rows("", ["REPOS_ROOT"], inherited[""])}</div>
+      <div class="row set-col-head"><h3>By collection</h3>${picker}</div>
+      ${!choices.length ? `<p class="muted small">No collections yet, and no runbook names a placeholder.</p>` : ""}
+      ${colBlock}
+      ${col != null ? (rbBlocks ? `<h4 class="set-sub">Its runbooks' own</h4>${rbBlocks}` : `<p class="muted small">None of ${c ? "its" : "these"} runbooks names a placeholder.</p>`) : ""}
     </section>
     <section class="card">
       <h2>This browser</h2>
@@ -100,9 +114,7 @@ async function viewSettings() {
     if (!n.trim() || !v.join("=").trim()) return toast("Give it as NAME=FOLDER");
     put(el.dataset.scope, n.trim().replace(/^@|@$/g, ""), v.join("=").trim());
   }));
-  const filter = $("#set-filter");
-  let t;
-  filter.oninput = () => { clearTimeout(t); t = setTimeout(() => { settingsUI.q = filter.value; viewSettings().then(() => { const f = $("#set-filter"); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }); }, 250); };
+  $("#set-col") && ($("#set-col").onchange = (e) => { settingsCollection(e.target.value); viewSettings(); });
   $("#set-name").onchange = (e) => { try { localStorage.setItem("runnr.author", e.target.value.trim()); toast("Saved"); } catch {} };
   $("#set-view").onchange = (e) => { runView(e.target.value); toast("Saved"); };
   $("#set-copy").onchange = (e) => setCopyOnSelect(e.target.checked);

@@ -34,8 +34,9 @@ placeholders' folders for everything, a collection or a runbook.
 
 - **Settings page** (under ⚙). Sets the folders placeholders stand for on
   this machine: `@REPOS_ROOT@` and others for everything, and any
-  placeholder for a collection or a single runbook. It lists each runbook
-  that names one, where each value comes from, and whether it can start.
+  placeholder for a collection or a single runbook. Pick a collection to
+  edit it and its runbooks' own folders; each runbook shows where its values
+  come from and whether it can start.
   It also holds this browser's choices: your name, whether runs open in the
   run page or the console, and Copy on select. The Collections page no
   longer sets folders. `GET /api/folders` also gives each runbook's
