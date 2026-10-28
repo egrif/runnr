@@ -62,3 +62,21 @@ func TestFoldersAPI(t *testing.T) {
 		t.Fatalf("other: %+v", r)
 	}
 }
+
+// About says which runnr this is and where its data lives.
+func TestAbout(t *testing.T) {
+	st, _ := store.Open(t.TempDir(), "")
+	ts := httptest.NewServer(New(st, Config{Build: Build{Version: "v9.9.9", Commit: "abc1234def"}}).Handler())
+	defer ts.Close()
+	var a struct {
+		Build    Build             `json:"build"`
+		Database map[string]string `json:"database"`
+		Started  string            `json:"started"`
+	}
+	res := do(t, "GET", ts.URL+"/api/about", "", nil)
+	json.NewDecoder(res.Body).Decode(&a)
+	res.Body.Close()
+	if a.Build.Version != "v9.9.9" || a.Build.Commit != "abc1234def" || a.Database["kind"] != "SQLite" || a.Database["location"] != st.Location || a.Started == "" {
+		t.Fatalf("%+v", a)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/egrif/runnr/internal/server"
 	"github.com/spf13/cobra"
 )
 
@@ -66,6 +67,12 @@ func short(commit string) string {
 		return commit[:7]
 	}
 	return commit
+}
+
+// serverBuild is this runnr's version and build, for the GUI's About.
+func serverBuild() server.Build {
+	b := readBuildInfo()
+	return server.Build{Version: Version(), Commit: b.commit, Committed: b.when, Modified: b.modified}
 }
 
 func versionCmd() *cobra.Command {

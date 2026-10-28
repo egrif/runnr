@@ -240,6 +240,7 @@ function renderSidebar() {
 $("#filter").addEventListener("input", renderSidebar);
 $("#new-btn").addEventListener("click", () => (location.hash = "#/new"));
 $("#import-btn").addEventListener("click", () => openFolderImport());
+$("#about-btn").addEventListener("click", () => openAbout());
 
 // ---------- router ----------
 

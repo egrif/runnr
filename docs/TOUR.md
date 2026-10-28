@@ -156,6 +156,10 @@ name another (`@REPOS_ROOT@/ops-runbooks`). Also this browser's own choices:
 your name, whether runs open in the run page or the console, and Copy on
 select.
 
+**About runnr**, also under ⚙, shows the version, the commit and Go it was
+built with, where the data lives and how long the server has been up, with
+**Copy details** for a bug report.
+
 ![Settings: folders for everything, by collection and by runbook](screenshots/settings.png)
 
 ## Manage

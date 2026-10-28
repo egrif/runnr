@@ -41,6 +41,10 @@ placeholders' folders for everything, a collection or a runbook.
   run page or the console, and Copy on select. The Collections page no
   longer sets folders. `GET /api/folders` also gives each runbook's
   resolved folders (`runbooks`).
+- **About runnr** (under ⚙): the version, commit and Go it was built with,
+  where the data lives, how long the server has been up and whether Claude
+  is on, with links to the repository and this version's release notes, and
+  **Copy details** for a bug report. `GET /api/about` gives the same.
 
 ## v0.12.0 — 2026-10-27
 

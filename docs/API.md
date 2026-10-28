@@ -214,6 +214,7 @@ for the run).
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
+| GET | `/api/about` | | `{build: {version, commit?, committed?, modified?}, go, platform, database: {kind, location}, started, claude}`: which runnr this is, where its data lives (a password is left out), and when the server started |
 | GET | `/api/folders` | | `{scopes: {"" \| collection \| runbook:<name>: {NAME: {raw, value, why?}}}, runbooks: {name: folders}}`: the folders set on this machine, for everything (`""`), each collection and each runbook; `raw` as set (it can name others), `value` filled in, `why` it isn't a folder here. `runbooks` says, for each, what a run would fill its placeholders with, as `GET /api/runbooks/{name}/folders` |
 | PUT | `/api/folders` | `{collection? \| runbook?, name, value}` (`""` removes it; neither: for everything) | as `GET`; `404` for a collection or runbook that isn't there |
 | GET | `/api/runbooks/{name}/folders?collection=&set=NAME=FOLDER` | | `{used, collection?, collections?, values, from, problems?}`: what a run would fill its placeholders with (`from`: `run`, `runbook`, `collection` or `global`), and `problems: [{name, value?, why}]` that keep it from starting |
