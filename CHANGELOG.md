@@ -2,6 +2,9 @@
 
 ## v0.14.1 — 2026-10-28
 
+Fixes found by new tests of the CLI (in a terminal) and the web interface
+(in a browser), and importing a run's record over its raw log.
+
 ### Fixed
 
 - **Importing a run's record after its raw log.** A run imported from its
@@ -9,6 +12,28 @@
   was imported later: the record was skipped as "already here". The record
   now takes the rebuilt copy's place (notes added here are kept); a raw log
   still never replaces a record.
+- **Asking about an unfinished run when an input is left at its default.**
+  The launch screen sends an untouched input empty, and the run takes its
+  default; the check took it as empty, so it didn't ask.
+- **A run's page right after starting it** could say "not found" when the
+  server hadn't recorded it yet; it now waits for the record.
+- The review's help no longer mentions "last time" when nothing's being
+  compared, and quitting at the review no longer says how to resume a run
+  that never started.
+- A data race reading the keyboard (seen by `make test`'s race detector).
+
+### Tests
+
+- **The CLI in a terminal**: runnr built and driven through a pty, its
+  prompts answered as an operator would: the review, failures (skip,
+  force), an unfinished run (quit, resume), pausing before dangerous steps,
+  `--compare`, and export then import.
+- **The web interface in a browser** (headless Chrome, via chromedp):
+  every page loads without an error, the unfinished-run dialog, no earlier
+  runs shown for a new run, and pausing before dangerous steps from the
+  launch screen and the console. They skip where there's no Chrome; CI
+  requires them.
+- CI runs the tests with the race detector, as `make test` does.
 
 ## v0.14.0 — 2026-10-28
 

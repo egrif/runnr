@@ -993,7 +993,14 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
-	run, err := s.st.LoadRun(r.PathValue("id"))
+	id := r.PathValue("id")
+	run, err := s.st.LoadRun(id)
+	// A run just started may not be recorded yet: the page opens on it as
+	// soon as it's started.
+	for deadline := time.Now().Add(5 * time.Second); errors.Is(err, store.ErrNotFound) && s.getLive(id) != nil && time.Now().Before(deadline); {
+		time.Sleep(20 * time.Millisecond)
+		run, err = s.st.LoadRun(id)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return

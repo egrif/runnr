@@ -32,10 +32,11 @@ var kbd keyboard
 func (k *keyboard) start() {
 	k.once.Do(func() {
 		k.ch = make(chan []byte, 64)
+		in := os.Stdin // read once: a test may put it back while this reads
 		go func() {
 			buf := make([]byte, 4096)
 			for {
-				n, err := os.Stdin.Read(buf)
+				n, err := in.Read(buf)
 				if n > 0 {
 					k.ch <- append([]byte(nil), buf[:n]...)
 				}

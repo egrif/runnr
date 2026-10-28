@@ -26,10 +26,14 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Test
+        # The browser tests use the runner's Chrome; without it they fail
+        # rather than skip.
+        env:
+          RUNNR_BROWSER_TESTS: "1"
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq zsh tmux >/dev/null
           go vet ./...
-          go test ./...
+          go test -race ./...
 
   changelog:
     if: github.event_name == 'pull_request'

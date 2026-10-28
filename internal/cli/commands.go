@@ -885,7 +885,7 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 	}
 	if f.js {
 		_ = printJSON(run)
-	} else if run.Status != engine.StatusSucceeded && !f.noHistory && engine.ResumePoint(run) >= 0 {
+	} else if run.Status != engine.StatusSucceeded && !f.noHistory && !run.Begun.IsZero() && engine.ResumePoint(run) >= 0 {
 		fmt.Fprintf(os.Stderr, "resume with: runnr resume %s\n", run.ID)
 	}
 	switch run.Status {
