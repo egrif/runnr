@@ -514,6 +514,7 @@ function renderRun(state) {
     ${removedHTML(run)}
     ${state.prev ? `<p class="muted">Compared with <a href="#/runs/${esc(state.prev.id)}">${esc(state.prev.id)}</a> (${esc(state.prev.status)}): open a step to see what it did then.</p>` : ""}
     ${live && state.controls && run.mode === "interactive" ? `<p><label><input type="checkbox" id="step-all" ${state.controls.step_mode ? "checked" : ""}> Step through the remaining steps</label>
+      ${state.cfg?.some((s) => s.dangerous) ? `<label title="Stop before each remaining ⚠ dangerous step"><input type="checkbox" id="pause-danger" ${state.controls.pause_dangerous ? "checked" : ""}> Pause before dangerous steps</label>` : ""}
       <span class="muted small"> · upcoming steps can be skipped or paused below</span></p>` : ""}
     ${state.question?.step === -1 ? renderQuestion(state.question, run.id) : ""}
     <ol class="steps">${state.steps.map((s, i) => `${sectionHeading(state.steps, i, state.rbSections)}
@@ -567,6 +568,7 @@ function renderRun(state) {
     setControls(run.id, next, state);
   }));
   $("#step-all") && ($("#step-all").onchange = (e) => setControls(run.id, { ...ctl, step_mode: e.target.checked }, state));
+  $("#pause-danger") && ($("#pause-danger").onchange = (e) => setControls(run.id, { ...ctl, pause_dangerous: e.target.checked }, state));
   bindSide(main, () => renderRun(state));
   main.querySelectorAll("[data-explain]").forEach((b) => (b.onclick = (ev) => {
     ev.stopPropagation();
@@ -999,7 +1001,7 @@ function renderSub(s) {
 async function setControls(id, c, state) {
   try {
     state.controls = await api("PUT", `/api/runs/${enc(id)}/controls`, {
-      step_mode: c.step_mode, skip: c.skip || [], pause_before: c.pause_before || [], pause_after: c.pause_after || [],
+      step_mode: c.step_mode, pause_dangerous: !!c.pause_dangerous, skip: c.skip || [], pause_before: c.pause_before || [], pause_after: c.pause_after || [],
     });
     renderRun(state);
   } catch (e) { toast(e.message); }

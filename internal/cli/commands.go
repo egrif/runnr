@@ -569,7 +569,7 @@ type runFlags struct {
 	vars                                   []string
 	unattended, yes, dry, js, usePreferred bool
 	quiet, noHistory                       bool
-	stepMode, noReview                     bool
+	stepMode, noReview, pauseDangerous     bool
 	skip, before, after                    string
 	tmux                                   bool
 	collection                             string
@@ -590,6 +590,7 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.BoolVarP(&f.quiet, "quiet", "q", false, "hide command output")
 	fl.BoolVar(&f.noHistory, "no-history", false, "don't record this run")
 	fl.BoolVar(&f.stepMode, "step", false, "pause before every step (run / skip / view / shell / …)")
+	fl.BoolVar(&f.pauseDangerous, "pause-dangerous", false, "pause before every dangerous step (run / skip / view / shell / …)")
 	fl.BoolVar(&f.noReview, "no-review", false, "start without reviewing the plan")
 	fl.StringVar(&f.skip, "skip", "", "steps to leave out, e.g. 3,5-7")
 	fl.StringVar(&f.before, "pause-before", "", "steps to stop before (run / skip / view / shell), e.g. 4,9")
@@ -710,7 +711,7 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 		}
 		return startTmuxRun(os.Args[1:], rb.Name, id)
 	}
-	cv := engine.ControlsView{StepAll: f.stepMode}
+	cv := engine.ControlsView{StepAll: f.stepMode, PauseDangerous: f.pauseDangerous}
 	for flag, dst := range map[string]*[]int{f.skip: &cv.Skip, f.before: &cv.PauseBefore, f.after: &cv.PauseAfter} {
 		if flag == "" {
 			continue

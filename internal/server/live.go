@@ -449,11 +449,12 @@ func (l *liveRun) Confirm(ctx context.Context, idx int, step runbook.Step, comma
 	return a.Value == "run", err
 }
 
-// ConfirmDanger: the GUI makes the operator type the step number to run it.
+// ConfirmDanger: the GUI makes the operator type the step number to run it
+// (a dangerous step outside a recorded run of the saved runbook).
 func (l *liveRun) ConfirmDanger(ctx context.Context, idx int, step runbook.Step, command, why string) (bool, error) {
 	n := strconv.Itoa(idx + 1)
 	for {
-		a, err := l.askStep(ctx, Question{Type: "danger", Step: idx, Title: "⚠ “" + step.Name + "” is dangerous, and not running in sequence",
+		a, err := l.askStep(ctx, Question{Type: "danger", Step: idx, Title: "⚠ “" + step.Name + "” is dangerous, and this isn't a recorded run of the saved runbook",
 			Text: why + "\n\nWill run:\n" + command, Options: []string{"run", "skip", "abort"}, Confirm: n})
 		if err != nil {
 			return false, err

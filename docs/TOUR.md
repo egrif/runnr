@@ -32,8 +32,8 @@ against its target.
 ![A run with the maintenance window open](screenshots/running-window.png)
 
 Steps stop for confirmations, manual instructions and failures. Each step shows
-what it's doing, its command and its output; ⚠ dangerous steps ask for a typed
-double check when they're run out of order. You can open a shell with the
+what it's doing, its command and its output; turn on **Pause before dangerous
+steps** to stop before each ⚠ dangerous one. You can open a shell with the
 run's variables, add notes, or ✎ edit a step mid-run and run it again. Under
 every question, ↺ Back to step N and Go to step move the run (back runs the
 steps from there again, ahead skips the ones between); ■ Stop step

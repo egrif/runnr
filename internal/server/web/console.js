@@ -204,6 +204,7 @@ function cxToolbar(state, live) {
   const has = (list, i) => (list || []).includes(i + 1);
   return `${answers}${answers ? `<span class="cx-sep"></span>` : ""}
     ${btn("step-mode", "⏯ Step through", "", "Pause before every remaining step", !!ctl.step_mode)}
+    ${state.plan?.steps?.some((v) => v.dangerous) ? btn("pause-dangerous", "⚠ Pause before dangerous", "", "Stop before each remaining dangerous step", !!ctl.pause_dangerous) : ""}
     ${next < state.steps.length ? btn("pause-next", "⏸ Pause before next", "", `Pause before step ${next + 1}`, has(ctl.pause_before, next)) : ""}
     ${cur >= 0 ? btn("pause-after", "⏸ Pause after this", "", `Pause after step ${cur + 1} to check its result`, has(ctl.pause_after, cur)) : ""}
     <span class="spacer"></span>
@@ -293,6 +294,7 @@ function cxBindTop(state, el, live) {
       const toggle = (k, n) => (ctl[k] = ctl[k].includes(n) ? ctl[k].filter((x) => x !== n) : [...ctl[k], n]);
       const cur = cxCurrent(state);
       if (act === "step-mode") ctl.step_mode = !ctl.step_mode;
+      if (act === "pause-dangerous") ctl.pause_dangerous = !ctl.pause_dangerous;
       if (act === "pause-next") toggle("pause_before", cur + 2);
       if (act === "pause-after") toggle("pause_after", cur + 1);
       state.controls = await api("PUT", `/api/runs/${enc(r.id)}/controls`, ctl);
@@ -1099,6 +1101,7 @@ function cxLaunchRenderTop(state) {
       <span class="cx-sep"></span>
       ${tog("unattended", "Unattended", "Nobody answers: inputs come from here or defaults, and any failure ends the run")}
       ${tog("step", "⏯ Step through", "Pause before every step", opts.unattended)}
+      ${rb.steps.some((s) => s.dangerous) ? tog("danger", "⚠ Pause before dangerous", "Stop before each dangerous step to choose: run, skip, open a shell, or abort", opts.unattended) : ""}
       ${tog("yes", "Auto-approve", "Approve confirm-gated steps (unattended runs)", !opts.unattended)}
       ${tog("dry", "Dry run", "Show what each step would run, without running it")}
       ${tog("solo", "🔒 Only I drive", "Others who open the run can watch it; if they try to change it, they're asked first (they can override)")}
@@ -1178,7 +1181,7 @@ async function cxLaunchStart(state) {
   }
   const nums = (pred) => rb.steps.map((_, i) => i).filter(pred).map((i) => i + 1);
   const body = {
-    vars: cxLaunchVars(state), unattended: opts.unattended, yes: opts.yes, dry_run: opts.dry, step_mode: opts.step && !opts.unattended,
+    vars: cxLaunchVars(state), unattended: opts.unattended, yes: opts.yes, dry_run: opts.dry, step_mode: opts.step && !opts.unattended, pause_dangerous: !!opts.danger && !opts.unattended,
     skip: nums((i) => !state.include[i]), pause_before: nums((i) => state.before.has(i)), pause_after: nums((i) => state.after.has(i)),
     ...(state.folders?.body() || { collection: state.mode === "run" ? "" : prev?.collection || "", folders: state.mode === "run" ? {} : prev?.folder_set || {} }),
   };

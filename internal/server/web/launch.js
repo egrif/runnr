@@ -54,6 +54,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
         <div class="options">
           <label><input type="radio" name="mode" value="interactive" checked> Interactive</label>
           <label><input type="radio" name="mode" value="unattended"> Unattended</label>
+          ${rb.steps.some((s) => s.dangerous) ? `<label title="Stop before each ⚠ dangerous step to choose: run, skip, open a shell, or abort"><input type="checkbox" name="danger"> Pause before dangerous steps</label>` : ""}
           <details class="run-opts"><summary>More options<span class="opt-count"></span></summary><div class="options">
             <label title="Stop before every step to choose: run, skip, open a shell, or carry on"><input type="checkbox" name="stepmode"> Step through every step</label>
             <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
@@ -98,6 +99,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
   const sync = () => {
     form.yes.disabled = form.mode.value !== "unattended";
     form.stepmode.disabled = form.mode.value === "unattended";
+    if (form.danger) form.danger.disabled = form.mode.value === "unattended";
     const n = st.include.filter(Boolean).length;
     $("#count").textContent = `${n} of ${rb.steps.length} selected`;
     $("#start").textContent = `▶ ${what} (${n} step${n === 1 ? "" : "s"})`;
@@ -137,7 +139,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
     const nums = (pred) => rb.steps.map((_, i) => i).filter(pred).map((i) => i + 1);
     const body = {
       vars: vars(), unattended: form.mode.value === "unattended", yes: form.yes.checked, dry_run: form.dry.checked,
-      step_mode: form.stepmode.checked, skip: nums((i) => !st.include[i]),
+      step_mode: form.stepmode.checked, pause_dangerous: !!form.danger?.checked && !form.danger.disabled, skip: nums((i) => !st.include[i]),
       pause_before: nums((i) => st.before.has(i)), pause_after: nums((i) => st.after.has(i)),
     };
     Object.assign(body, folders.body());
@@ -197,7 +199,7 @@ function stepBadges(s) {
     s.stop_after && `<span class="badge-k" title="Runs in the background until this step finishes">until ${esc(s.stop_after)}</span>`,
     s.repeat && `<span class="badge-k" title="Re-runs the checks until they all pass">repeats</span>`,
     s.confirm && `<span class="badge-k warn" title="Asks before running, even without pauses">confirms on its own</span>`,
-    s.dangerous && `<span class="badge-k fail" title="Out of sequence, it needs the step number typed to run">⚠ dangerous</span>`,
+    s.dangerous && `<span class="badge-k fail" title="Dangerous: Pause before dangerous steps (More options) stops before it">⚠ dangerous</span>`,
     s.choose && `<span class="badge-k" title="Asks which way each time (unattended: the preferred one)">asks which way</span>`,
     s.window && `<span class="badge-k fail" title="${s.window === "open" ? "Production goes down when this step starts" : "Production is back when this step finishes"}">window ${s.window}s</span>`,
     s.always && `<span class="badge-k" title="Runs even when starting later or resuming">always</span>`,

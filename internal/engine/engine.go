@@ -309,10 +309,10 @@ type Options struct {
 	// Save is called with a snapshot after every state change worth keeping.
 	Save func(*Run)
 	// Sanctioned: a recorded run of a saved runbook. Dangerous steps run
-	// without a double check only in a sanctioned run, in sequence.
+	// without a double check only in a sanctioned run.
 	Sanctioned bool
 	// Resumed is the run this one continues; steps that finished there
-	// count as in sequence here.
+	// are carried over.
 	Resumed *Run
 	// Continue resumes Resumed in place: the same run (pass its ID), its
 	// finished steps as they were, earlier tries of the steps it does

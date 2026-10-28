@@ -778,6 +778,9 @@ func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, c *engine
 		if cv.StepAll {
 			title += " · stepping through every step"
 		}
+		if cv.PauseDangerous {
+			title += " · pausing before dangerous steps"
+		}
 		fmt.Fprintln(t.out, t.c("1", "\nPlan")+t.c("2", title))
 		section := ""
 		for _, v := range plan {
@@ -806,6 +809,9 @@ func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, c *engine
 			if v.Always {
 				flags += " · always"
 			}
+			if v.Dangerous {
+				flags += " · " + t.c("31", "⚠ dangerous")
+			}
 			if v.When != "" {
 				flags += " · conditional"
 			}
@@ -820,8 +826,9 @@ func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, c *engine
 				"    <steps>    skip / include             v <n>      view what step n will do\n"+
 				"    b <steps>  pause before (toggle)      l <n>      what step n did last time\n"+
 				"    a <steps>  pause after (toggle)       step       step through every step (toggle)\n"+
+				"    danger     pause before dangerous steps (toggle)\n"+
 				"    enter      start                      q          quit without running\n"+
-				"  The column after ✓ shows each step's result last time."))
+				"  The column after ✓ shows each step's result in the run compared (rerun, resume, --compare)."))
 			help = false
 		}
 		fmt.Fprint(t.out, t.c("33;1", "  ? ")+"review (enter to start, ? for help): ")
@@ -859,6 +866,8 @@ func (t *Terminal) Review(ctx context.Context, plan []engine.StepView, c *engine
 			help = true
 		case line == "step":
 			c.SetStepAll(!cv.StepAll)
+		case line == "danger":
+			c.SetPauseDangerous(!cv.PauseDangerous)
 		case cmd == "v" || cmd == "view":
 			if i, ok := one(); ok {
 				t.printView(plan[i])
@@ -973,9 +982,9 @@ func (t *Terminal) Confirm(ctx context.Context, idx int, _ runbook.Step, command
 }
 
 // ConfirmDanger asks for the step number to be typed, so a dangerous step
-// out of sequence can't run on a reflexive "y".
+// outside a recorded run of the saved runbook can't run on a reflexive "y".
 func (t *Terminal) ConfirmDanger(ctx context.Context, idx int, step runbook.Step, command, why string) (bool, error) {
-	fmt.Fprintln(t.out, t.c("1;31", "  ⚠ DANGEROUS, and not running in sequence"))
+	fmt.Fprintln(t.out, t.c("1;31", "  ⚠ DANGEROUS, and this isn't a recorded run of the saved runbook"))
 	for _, l := range strings.Split(why, "\n") {
 		fmt.Fprintln(t.out, t.c("31", "  "+l))
 	}

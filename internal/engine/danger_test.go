@@ -59,21 +59,32 @@ steps:
 	}
 }
 
+// Skipping steps or starting later doesn't call for a double check: that's
+// the operator's call (PauseDangerous). Outside a recorded run of the saved
+// runbook, it still does.
 func TestDangerousOutOfSequence(t *testing.T) {
 	rb := mustParse(t, dangerRB)
 	for _, tc := range []struct {
 		name string
 		opts Options
-		want string
+		want string // the double check's reason; "" for none
 	}{
-		{"skipped step", Options{Sanctioned: true, Controls: NewControls(ControlsView{Skip: []int{2}})}, "3. prep (skipped: deselected)"},
-		{"later start", Options{Sanctioned: true, StartAt: 3}, "3. prep (skipped: before start step)"},
+		{"skipped step", Options{Sanctioned: true, Controls: NewControls(ControlsView{Skip: []int{2}})}, ""},
+		{"later start", Options{Sanctioned: true, StartAt: 3}, ""},
 		{"not sanctioned", Options{}, "isn't a recorded run"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			tc.opts.Interactive = true
+			if tc.want == "" {
+				ui := &dangerUI{scripted: scripted{confirms: []bool{true}}}
+				run := Execute(context.Background(), rb, ui, "", tc.opts)
+				if len(ui.asked) != 0 || run.Steps[3].Status != StatusSucceeded {
+					t.Fatalf("asked %q; %s", ui.asked, statuses(run))
+				}
+				return
+			}
 			// Declined: skipped, and the plain confirm isn't asked as well.
 			ui := &dangerUI{answers: []bool{false}}
-			tc.opts.Interactive = true
 			run := Execute(context.Background(), rb, ui, "", tc.opts)
 			if len(ui.asked) != 1 || !strings.Contains(ui.asked[0], tc.want) {
 				t.Fatalf("asked %q, want %q", ui.asked, tc.want)
@@ -90,14 +101,40 @@ func TestDangerousOutOfSequence(t *testing.T) {
 	}
 }
 
-func TestDangerousUnattendedOutOfSequenceFails(t *testing.T) {
-	run := Execute(context.Background(), mustParse(t, dangerRB), Unattended{AssumeYes: true}, "", Options{Sanctioned: true, StartAt: 3})
+func TestDangerousUnattended(t *testing.T) {
+	// A later start: --yes is enough.
+	if run := Execute(context.Background(), mustParse(t, dangerRB), Unattended{AssumeYes: true}, "", Options{Sanctioned: true, StartAt: 3}); run.Status != StatusSucceeded {
+		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+	// Not a recorded run of the saved runbook: refused.
+	run := Execute(context.Background(), mustParse(t, dangerRB), Unattended{AssumeYes: true}, "", Options{})
 	if run.Status != StatusFailed || !strings.Contains(run.Steps[3].Error, "double-check") {
 		t.Fatalf("%s %+v", run.Status, run.Steps[3])
 	}
-	// In sequence, --yes is enough.
-	if run := Execute(context.Background(), mustParse(t, dangerRB), Unattended{AssumeYes: true}, "", Options{Sanctioned: true}); run.Status != StatusSucceeded {
+}
+
+// Pause before dangerous steps: the run stops before each one, and only
+// those; choosing to run it is its confirmation. It can change mid-run.
+func TestPauseDangerous(t *testing.T) {
+	rb := mustParse(t, dangerRB)
+	ui := &stepper{decisions: []StepDecision{StepRun}}
+	ctl := NewControls(ControlsView{PauseDangerous: true})
+	run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Sanctioned: true, Controls: ctl})
+	if run.Status != StatusSucceeded || len(ui.decisions) != 0 {
+		t.Fatalf("%s %s decisions left %d", run.Status, statuses(run), len(ui.decisions))
+	}
+	ui = &stepper{decisions: []StepDecision{StepSkip}}
+	run = Execute(context.Background(), rb, ui, "", Options{Interactive: true, Sanctioned: true, Controls: NewControls(ControlsView{PauseDangerous: true})})
+	if run.Steps[3].Status != StatusSkipped || run.Steps[3].Note != "skipped by operator" {
+		t.Fatalf("%s %+v", statuses(run), run.Steps[3])
+	}
+	// Off: no pause (the step's own confirm still asks).
+	ui = &stepper{scripted: scripted{confirms: []bool{true}}}
+	if run := Execute(context.Background(), rb, ui, "", Options{Interactive: true, Sanctioned: true, Controls: NewControls(ControlsView{})}); run.Status != StatusSucceeded {
 		t.Fatalf("%s %s", run.Status, statuses(run))
+	}
+	if !ctl.View().PauseDangerous {
+		t.Fatal("view lost pause_dangerous")
 	}
 }
 

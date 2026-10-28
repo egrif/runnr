@@ -427,6 +427,8 @@ type startReq struct {
 	PauseAfter  []int `json:"pause_after"`
 	// StepMode pauses before every step (interactive runs).
 	StepMode bool `json:"step_mode"`
+	// PauseDangerous pauses before every dangerous step (interactive runs).
+	PauseDangerous bool `json:"pause_dangerous"`
 	// Previous is a run ID to compare against ("last time"); defaults to the
 	// resumed run, else none.
 	Previous string `json:"previous"`
@@ -448,7 +450,7 @@ func stepList(idx []int) string {
 
 // toControls converts 1-based API step lists.
 func toControls(req startReq, n int) (engine.ControlsView, error) {
-	cv := engine.ControlsView{StepAll: req.StepMode}
+	cv := engine.ControlsView{StepAll: req.StepMode, PauseDangerous: req.PauseDangerous}
 	for _, f := range []struct {
 		src []int
 		dst *[]int
@@ -465,10 +467,11 @@ func toControls(req startReq, n int) (engine.ControlsView, error) {
 
 // controlsJSON is ControlsView with 1-based step numbers, as the API uses.
 type controlsJSON struct {
-	StepAll     bool  `json:"step_mode"`
-	Skip        []int `json:"skip"`
-	PauseBefore []int `json:"pause_before"`
-	PauseAfter  []int `json:"pause_after"`
+	StepAll        bool  `json:"step_mode"`
+	PauseDangerous bool  `json:"pause_dangerous"`
+	Skip           []int `json:"skip"`
+	PauseBefore    []int `json:"pause_before"`
+	PauseAfter     []int `json:"pause_after"`
 	// Suspend: a request to suspend the run, not yet taken.
 	Suspend *engine.SuspendError `json:"suspend,omitempty"`
 }
@@ -481,7 +484,7 @@ func toJSON(cv engine.ControlsView) controlsJSON {
 		}
 		return out
 	}
-	return controlsJSON{cv.StepAll, plus(cv.Skip), plus(cv.PauseBefore), plus(cv.PauseAfter), cv.Suspend}
+	return controlsJSON{cv.StepAll, cv.PauseDangerous, plus(cv.Skip), plus(cv.PauseBefore), plus(cv.PauseAfter), cv.Suspend}
 }
 
 func decode(r *http.Request, v any) error {

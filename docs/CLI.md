@@ -11,7 +11,7 @@ shows up in the other. Every command is listed in the
 - [Running](#running)
 - [Changing course](#changing-course)
 - [In tmux](#in-tmux)
-- [Out of sequence](#out-of-sequence)
+- [Starting later, dangerous steps, resuming](#starting-later-dangerous-steps-resuming)
 - [Unattended](#unattended)
 - [Schedule](#schedule)
 - [History](#history)
@@ -128,17 +128,17 @@ the run fails or is aborted while one is still going, it's left running:
 a Terraform apply isn't killed halfway. `runnr resume <run> --tmux` follows
 it again, and a later step with `wait_for` waits for it to finish.
 
-## Out of sequence
+## Starting later, dangerous steps, resuming
 
-`--from` starts later. A `dangerous` step that runs when earlier steps
-didn't lists what was skipped. To run it, you type its step number, not
-just `y`. A run that's aborted or fails can be continued with
+`--from` starts later. A `dangerous` step runs like any other;
+`--pause-dangerous` (or `danger` in the review) stops before each one, to
+run, skip, open a shell or abort. Outside a recorded run of the saved
+runbook (a runbook file, `--no-history`) you type its step number to run
+it, not just `y`. A run that's aborted or fails can be continued with
 `runnr resume <run-id>`: the same run carries on, its log too, with each
 resume and the earlier tries of steps done again recorded in it. If the
 runbook has changed since, it carries on with the new version (steps
 matched by name) and the log notes the version.
-
-![A dangerous step out of sequence](screenshots/cli-dangerous.png)
 
 ## Unattended
 

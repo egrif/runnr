@@ -166,7 +166,7 @@ folders written as their placeholders again, so your paths stay here.
 ### Running
 
 ```
-runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--pause-before 4] [--pause-after 4,9]
+runnr run <name|file> [-v key=value]... [--step] [--pause-dangerous] [--skip 3,5-7] [--pause-before 4] [--pause-after 4,9]
                       [--no-review] [-u] [-y] [--dry-run] [--json] [-q] [--no-history]
 ```
 
@@ -174,6 +174,7 @@ runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--pause-before 
 |---|---|
 | **Interactive** (default on a TTY) | Asks for missing inputs, shows the plan for review, then runs. It stops on its own for confirm-gated steps, manual steps and failures (retry / skip / force / abort). |
 | **Step by step** (`--step`) | Interactive, but pauses before *every* step: run / skip / continue without pausing / abort. |
+| **Pause before dangerous steps** (`--pause-dangerous`) | Interactive, and pauses before each `dangerous` step, the same way. Your choice: toggle it with `danger` in the review, or while a run is live in the GUI. |
 | **Unattended** (`-u`, or stdin isn't a TTY) | Never prompts. Inputs from `-v` or defaults. Confirm-gated steps fail unless `-y`. Manual steps follow their `unattended` policy. Any failure aborts. |
 
 `--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted, `75` suspended (to resume later).
@@ -205,12 +206,13 @@ run page shows a **Save to runbook** reminder, the CLI asks at the end, and
 `runnr save-edits <run-id>` does it later. Saving makes a new runbook
 version; if someone changed that step in the runbook since, it's refused.
 
-**Dangerous steps.** A step with `dangerous: true` runs like any other when
-it's in sequence in a recorded run of the saved runbook: every earlier step
-ran, was forced, or was left out by its own `when` (a resume counts what the
-earlier run finished). Otherwise (a later start, skipped steps, Run this, a
-runbook file) it lists what didn't run and waits for you to type the step
-number. Unattended runs refuse it then, even with `--yes`.
+**Dangerous steps.** A step with `dangerous: true` is marked ⚠ and runs
+like any other in a recorded run of the saved runbook, whatever was skipped
+before it. To stop before each one, turn on **Pause before dangerous steps**
+(`--pause-dangerous`, `danger` in the review, or the GUI's run options and
+live controls). Outside a recorded run of the saved runbook (Run this, a
+runbook file, `--no-history`) it waits for you to type the step number, and
+unattended runs refuse it, even with `--yes`.
 
 **Optional steps.** A step with `optional: true` isn't required. It's
 labelled optional in the plan, the step list, the GUI and the exports. An
@@ -471,7 +473,7 @@ steps:
     section: Deploy             # starts the Deploy section
     run: ./deploy.sh {{quote .version}}
     confirm: true               # ask first; unattended needs --yes
-    dangerous: true             # out of sequence, type the step number to run it
+    dangerous: true             # marked ⚠; --pause-dangerous stops before it
     timeout: 10m
     retries: 2
     retry_delay: 30s
