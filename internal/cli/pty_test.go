@@ -30,7 +30,12 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	runnrBin = filepath.Join(dir, "runnr")
-	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", runnrBin, "github.com/egrif/runnr/cmd/runnr")
+	args := []string{"build", "-o", runnrBin}
+	if os.Getenv("GOCOVERDIR") != "" {
+		// Measuring coverage: runnr writes its own there as it runs.
+		args = append(args, "-cover", "-coverpkg=github.com/egrif/runnr/...")
+	}
+	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), append(args, "github.com/egrif/runnr/cmd/runnr")...)
 	if out, err := build.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "building runnr: %v\n%s", err, out)
 		os.Exit(1)
