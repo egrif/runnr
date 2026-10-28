@@ -166,7 +166,7 @@ folders written as their placeholders again, so your paths stay here.
 ### Running
 
 ```
-runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--pause-before 4] [--pause-after 4,9]
+runnr run <name|file> [-v key=value]... [--step] [--pause-dangerous] [--skip 3,5-7] [--pause-before 4] [--pause-after 4,9]
                       [--no-review] [-u] [-y] [--dry-run] [--json] [-q] [--no-history]
 ```
 
@@ -174,16 +174,23 @@ runnr run <name|file> [-v key=value]... [--step] [--skip 3,5-7] [--pause-before 
 |---|---|
 | **Interactive** (default on a TTY) | Asks for missing inputs, shows the plan for review, then runs. It stops on its own for confirm-gated steps, manual steps and failures (retry / skip / force / abort). |
 | **Step by step** (`--step`) | Interactive, but pauses before *every* step: run / skip / continue without pausing / abort. |
+| **Pause before dangerous steps** (`--pause-dangerous`) | Interactive, and pauses before each `dangerous` step, the same way. Your choice: toggle it with `danger` in the review, or while a run is live in the GUI. |
 | **Unattended** (`-u`, or stdin isn't a TTY) | Never prompts. Inputs from `-v` or defaults. Confirm-gated steps fail unless `-y`. Manual steps follow their `unattended` policy. Any failure aborts. |
 
 `--json` implies unattended and prints the run record. Exit codes: `0` success, `1` failure, `130` aborted, `75` suspended (to resume later).
 
 **Review.** Before an interactive run, rerun or resume starts, you get the
-plan: every step with its kind, whether it confirms on its own, and how it
-went last time (the run being rerun/resumed, otherwise this runbook's latest
-run). From there: type step numbers to skip/include them, `b 4` / `a 4` to
-pause before/after a step, `v 4` to see what it will do, `l 4` to see what it
-did last time, `step` to step through everything, Enter to start.
+plan: every step with its kind and whether it confirms on its own; for a
+rerun or resume, also how each went in that run (`--compare <run-id|last>`
+shows another run's). From there: type step numbers to skip/include them,
+`b 4` / `a 4` to pause before/after a step, `v 4` to see what it will do,
+`l 4` to see what it did in that run, `step` to step through everything,
+Enter to start.
+
+**Another run for the same thing.** If the latest run for the same
+identifier inputs (the same target, say) from the past week is still running
+or stopped partway, starting another asks first: resume it, start a new
+run anyway, or quit (the GUI asks the same). Unattended, it's a note.
 
 **Pausing.** *Before* a step: run / skip / continue without
 pausing / abort. *After* a step: look at the result (and its `expect`), then
@@ -199,12 +206,13 @@ run page shows a **Save to runbook** reminder, the CLI asks at the end, and
 `runnr save-edits <run-id>` does it later. Saving makes a new runbook
 version; if someone changed that step in the runbook since, it's refused.
 
-**Dangerous steps.** A step with `dangerous: true` runs like any other when
-it's in sequence in a recorded run of the saved runbook: every earlier step
-ran, was forced, or was left out by its own `when` (a resume counts what the
-earlier run finished). Otherwise (a later start, skipped steps, Run this, a
-runbook file) it lists what didn't run and waits for you to type the step
-number. Unattended runs refuse it then, even with `--yes`.
+**Dangerous steps.** A step with `dangerous: true` is marked ⚠ and runs
+like any other in a recorded run of the saved runbook, whatever was skipped
+before it. To stop before each one, turn on **Pause before dangerous steps**
+(`--pause-dangerous`, `danger` in the review, or the GUI's run options and
+live controls). Outside a recorded run of the saved runbook (Run this, a
+runbook file, `--no-history`) it waits for you to type the step number, and
+unattended runs refuse it, even with `--yes`.
 
 **Optional steps.** A step with `optional: true` isn't required. It's
 labelled optional in the plan, the step list, the GUI and the exports. An
@@ -217,7 +225,8 @@ At any step prompt you can also:
 - **`v`**: view the step as it will run: commands with current values filled
   in, expected outcome, directory, what it publishes.
 - **`w`**: watch a background step (its terminal; Ctrl-] to come back).
-- **`l`**: what this step did last time (status, command, output, notes).
+- **`l`**: what this step did in the run being compared (rerun, resume or
+  `--compare`): status, command, output, notes.
 - **`e`**: show the run's state: every variable so far, credentials masked.
 - **`n`**: add a note to the step (stored with the run; see `runnr history <id>`).
 - **`!`**: open a shell (the runbook's `shell`, so pasted commands behave as
@@ -325,9 +334,12 @@ it aborted now**).
 - **Run, Run again, Resume** all open the same launch screen: inputs (carried
   over for rerun/resume), interactive / unattended / step through everything,
   and per step: include or skip, ⏸ pause before, ⏸ pause after, a badge if it
-  confirms on its own, and last time's result. Click a step to see **what it
-  will do** (rendered with your inputs, and the earlier run's state on
-  resume) next to **what it did last time**.
+  confirms on its own, and (rerun or resume) that run's result. Click a step
+  to see **what it will do** (rendered with your inputs, and the earlier
+  run's state on resume) next to its **Details**, or **History**: what it
+  did in any earlier run. A new run isn't compared with earlier ones unless
+  you ask (the History tab). Starting a run while the latest for the same
+  identifier inputs is unfinished asks first: resume it, or start a new one.
 - **While a run is live**, upcoming steps can still be skipped or paused, and
   step-through switched on or off. Open any step: what it does is on the
   left, and on the right **This run** (its output as it arrives, checks,
@@ -461,7 +473,7 @@ steps:
     section: Deploy             # starts the Deploy section
     run: ./deploy.sh {{quote .version}}
     confirm: true               # ask first; unattended needs --yes
-    dangerous: true             # out of sequence, type the step number to run it
+    dangerous: true             # marked ⚠; --pause-dangerous stops before it
     timeout: 10m
     retries: 2
     retry_delay: 30s

@@ -48,9 +48,9 @@ reach the fakes without any change.
   5 minutes is tried again at once), but a repeat still gives up after its
   `timeout`, counted in simulated time. A fake's `delay:` and `sleep` in a
   script are real.
-- **The run** is an ordinary interactive run of the saved runbook (in
-  sequence, so `dangerous` steps only ask when out of sequence). It isn't
-  recorded in the history.
+- **The run** is an ordinary interactive run of the saved runbook (so
+  `dangerous` steps don't ask for a typed check). It isn't recorded in the
+  history.
 
 ## Keeping tests away from the real world
 
@@ -176,7 +176,7 @@ and a scenario's `operator` overrides the suite's.
 | Prompt | Answers | Default |
 | --- | --- | --- |
 | `confirm` | `yes`, `no` | `yes` |
-| `danger` (typed check out of sequence) | `type`, `decline` | `type` |
+| `danger` (typed check outside a run of the saved runbook) | `type`, `decline` | `type` |
 | `typed` (`confirm_typing`) | `type`, `decline` | `type` |
 | `ask` (the step's `runnr_confirm`, `runnr_ask`) | `yes`, `no`, or the text to answer | `yes` (confirm), blank (ask) |
 | `manual` | `done`, `skip`, `fail` | `done` |

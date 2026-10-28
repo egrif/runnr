@@ -281,8 +281,12 @@ type Options struct {
 	Controls *Controls
 	// Review shows the plan before running (if the Interactor is a Reviewer).
 	Review bool
-	// Previous is an earlier run to compare against ("last time").
+	// Previous is an earlier run to compare against ("last time"): only
+	// one asked for (the run being rerun or resumed, or one chosen).
 	Previous *Run
+	// BeforeStart, if set, is called once the inputs are known, before the
+	// review and the first step; an error stops the run there.
+	BeforeStart func(*Run) error
 	// Libraries are the function libraries the runbook uses, resolved.
 	Libraries []*runbook.Library
 	// Folders are the values of the placeholders (@PROJECT_DIR@ …) the
@@ -305,10 +309,10 @@ type Options struct {
 	// Save is called with a snapshot after every state change worth keeping.
 	Save func(*Run)
 	// Sanctioned: a recorded run of a saved runbook. Dangerous steps run
-	// without a double check only in a sanctioned run, in sequence.
+	// without a double check only in a sanctioned run.
 	Sanctioned bool
 	// Resumed is the run this one continues; steps that finished there
-	// count as in sequence here.
+	// are carried over.
 	Resumed *Run
 	// Continue resumes Resumed in place: the same run (pass its ID), its
 	// finished steps as they were, earlier tries of the steps it does
@@ -617,6 +621,9 @@ func Execute(ctx context.Context, rb *runbook.Runbook, ui Interactor, id string,
 		if x.run.Window != nil {
 			x.run.Window.Target = rb.WindowTarget(x.vars)
 		}
+	}
+	if err == nil && opts.BeforeStart != nil {
+		err = opts.BeforeStart(x.snapshot())
 	}
 	if err == nil {
 		x.restoreState()

@@ -2,7 +2,8 @@
 
 // Launch screen, shared by "Run", "Run again" and "Resume": inputs, how to
 // run, and for every step: include it or not, pause before/after it, what
-// it will do (rendered with these inputs) and what it did last time.
+// it will do (rendered with these inputs) and, resuming or running again,
+// what it did then.
 
 const DONE = ["succeeded", "skipped", "forced"];
 const enc = encodeURIComponent;
@@ -11,13 +12,9 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
   const data = await api("GET", `/api/runbooks/${enc(name)}`);
   const rb = data.runbook;
   const plan = scheduleId ? await api("GET", `/api/schedules/${enc(scheduleId)}`).catch(() => null) : null;
-  let prev = null;
-  if (runId) {
-    prev = alignedRun((await api("GET", `/api/runs/${enc(runId)}`)).run, rb);
-  } else {
-    const latest = await api("GET", `/api/runs?runbook=${enc(name)}&limit=1`);
-    if (latest.length) prev = (await api("GET", `/api/runs/${enc(latest[0].id)}`)).run;
-  }
+  // What a step did before shows only for the run being resumed or run
+  // again; other runs are in each step's History tab.
+  const prev = runId ? alignedRun((await api("GET", `/api/runs/${enc(runId)}`)).run, rb) : null;
   const history = await api("GET", `/api/runs?runbook=${enc(name)}&limit=30`).catch(() => []);
   const st = {
     rb, prev, history, mode, runId, preview: null, open: new Set(),
@@ -57,6 +54,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
         <div class="options">
           <label><input type="radio" name="mode" value="interactive" checked> Interactive</label>
           <label><input type="radio" name="mode" value="unattended"> Unattended</label>
+          ${rb.steps.some((s) => s.dangerous) ? `<label title="Stop before each ⚠ dangerous step to choose: run, skip, open a shell, or abort"><input type="checkbox" name="danger"> Pause before dangerous steps</label>` : ""}
           <details class="run-opts"><summary>More options<span class="opt-count"></span></summary><div class="options">
             <label title="Stop before every step to choose: run, skip, open a shell, or carry on"><input type="checkbox" name="stepmode"> Step through every step</label>
             <label title="Approve confirm-gated steps automatically in unattended mode"><input type="checkbox" name="yes"> Auto-approve confirmations</label>
@@ -101,6 +99,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
   const sync = () => {
     form.yes.disabled = form.mode.value !== "unattended";
     form.stepmode.disabled = form.mode.value === "unattended";
+    if (form.danger) form.danger.disabled = form.mode.value === "unattended";
     const n = st.include.filter(Boolean).length;
     $("#count").textContent = `${n} of ${rb.steps.length} selected`;
     $("#start").textContent = `▶ ${what} (${n} step${n === 1 ? "" : "s"})`;
@@ -140,7 +139,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
     const nums = (pred) => rb.steps.map((_, i) => i).filter(pred).map((i) => i + 1);
     const body = {
       vars: vars(), unattended: form.mode.value === "unattended", yes: form.yes.checked, dry_run: form.dry.checked,
-      step_mode: form.stepmode.checked, skip: nums((i) => !st.include[i]),
+      step_mode: form.stepmode.checked, pause_dangerous: !!form.danger?.checked && !form.danger.disabled, skip: nums((i) => !st.include[i]),
       pause_before: nums((i) => st.before.has(i)), pause_after: nums((i) => st.after.has(i)),
     };
     Object.assign(body, folders.body());
@@ -155,6 +154,7 @@ async function viewLaunch(el, name, mode, runId, scheduleId) {
         body.use_preferred = true;
       }
     }
+    if (mode !== "resume" && !body.dry_run && !(await askUnfinished(rb.name, body.vars))) return;
     try {
       const { id } = mode === "resume"
         ? await api("POST", `/api/runs/${enc(runId)}/resume`, body)
@@ -199,7 +199,7 @@ function stepBadges(s) {
     s.stop_after && `<span class="badge-k" title="Runs in the background until this step finishes">until ${esc(s.stop_after)}</span>`,
     s.repeat && `<span class="badge-k" title="Re-runs the checks until they all pass">repeats</span>`,
     s.confirm && `<span class="badge-k warn" title="Asks before running, even without pauses">confirms on its own</span>`,
-    s.dangerous && `<span class="badge-k fail" title="Out of sequence, it needs the step number typed to run">⚠ dangerous</span>`,
+    s.dangerous && `<span class="badge-k fail" title="Dangerous: Pause before dangerous steps (More options) stops before it">⚠ dangerous</span>`,
     s.choose && `<span class="badge-k" title="Asks which way each time (unattended: the preferred one)">asks which way</span>`,
     s.window && `<span class="badge-k fail" title="${s.window === "open" ? "Production goes down when this step starts" : "Production is back when this step finishes"}">window ${s.window}s</span>`,
     s.always && `<span class="badge-k" title="Runs even when starting later or resuming">always</span>`,
@@ -303,6 +303,41 @@ function lastTime(r, run) {
     ${renderChecks(r.checks)}${renderSub(r)}
     ${(r.shells || []).map((t, n) => `<details class="shell-log"><summary>Shell session ${n + 1}</summary><pre class="log">${esc(t)}</pre></details>`).join("")}
     ${renderNotes(r.notes)}`;
+}
+
+// askUnfinished asks before starting a run when the latest for the same
+// thing (the same identifier inputs) is still running or stopped partway:
+// true to start anyway; resuming or opening that run goes there instead.
+async function askUnfinished(runbook, vars) {
+  let u;
+  try { u = (await api("POST", `/api/runbooks/${enc(runbook)}/unfinished`, { vars })).run; } catch { return true; }
+  if (!u) return true;
+  const running = u.status === "running";
+  const forWhat = u.identifiers?.length ? ` for <b>${esc(u.identifiers.join(", "))}</b>` : "";
+  const ago = duration(u.started, new Date().toISOString());
+  const what = running
+    ? `is still running${u.owner ? ` (${esc(u.owner.via)} on ${esc(u.owner.host)})` : ""}, started ${esc(ago)} ago.`
+    : `stopped${u.step >= 0 ? ` at step ${u.step + 1} (${esc(u.step_name)})` : ""}: ${esc(u.status)}, ${esc(ago)} ago.`;
+  const dlg = document.createElement("dialog");
+  dlg.className = "edit-step abort-dialog";
+  dlg.innerHTML = `<h3>Another run isn't finished</h3>
+    <p>Run <a href="#/runs/${enc(u.id)}" data-v="open">${esc(u.id)}</a>${forWhat} ${what}</p>
+    <div class="row"><span class="spacer"></span><button data-v="">Cancel</button><button data-v="new">Start a new run</button>
+      <button class="primary" data-v="${running ? "open" : "resume"}">${running ? "Open it" : "Resume it…"}</button></div>`;
+  document.body.append(dlg);
+  const v = await new Promise((done) => {
+    dlg.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-v]");
+      if (b) { e.preventDefault(); done(b.dataset.v); } else if (e.target === dlg) done("");
+    });
+    dlg.addEventListener("cancel", () => done(""));
+    dlg.showModal();
+  });
+  dlg.close();
+  dlg.remove();
+  if (v === "open") location.hash = `#/runs/${enc(u.id)}`;
+  if (v === "resume") location.hash = `#/runbooks/${enc(runbook)}?resume=${enc(u.id)}`;
+  return v === "new";
 }
 
 function renderLaunchSteps(st) {

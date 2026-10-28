@@ -20,7 +20,7 @@ Screenshots of the web GUI (`runnr serve`), using a demo runbook that moves an
 Pick inputs, choose how to run (interactive, step-through or unattended), and
 see every step before it runs: grouped by section, with each section's purpose
 and end state, planned times relative to the maintenance window (T-2d, T+0…),
-and what each step did last time. Untick steps to skip them, or set ⏸ pauses.
+and, in each step's History tab, what it did in earlier runs. Untick steps to skip them, or set ⏸ pauses.
 
 ![The run page for a runbook](screenshots/runbook.png)
 
@@ -32,8 +32,8 @@ against its target.
 ![A run with the maintenance window open](screenshots/running-window.png)
 
 Steps stop for confirmations, manual instructions and failures. Each step shows
-what it's doing, its command and its output; ⚠ dangerous steps ask for a typed
-double check when they're run out of order. You can open a shell with the
+what it's doing, its command and its output; turn on **Pause before dangerous
+steps** to stop before each ⚠ dangerous one. You can open a shell with the
 run's variables, add notes, or ✎ edit a step mid-run and run it again. Under
 every question, ↺ Back to step N and Go to step move the run (back runs the
 steps from there again, ahead skips the ones between); ■ Stop step

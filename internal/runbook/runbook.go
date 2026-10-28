@@ -145,8 +145,8 @@ type Step struct {
 	// run is resumed, the last step done before it is verified first; if
 	// that fails, the step is done again. Template.
 	Verify string `yaml:"verify,omitempty" json:"verify,omitempty"`
-	// Dangerous steps need a typed double check unless they run in
-	// sequence in a recorded run of the saved runbook.
+	// Dangerous steps need a typed double check outside a recorded run
+	// of the saved runbook; the operator can pause before each one.
 	Dangerous       bool   `yaml:"dangerous,omitempty" json:"dangerous,omitempty"`
 	Timeout         string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Retries         int    `yaml:"retries,omitempty" json:"retries,omitempty"`

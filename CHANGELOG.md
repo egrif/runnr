@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.14.0 — 2026-10-28
+
+Runs for the same thing: starting one asks about an unfinished one, and a
+new run isn't compared with earlier ones unless you ask. Pausing before
+dangerous steps is the operator's choice.
+
+### Added
+
+- **Ask before starting over.** If the latest run for the same identifier
+  inputs (the same target) from the past week is still running or stopped
+  partway, starting another asks first: **Resume it…** (or open it, if it's
+  running), **Start a new run**, or cancel. At the CLI: `[r]esume it /
+  [n]ew run anyway / [q]uit` once the inputs are in; unattended, a note.
+  API: `POST /api/runbooks/{name}/unfinished`.
+- **Pause before dangerous steps**: a run option (`--pause-dangerous`,
+  `danger` in the CLI's review; a checkbox on the launch screen, ⚠ Pause
+  before dangerous in the console) that stops before each dangerous step:
+  run, skip, open a shell, or abort. It can be turned on or off while the
+  run is live. API: `pause_dangerous` on a run and its `controls`.
+- `--compare <run-id|last>` on `runnr run` (and `rerun`, `resume`): show
+  what each step did in that run, in the review and at each step (`l`).
+
+### Changed
+
+- **No "last time" unless asked.** A new run is no longer compared with the
+  runbook's latest run: no ✓/✗ marks beside its steps, no "last time" line
+  at each step, and a step opens on its Details rather than its History.
+  Rerun and resume still compare with that run; a step's History tab shows
+  any earlier run. The API's `previous` defaults to none for a new run.
+- **Dangerous steps no longer need a double check because earlier steps
+  were skipped** (or the run started later): they run like any other, and
+  unattended runs with `--yes` no longer refuse them. Outside a recorded
+  run of the saved runbook (Run this, a runbook file) they still need the
+  step number typed.
+
 ## v0.13.0 — 2026-10-28
 
 A calmer web interface: the navigation is across the top, each page

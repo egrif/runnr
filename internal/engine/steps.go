@@ -73,8 +73,9 @@ func (x *executor) stepOnce(ctx context.Context, i int, step runbook.Step) error
 	x.openWindow(i)
 
 	confirmed := false
-	// Optional steps aren't required: an interactive run asks first.
-	if _, before, _ := x.ctl.Get(i); (x.takePause(i) || before || (step.Optional && !x.opts.DryRun)) && x.canPause() {
+	// Optional steps aren't required: an interactive run asks first. So
+	// does a dangerous step, if the operator asked for that.
+	if _, before, _ := x.ctl.Get(i); (x.takePause(i) || before || (step.Optional && !x.opts.DryRun) || (step.Dangerous && x.ctl.PauseDangerous())) && x.canPause() {
 		q, done := x.asking(ctx)
 		d, err := x.ui.(Stepper).BeforeStep(q, x.View(i))
 		done()

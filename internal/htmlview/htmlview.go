@@ -267,7 +267,7 @@ func buildStep(p *engine.Previewer, sc *scripter, rb *runbook.Runbook, i int, st
 		b("confirm", "confirm", "Asks before it runs")
 	}
 	if st.Dangerous {
-		b("dangerous", "danger", "Out of sequence, it needs a typed double check")
+		b("dangerous", "danger", "Dangerous: take care running it")
 	}
 	if st.When != "" {
 		b("conditional", "", "Skipped unless: "+st.When)

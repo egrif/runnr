@@ -569,13 +569,14 @@ type runFlags struct {
 	vars                                   []string
 	unattended, yes, dry, js, usePreferred bool
 	quiet, noHistory                       bool
-	stepMode, noReview                     bool
+	stepMode, noReview, pauseDangerous     bool
 	skip, before, after                    string
 	tmux                                   bool
 	collection                             string
 	folders                                []string // --set NAME=FOLDER
 	runID                                  string
-	newRun                                 bool // resume: a new run, not this one continued
+	compare                                string // a run to show "last time" from
+	newRun                                 bool   // resume: a new run, not this one continued
 }
 
 func (f *runFlags) register(cmd *cobra.Command) {
@@ -589,11 +590,13 @@ func (f *runFlags) register(cmd *cobra.Command) {
 	fl.BoolVarP(&f.quiet, "quiet", "q", false, "hide command output")
 	fl.BoolVar(&f.noHistory, "no-history", false, "don't record this run")
 	fl.BoolVar(&f.stepMode, "step", false, "pause before every step (run / skip / view / shell / …)")
+	fl.BoolVar(&f.pauseDangerous, "pause-dangerous", false, "pause before every dangerous step (run / skip / view / shell / …)")
 	fl.BoolVar(&f.noReview, "no-review", false, "start without reviewing the plan")
 	fl.StringVar(&f.skip, "skip", "", "steps to leave out, e.g. 3,5-7")
 	fl.StringVar(&f.before, "pause-before", "", "steps to stop before (run / skip / view / shell), e.g. 4,9")
 	fl.StringVar(&f.after, "pause-after", "", "steps to stop after, to check the result before going on")
 	fl.BoolVar(&f.tmux, "tmux", false, "run in a tmux session: it outlives this terminal (runnr attach), with the steps and a shell beside it, and background steps in windows of their own that outlive runnr")
+	fl.StringVar(&f.compare, "compare", "", "show what each step did in an earlier run (a run ID, or last: this runbook's latest) in the review and at each step")
 	f.registerFolders(cmd)
 	fl.StringVar(&f.runID, "run-id", "", "the new run's ID")
 	_ = fl.MarkHidden("run-id")
@@ -708,7 +711,7 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 		}
 		return startTmuxRun(os.Args[1:], rb.Name, id)
 	}
-	cv := engine.ControlsView{StepAll: f.stepMode}
+	cv := engine.ControlsView{StepAll: f.stepMode, PauseDangerous: f.pauseDangerous}
 	for flag, dst := range map[string]*[]int{f.skip: &cv.Skip, f.before: &cv.PauseBefore, f.after: &cv.PauseAfter} {
 		if flag == "" {
 			continue
@@ -719,9 +722,12 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 		}
 		*dst = idxs
 	}
-	if l.previous == nil {
-		// Compare with the latest run of this runbook, if there is one (not
-		// the run being carried on).
+	// What each step did in an earlier run shows only when asked for: the
+	// run being rerun or resumed, or --compare.
+	switch f.compare {
+	case "":
+	case "last":
+		l.previous = nil
 		if runs, err := st.ListRuns(rb.Name, 2); err == nil {
 			for _, r := range runs {
 				if l.resumed == nil || r.ID != l.resumed.ID {
@@ -729,6 +735,10 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 					break
 				}
 			}
+		}
+	default:
+		if l.previous, err = st.LoadRun(f.compare); err != nil {
+			return fmt.Errorf("--compare: %w", err)
 		}
 	}
 	base, startAt, resumes, state := l.base, l.startAt, l.resumes, l.state
@@ -829,7 +839,47 @@ func (f *runFlags) execute(st *store.Store, rb *runbook.Runbook, rev ver.ID, l l
 			}
 		}
 	}
+	// Another run for the same thing that didn't finish: ask first.
+	declined, instead := false, "" // instead: resume that run
+	if !f.noHistory && !f.dry {
+		opts.BeforeStart = func(r *engine.Run) error {
+			u := project.Unfinished(st, rb, engine.RunIdentifiers(r, rb), r.ID)
+			if u == nil || (l.resumed != nil && u.ID == l.resumed.ID) {
+				return nil
+			}
+			if !interactive {
+				fmt.Fprintln(os.Stderr, "note: "+unfinishedText(u, rb))
+				return nil
+			}
+			fmt.Fprintln(term.out, term.c("33", "  ⚠ "+unfinishedText(u, rb)))
+			choices := map[string]string{"n": "n", "new": "n", "q": "q", "quit": "q"}
+			prompt, def := "[n]ew run anyway / [q]uit", "q"
+			if u.Status != engine.StatusRunning {
+				choices["r"], choices["resume"] = "r", "r"
+				prompt, def = "[r]esume it / "+prompt, "r"
+			}
+			a, err := term.choose(ctx, prompt, choices, def)
+			if err != nil || a == "n" {
+				return err
+			}
+			if a == "r" {
+				instead = u.ID
+			}
+			declined = true
+			return engine.ErrAborted
+		}
+	}
 	run := engine.Execute(ctx, rb, ui, id, opts)
+	if declined {
+		// Nothing ran: no record of it.
+		_ = st.DeleteRun(run.ID)
+		if instead == "" {
+			return errors.New("not started")
+		}
+		stop()
+		abort(nil)
+		return f.resume(st, instead)
+	}
 	if len(run.Edits) > 0 && !f.js {
 		offerSaveEdits(st, run, term, interactive && !f.noHistory)
 	}
@@ -958,54 +1008,94 @@ stored, so they're asked for again (or pass them with -v). Steps marked
 'always' run again.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			prev, err := s().LoadRun(args[0])
-			if err != nil {
-				return err
-			}
-			start := engine.ResumePoint(prev)
-			if start < 0 {
-				return fmt.Errorf("run %s has no unfinished steps", prev.ID)
-			}
-			rb, rev, err := s().Get(prev.Runbook)
-			if err != nil {
-				return err
-			}
-			if engine.RunbookChanged(prev, rb) {
-				if f.newRun {
-					return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step> (or resume without --new-run to carry the run on with this version)", rb.Name, prev.ID, rb.Name)
-				}
-				// The run carries on with this version: its steps matched by name.
-				aligned, moved := engine.AlignRun(prev, rb)
-				names := map[int]string{}
-				for i, st := range prev.Steps {
-					names[i] = st.Name
-				}
-				if err := s().MoveRunNotes(prev.ID, moved, names); err != nil {
-					return err
-				}
-				gone := len(aligned.Removed) - len(prev.Removed)
-				fmt.Printf("runbook %s changed since this run (version %s, it ran version %s): carrying on with it, steps matched by name%s\n",
-					rb.Name, rev.Short(), prev.RunbookVersion.Short(), map[bool]string{true: fmt.Sprintf("; %d step(s) no longer in it are kept in the record", gone), false: ""}[gone > 0])
-				prev = aligned
-				if start = engine.ResumePoint(prev); start < 0 {
-					return fmt.Errorf("run %s has no unfinished steps in this version", prev.ID)
-				}
-			}
-			fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
-			l := launch{base: engine.ResumeInputs(prev), startAt: start, resumes: prev.ID, state: engine.ResumeState(prev), previous: prev, resumed: prev}
-			if !f.newRun {
-				// The same run: compared with what it was compared with before.
-				l.resumes, l.previous = "", nil
-				if prev.Previous != "" {
-					l.previous, _ = s().LoadRun(prev.Previous)
-				}
-			}
-			return f.execute(s(), rb, rev, l)
+			return f.resume(s(), args[0])
 		},
 	}
 	f.register(cmd)
 	cmd.Flags().BoolVar(&f.newRun, "new-run", false, "start a new run (pointing back at this one) instead of carrying this one on")
 	return cmd
+}
+
+// unfinishedText says what's left of run u, an earlier run of rb for the
+// same thing.
+func unfinishedText(u *engine.Run, rb *runbook.Runbook) string {
+	what := "run " + u.ID
+	if ids := engine.RunIdentifiers(u, rb); len(ids) > 0 {
+		what += " for " + strings.Join(ids, ", ")
+	}
+	if u.Status == engine.StatusRunning {
+		via := ""
+		if o := u.Owner; o != nil {
+			via = fmt.Sprintf(", %s on %s", o.Via, o.Host)
+		}
+		return fmt.Sprintf("%s is still running (started %s ago%s); watch it with: runnr watch %s", what, ago(u.Started), via, u.ID)
+	}
+	at := ""
+	if i := engine.ResumePoint(u); i >= 0 && i < len(u.Steps) {
+		at = fmt.Sprintf(" at step %d (%s)", i+1, u.Steps[i].Name)
+	}
+	return fmt.Sprintf("%s stopped%s: %s, %s ago", what, at, u.Status, ago(u.Started))
+}
+
+// ago is how long ago t was, roughly: 5m, 3h, 2d.
+func ago(t time.Time) string {
+	switch d := time.Since(t); {
+	case d < time.Minute:
+		return "under a minute"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	}
+}
+
+// resume carries on run id (or, with --new-run, starts a new run from it).
+func (f *runFlags) resume(st *store.Store, id string) error {
+	prev, err := st.LoadRun(id)
+	if err != nil {
+		return err
+	}
+	start := engine.ResumePoint(prev)
+	if start < 0 {
+		return fmt.Errorf("run %s has no unfinished steps", prev.ID)
+	}
+	rb, rev, err := st.Get(prev.Runbook)
+	if err != nil {
+		return err
+	}
+	if engine.RunbookChanged(prev, rb) {
+		if f.newRun {
+			return fmt.Errorf("runbook %q changed since run %s; use: runnr run %s --from <step> (or resume without --new-run to carry the run on with this version)", rb.Name, prev.ID, rb.Name)
+		}
+		// The run carries on with this version: its steps matched by name.
+		aligned, moved := engine.AlignRun(prev, rb)
+		names := map[int]string{}
+		for i, sr := range prev.Steps {
+			names[i] = sr.Name
+		}
+		if err := st.MoveRunNotes(prev.ID, moved, names); err != nil {
+			return err
+		}
+		gone := len(aligned.Removed) - len(prev.Removed)
+		fmt.Printf("runbook %s changed since this run (version %s, it ran version %s): carrying on with it, steps matched by name%s\n",
+			rb.Name, rev.Short(), prev.RunbookVersion.Short(), map[bool]string{true: fmt.Sprintf("; %d step(s) no longer in it are kept in the record", gone), false: ""}[gone > 0])
+		prev = aligned
+		if start = engine.ResumePoint(prev); start < 0 {
+			return fmt.Errorf("run %s has no unfinished steps in this version", prev.ID)
+		}
+	}
+	fmt.Printf("resuming %s at step %d (%s)\n", prev.ID, start+1, rb.Steps[start].Name)
+	l := launch{base: engine.ResumeInputs(prev), startAt: start, resumes: prev.ID, state: engine.ResumeState(prev), previous: prev, resumed: prev}
+	if !f.newRun {
+		// The same run: compared with what it was compared with before.
+		l.resumes, l.previous = "", nil
+		if prev.Previous != "" {
+			l.previous, _ = st.LoadRun(prev.Previous)
+		}
+	}
+	return f.execute(st, rb, rev, l)
 }
 
 func inspectCmd(s func() *store.Store) *cobra.Command {

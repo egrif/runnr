@@ -111,6 +111,7 @@ Runs planned ahead of time. Nothing starts them yet.
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
+| POST | `/api/runbooks/{name}/unfinished` | `{vars}` | `{run}`: the latest run for the same identifier inputs (as these `vars` give them), if it's still running or stopped partway and from the past week, else `null`: `{id, status, started, identifiers, step, step_name, owner}` (`step` is where it would resume; -1 while running). The GUI asks before starting another |
 | GET | `/api/runbooks/{name}/export?v=name=value&download=1&format=html` | | the runbook as Markdown to follow by hand, or with `format=html` as a page to read (`v` fills in inputs; `download` saves it as a file) |
 | GET | `/api/schedules?from=RFC3339&tz=Area/City` | | planned runs, soonest first, each `{id, runbook, at, title, notes, inputs, description, window, entries, error}`; `from` leaves out runs entirely before it |
 | POST | `/api/schedules` | `{runbook, at, title?, notes?, inputs?, created_by?}` | `201` the schedule |
@@ -183,7 +184,7 @@ Starting a run fails with `400` if a library the runbook uses doesn't exist.
 | POST | `/api/runs/{id}/notes` | `{step, text, author?}` (`step` 1-based; `0` = the run) | `201 {time, author, text}` |
 | GET | `/api/runs/{id}/preview` | | `{steps: [StepView]}` with the run's inputs and current state |
 | PUT | `/api/runs/{id}/access` | `{mode: everyone\|only\|except, names?}` | the live run's presence `{viewers, access, started_by}`: who may drive it (the others watch) |
-| GET / PUT | `/api/runs/{id}/controls` | `{step_mode, skip, pause_before, pause_after}` (and, read only, `suspend`: a request to suspend not yet taken) | the live run's controls; changes apply to steps not reached yet |
+| GET / PUT | `/api/runs/{id}/controls` | `{step_mode, pause_dangerous, skip, pause_before, pause_after}` (and, read only, `suspend`: a request to suspend not yet taken) | the live run's controls; changes apply to steps not reached yet |
 
 Start request:
 
@@ -199,7 +200,8 @@ Start request:
   "pause_before": [4],    // interactive: stop before these steps
   "pause_after": [4, 9],  // interactive: stop after these to check the result
   "step_mode": false,     // interactive: pause before every step
-  "previous": "<run id>", // compare against this run (default: the resumed run, else the latest)
+  "pause_dangerous": false, // interactive: pause before every dangerous step
+  "previous": "<run id>", // compare against this run (default: the resumed or rerun run, else none)
   "collection": "payments", // take the placeholders' folders from this collection (default: the runbook's)
   "folders": {"REPO_ROOT": "/src/ra"}, // folders for this run, kept as the runbook's (a resume keeps them)
   "wait": true            // block until done and return the run (requires unattended)
@@ -241,7 +243,7 @@ changed: `run` carries `inputs`, `input_changes` and `state`). Answer a
 |---|---|
 | `input` | the input's value |
 | `confirm` | `run`, `skip`, `abort` |
-| `danger` (dangerous step out of sequence) | `run` with `note` = the question's `confirm` (the step number; asked again otherwise), `skip`, `abort` |
+| `danger` (dangerous step outside a recorded run of the saved runbook) | `run` with `note` = the question's `confirm` (the step number; asked again otherwise), `skip`, `abort` |
 | `typed` (a point of no return, `confirm_typing`) | `run` with `note` = the question's `confirm`, `skip`, `abort` |
 | `ask` (a step's `runnr_confirm`) | `yes`, `no` |
 | `ask_text` (a step's `runnr_ask`) | the answer |
