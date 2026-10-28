@@ -42,8 +42,15 @@ type browser struct {
 	errs []string // uncaught exceptions and console errors
 }
 
-func newBrowser(t *testing.T) *browser {
+// newBrowser starts one; cfg (optional) is the server's. Claude is off
+// unless cfg gives one: a test never asks the real one.
+func newBrowser(t *testing.T, cfg ...Config) *browser {
 	t.Helper()
+	c := Config{NoClaude: true}
+	if len(cfg) > 0 {
+		c = cfg[0]
+		c.NoClaude = c.Claude == nil
+	}
 	chrome := chromePath()
 	if chrome == "" {
 		if os.Getenv("RUNNR_BROWSER_TESTS") != "" {
@@ -58,7 +65,7 @@ func newBrowser(t *testing.T) *browser {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(New(st, Config{}).Handler())
+	ts := httptest.NewServer(New(st, c).Handler())
 	t.Cleanup(ts.Close)
 	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chrome), chromedp.WindowSize(1400, 1000), chromedp.Flag("no-sandbox", true))
 	actx, cancelA := chromedp.NewExecAllocator(context.Background(), opts...)

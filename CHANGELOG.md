@@ -25,6 +25,12 @@ Fixes found by new tests of the CLI (in a terminal) and the web interface
   answer when it came back after a later one's (the dialog opening on ~,
   then the path typed): what they showed and what Export wrote could
   differ. A slower, earlier answer is now dropped.
+- The editor (and a library's page) no longer throws when a check of what
+  was typed comes back after the page was left (after a save or delete).
+- **A blank page now and then on opening runnr**: the first page could be
+  drawn before the scripts that load after the router had, and a page
+  that needed the console's code then failed. It now starts once every
+  script has loaded.
 
 ### Tests
 
@@ -45,6 +51,14 @@ Fixes found by new tests of the CLI (in a terminal) and the web interface
   exporting a runbook with its library (asking before writing over), and a
   run's records exported from its page and imported from the history.
   The browser tests' server has a home folder of its own.
+- **Runbook tests, Explain, libraries and the schedule in a browser**: the
+  Tests tab (run all, one, a scenario's definition) and the editor's
+  tests against a draft; Explain with a fake Claude (streamed Markdown, a
+  follow-up with what came before, an answer from runnr's store and asked
+  again, a runbook review; no buttons with Claude off); a library written,
+  edited, listed and deleted; a run scheduled with an input, shown in the
+  agenda and the calendar, changed, started with its input filled in, and
+  deleted. The browser tests never ask the real Claude.
 - CI runs the tests with the race detector, as `make test` does.
 
 ## v0.14.0 — 2026-10-28

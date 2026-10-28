@@ -270,8 +270,8 @@ func TestBrowserExportImportRun(t *testing.T) {
 	b.until(`document.querySelector("dialog.path-picker[open] .pp-list")?.children.length > 0`, "the picker's listing")
 	b.setValue("dialog.path-picker[open] .pp-path", dir)
 	b.click("dialog.path-picker[open] [data-go]")
-	// (It may show the folder by another name: /private/var for /var.)
-	b.until(fmt.Sprintf(`document.querySelector("dialog.path-picker[open] .pp-path")?.value.endsWith(%q)`, filepath.Join(filepath.Base(filepath.Dir(dir)), filepath.Base(dir))), "the folder chosen")
+	// It's listed (the file shows, dimmed: it's a folder being chosen).
+	b.until(fmt.Sprintf(`[...document.querySelectorAll("dialog.path-picker[open] .pp-list li")].some((li) => li.dataset.name === %q)`, filepath.Base(file)), "the folder's listing")
 	b.click("dialog.path-picker[open] [data-ok]")
 	b.waitText(run.ID)
 	b.waitText("Import 1 run")
