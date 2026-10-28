@@ -293,9 +293,15 @@ type SaveOpts struct {
 // Save validates raw YAML and makes it the current version of its declared
 // name.
 func (s *Store) Save(raw []byte, o SaveOpts) (*runbook.Runbook, ver.ID, error) {
-	_, v, err := s.saveDoc(runbookKind, raw, o)
+	name, v, err := s.saveDoc(runbookKind, raw, o)
 	if err != nil {
 		return nil, "", err
+	}
+	if o.OldName != "" && o.OldName != name {
+		// Its folders on this machine go with it.
+		if err := s.renamePlaceholderScope(RunbookScope(o.OldName), RunbookScope(name)); err != nil {
+			return nil, "", err
+		}
 	}
 	rb, err := runbook.Parse(raw)
 	return rb, v, err

@@ -107,3 +107,45 @@ func TestFolders(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// Folders given for a run become the runbook's own: they win over its
+// collection's, settle where its collections disagree, and follow a rename.
+func TestRunbookFolders(t *testing.T) {
+	st, err := store.Open(t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	a, b := t.TempDir(), t.TempDir()
+	if _, _, err := st.Save([]byte("name: rb\nsteps:\n  - {name: one, run: 'ls @REPO_ROOT@'}\n"), store.SaveOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	st.AddToCollection("one", true, "rb")
+	st.AddToCollection("two", true, "rb")
+	st.SetPlaceholder("one", "REPO_ROOT", a)
+	st.SetPlaceholder("two", "REPO_ROOT", b)
+	used := []string{"REPO_ROOT"}
+	if f, _ := ResolveFolders(st, "rb", used, FolderOpts{}); f.Err() == nil {
+		t.Fatal("collections disagree, yet it can start")
+	}
+	if err := SaveRunFolders(st, "rb", map[string]string{"REPO_ROOT": b}); err != nil {
+		t.Fatal(err)
+	}
+	f, _ := ResolveFolders(st, "rb", used, FolderOpts{Collection: "one"})
+	if f.Err() != nil || f.Values["REPO_ROOT"] != b || f.From["REPO_ROOT"] != "runbook" {
+		t.Fatalf("runbook's own: %+v", f)
+	}
+	if f, _ := ResolveFolders(st, "rb", used, FolderOpts{}); f.Err() != nil {
+		t.Fatalf("settles the disagreement: %+v", f)
+	}
+	if f, _ := ResolveFolders(st, "rb", used, FolderOpts{Set: map[string]string{"REPO_ROOT": a}}); f.From["REPO_ROOT"] != "run" || f.Values["REPO_ROOT"] != a {
+		t.Fatalf("the run's wins: %+v", f)
+	}
+	raw, _ := st.Raw("rb")
+	if _, _, err := st.Save([]byte(strings.Replace(string(raw), "name: rb", "name: rb2", 1)), store.SaveOpts{OldName: "rb"}); err != nil {
+		t.Fatal(err)
+	}
+	if vals, _ := st.Placeholders(store.RunbookScope("rb2")); vals["REPO_ROOT"] != b {
+		t.Fatalf("after rename: %v", vals)
+	}
+}

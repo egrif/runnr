@@ -65,7 +65,7 @@ runnr serve --open                           # GUI + API at http://127.0.0.1:777
 | `runnr import <file\|folder>...` | Add runbooks, libraries, fakes, test suites and run records: files, or a project folder (its subfolders too); `-` reads a runbook from stdin, `-c` adds the runbooks to a collection. Placeholders `@NAME@` are kept as written (a run fills them in: `runnr folders`); references are checked, and a missing library defined elsewhere in the repository comes along (`--no-found` leaves it out). A taken name is refused unless `-f` (made its current version) or `--rename NAME=NEW` (references follow; `--as NEW` for one file). `-n` says what it would do; `--diff` also shows what saving over each taken name would change. In the GUI: **⇪ Import…** in the sidebar does the same for a folder, with **Show what it changes** for a taken name |
 | `runnr delete <name>` | Delete a runbook (`-f` to skip the prompt): it leaves its collections, its scheduled runs are removed, and its versions are kept |
 | `runnr restore [kind name]` | List what was deleted, or restore it: deleting a runbook, library, fake library, test suite or collection keeps its versions. In the GUI: **Manage** in the sidebar lists everything stored with what uses it, deletes several at once (saying first what depends on them), and restores |
-| `runnr folders [runbook]` / `folders set [-c <col>] NAME=FOLDER...` / `unset` | The folders placeholders stand for on this machine: `@REPOS_ROOT@` for everything, a collection's `@REPO_ROOT@` and `@PROJECT_DIR@` (see [Placeholders](#placeholders)); given a runbook, what a run of it would have. A run takes `--collection` and `--set NAME=FOLDER` for itself |
+| `runnr folders [runbook]` / `folders set [-c <col> \| -r <runbook>] NAME=FOLDER...` / `unset` | The folders placeholders stand for on this machine: `@REPOS_ROOT@` for everything, a collection's `@REPO_ROOT@` and `@PROJECT_DIR@`, a runbook's own (see [Placeholders](#placeholders)); given a runbook, what a run of it would have. A run takes `--collection`, and `--set NAME=FOLDER`, which the runbook keeps |
 | `runnr history --delete <run-id>` | Delete a finished run's record (the GUI: **Delete run** on its page) |
 | `runnr history <run-id> --export <folder>` | Export the run's logs with the runs linked to it by resuming (`--only` for just it): `--as raw` (logs to read), `json` (records to import: `runnr import` takes them, or **Also import** in the GUI's import) or `both`; `--one-file` puts them in one file. The GUI: **⇩ Export logs…** on a finished run (to a folder, or a download) |
 | `runnr test <suite\|runbook\|file>` | Test a runbook: run it with its commands faked and a simulated operator, against each scenario's expectations (`-s`, `-v`, `--log`); see [Testing runbooks](docs/TESTING.md) |
@@ -150,9 +150,11 @@ runnr folders set -c payments REPO_ROOT=@REPOS_ROOT@/ops-runbooks \
 ```
 
 A run fills them in when it starts, from its runbook's collection (in
-several, where they agree), or `--collection`'s; `--set NAME=FOLDER` (or
-the Run page's **Folders**) gives one for that run only, and a resume
-keeps them. Any other `@NAME@` works the same way. A run doesn't start
+several, where they agree), or `--collection`'s. `--set NAME=FOLDER` (or
+the Run page's **Folders**) gives one for the run, and the runbook keeps
+it: its next runs have it too, ahead of the collection's (`runnr folders
+unset -r <runbook> NAME`, or **✕ forget** on the Run page, drops it). A
+resume keeps them. Any other `@NAME@` works the same way. A run doesn't start
 while a placeholder it names has no value, or its value isn't a folder
 here; tests, shells and the editor's **Run this** too. The values are this
 machine's own: collections and exports leave them out, and a run records

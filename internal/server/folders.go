@@ -7,13 +7,14 @@ import (
 
 	"github.com/egrif/runnr/internal/placeholder"
 	"github.com/egrif/runnr/internal/project"
+	"github.com/egrif/runnr/internal/store"
 )
 
 // The folders placeholders (@REPOS_ROOT@, @REPO_ROOT@, @PROJECT_DIR@ …)
 // stand for on this machine, for everything and for each collection:
 //
 //	GET /api/folders                    → {scopes: {"" | collection: {NAME: folderValue}}}
-//	PUT /api/folders {collection, name, value}  (value "" removes it) → the same
+//	PUT /api/folders {collection | runbook, name, value}  (value "" removes it) → the same
 //	GET /api/runbooks/{name}/folders?collection=&set=NAME=FOLDER → project.Folders
 
 type folderValue struct {
@@ -55,6 +56,7 @@ func (s *Server) listFolders(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) setFolder(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Collection string `json:"collection"`
+		Runbook    string `json:"runbook"`
 		Name       string `json:"name"`
 		Value      string `json:"value"`
 	}
@@ -68,7 +70,11 @@ func (s *Server) setFolder(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.st.SetPlaceholder(req.Collection, req.Name, req.Value); err != nil {
+	scope := req.Collection
+	if req.Runbook != "" {
+		scope = store.RunbookScope(req.Runbook)
+	}
+	if err := s.st.SetPlaceholder(scope, req.Name, req.Value); err != nil {
 		writeErr(w, err)
 		return
 	}
