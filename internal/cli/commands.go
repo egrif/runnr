@@ -1638,6 +1638,9 @@ func importRuns(st *store.Store, paths, ids []string, check bool) error {
 		if r.FromLog && !r.Exists {
 			what += " (from a raw log)"
 		}
+		if r.Replaces {
+			what += " (its record, in place of the copy rebuilt from its raw log)"
+		}
 		if r.Imported || check && !r.Exists {
 			n++
 		}

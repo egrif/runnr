@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.14.1 — 2026-10-28
+
+### Fixed
+
+- **Importing a run's record after its raw log.** A run imported from its
+  raw log (rebuilt, close but not exact) kept its place when its record
+  was imported later: the record was skipped as "already here". The record
+  now takes the rebuilt copy's place (notes added here are kept); a raw log
+  still never replaces a record.
+
 ## v0.14.0 — 2026-10-28
 
 Runs for the same thing: starting one asks about an unfinished one, and a
